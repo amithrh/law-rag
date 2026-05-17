@@ -62,6 +62,7 @@ class SearchResponseItem(BaseModel):
     dense_score: float
     bm25_score: float
     combined_score: float
+    rerank_score: float | None
     as_at: str | None
     citation: str | None
     court: str | None
@@ -93,6 +94,7 @@ async def search(
                 source_type=h.source_type, subject_area=h.subject_area,
                 dense_score=h.dense_score, bm25_score=h.bm25_score,
                 combined_score=h.combined_score,
+                rerank_score=h.rerank_score,
                 as_at=h.as_at.isoformat() if h.as_at else None,
                 citation=h.citation, court=h.court,
             ).model_dump()

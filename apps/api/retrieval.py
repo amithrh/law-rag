@@ -57,11 +57,18 @@ async def hybrid_retrieve(
     subject_areas: list[str] | None = None,
     as_of: date | None = None,
     top_k: int | None = None,
+    use_reranker: bool | None = None,
 ) -> list[RetrievedChunk]:
-    """Run BM25 + dense in parallel against `chunks`, union + dedupe.
+    """Run BM25 + dense in parallel against `chunks`, union + dedupe, optionally
+    cross-encoder rerank.
 
-    Returns up to `top_k` (config default `rerank_top_k`) chunks ordered by
-    `combined_score`. Caller is responsible for reranking + LLM hand-off.
+    Stages:
+      1. BM25 → dense → union dedupe → ordered by combined_score (cheap fusion)
+      2. Cross-encoder rerank (top `rerank_input_k` candidates)
+      3. Return top `top_k` (default = settings.rerank_top_k)
+
+    `use_reranker=False` disables stage 2; useful for ablation studies.
+    Falls back to combined_score order if the reranker is unavailable.
     """
     s = get_settings()
     if top_k is None:
@@ -148,8 +155,23 @@ async def hybrid_retrieve(
             )
 
     out = sorted(merged.values(), key=lambda c: c.combined_score, reverse=True)
-    logger.info("hybrid_retrieve: %d dense + %d bm25 → %d merged → top %d",
-                len(dense_rows), len(bm25_rows), len(merged), min(top_k, len(out)))
+
+    # Stage 2: cross-encoder rerank top N candidates
+    do_rerank = use_reranker if use_reranker is not None else s.rerank_enabled
+    if do_rerank and out:
+        from apps.api.rerank import rerank as _rerank
+        candidates = out[: s.rerank_input_k]
+        reranked = _rerank(query, candidates, keep=top_k)
+        logger.info(
+            "hybrid_retrieve: %d dense + %d bm25 → %d merged → rerank(%d) → top %d",
+            len(dense_rows), len(bm25_rows), len(merged), len(candidates), len(reranked),
+        )
+        return reranked
+
+    logger.info(
+        "hybrid_retrieve: %d dense + %d bm25 → %d merged → top %d (no rerank)",
+        len(dense_rows), len(bm25_rows), len(merged), min(top_k, len(out)),
+    )
     return out[:top_k]
 
 

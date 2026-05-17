@@ -36,9 +36,12 @@ class Settings(BaseSettings):
     # Retrieval
     bm25_top_k: int = 100
     dense_top_k: int = 100
-    rerank_top_k: int = 20
+    rerank_input_k: int = 50          # how many candidates the cross-encoder scores
+    rerank_top_k: int = 20            # how many we return after rerank
     prompt_top_k: int = 8
     hnsw_ef_search: int = 40
+    rerank_enabled: bool = True       # disable for ablation / when model unavailable
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
 
     # Verifier (PLAN §4.3)
     skip_ratio_stop: float = 0.0          # public-product default per §4.3

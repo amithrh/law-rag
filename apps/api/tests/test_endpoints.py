@@ -93,14 +93,39 @@ def test_search_top_k_cap_enforced():
 
 
 @pytest.mark.needs_stack
-def test_search_results_are_combined_score_descending():
+def test_search_results_are_rerank_or_combined_score_descending():
+    """When reranker is enabled (default), hits are ordered by rerank_score.
+    Otherwise, ordered by combined_score. Test handles both.
+    """
     with TestClient(app) as c:
         r = c.get("/search", params={"q": "bail rights arrest", "top_k": 10})
         hits = r.json()["hits"]
-        scores = [h["combined_score"] for h in hits]
-        assert scores == sorted(scores, reverse=True), (
-            f"hits not sorted by combined_score desc: {scores}"
-        )
+        if hits and hits[0]["rerank_score"] is not None:
+            # Reranker active
+            scores = [h["rerank_score"] for h in hits]
+            assert scores == sorted(scores, reverse=True), (
+                f"hits not sorted by rerank_score desc: {scores}"
+            )
+        else:
+            scores = [h["combined_score"] for h in hits]
+            assert scores == sorted(scores, reverse=True), (
+                f"hits not sorted by combined_score desc: {scores}"
+            )
+
+
+@pytest.mark.needs_stack
+def test_search_includes_rerank_score_when_reranker_enabled():
+    with TestClient(app) as c:
+        r = c.get("/search", params={"q": "consumer dispute defective product", "top_k": 3})
+        hits = r.json()["hits"]
+        # Either all have rerank_score (reranker enabled + model available)
+        # or none have rerank_score (disabled / unavailable). Mixed is a bug.
+        scores = [h["rerank_score"] for h in hits]
+        if scores[0] is not None:
+            assert all(s is not None for s in scores), (
+                f"mixed rerank_score: {scores}"
+            )
+            assert all(isinstance(s, (int, float)) for s in scores)
 
 
 # --- /answer (SSE stream + verifier) ----------------------------------------
