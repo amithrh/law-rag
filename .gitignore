@@ -1,0 +1,35 @@
+# Node / Next
+node_modules/
+.next/
+out/
+.turbo/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Build artifacts
+dist/
+build/
+
+# Data (local corpora can get large; keep out of git)
+data/
+uploads/
+*.pdf
+*.sqlite
