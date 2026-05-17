@@ -12,6 +12,7 @@ import type {
   StopEvent,
 } from "../lib/types";
 import { CoverageChip } from "./coverage-chip";
+import { IndexStatus } from "./index-status";
 import { SentenceLine } from "./sentence-line";
 
 interface AnswerState {
@@ -119,9 +120,12 @@ export function AnswerView() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-stone-900">
-          Indian Law — Plain-language answers with citations
-        </h1>
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="text-2xl font-semibold tracking-tight text-stone-900">
+            Indian Law — Plain-language answers with citations
+          </h1>
+          <IndexStatus />
+        </div>
         <p className="mt-2 text-sm text-stone-600">
           Ask in your own words. Answers cite the section or judgment they came
           from. Not legal advice — consult a lawyer for your specific situation.
