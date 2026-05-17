@@ -242,3 +242,45 @@ def test_no_pii_no_change() -> None:
     assert result.hits == []
     assert result.suspicious is False
     assert result.case_type == CaseType.STANDARD
+
+
+# --- DB sanitization --------------------------------------------------------
+
+from ingest.normalize.redact import sanitize_for_db
+
+
+class TestSanitizeForDb:
+    """PyMuPDF can emit NULL bytes from binary PDF glyphs. Postgres rejects
+    them. The redactor must strip them before chunking.
+    """
+
+    def test_strips_null_bytes(self) -> None:
+        text = "Hello\x00 world\x00 with nulls"
+        out = sanitize_for_db(text)
+        assert "\x00" not in out
+        assert out == "Hello world with nulls"
+
+    def test_preserves_normal_text(self) -> None:
+        text = "Section 1.\nShort title, extent and commencement.\n(1) This Act…"
+        assert sanitize_for_db(text) == text
+
+    def test_preserves_tabs_and_newlines(self) -> None:
+        text = "line1\tcol2\nline3\r\nline4"
+        assert sanitize_for_db(text) == text
+
+    def test_strips_other_c0_controls(self) -> None:
+        # \x01 is SOH; should be replaced with space
+        text = "abc\x01def\x02ghi"
+        out = sanitize_for_db(text)
+        assert "\x01" not in out
+        assert "\x02" not in out
+        assert "abc def ghi" == out
+
+    def test_redact_pipeline_sanitizes(self) -> None:
+        # The redact() entry point should pass through sanitize
+        from ingest.normalize.redact import redact
+        text = "Patient ID: 234123412346 \x00 unsupported byte here"
+        result = redact(text)
+        assert "\x00" not in result.text
+        # And the PII should still be detected
+        assert "[AADHAAR REDACTED]" in result.text

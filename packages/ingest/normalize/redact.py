@@ -291,11 +291,38 @@ def _find_bank_account(text: str) -> list[PIIHit]:
     return hits
 
 
+def sanitize_for_db(text: str) -> str:
+    """Strip NULL bytes and other Postgres-incompatible characters.
+
+    PyMuPDF / pdfminer can emit NULL bytes (`\\x00`) when PDF streams contain
+    binary glyphs that don't decode to valid Unicode. Postgres rejects these
+    in text columns with `CharacterNotInRepertoireError`. We also strip
+    other C0 controls except tab (\\t), newline (\\n), and carriage return.
+    """
+    if "\x00" not in text and not any(0 <= ord(c) < 32 and c not in "\t\n\r" for c in text[:1000]):
+        # Fast path: scan first 1000 chars; full doc only if suspect
+        if "\x00" not in text:
+            return text
+    # Drop NULL bytes; replace other C0 controls with single space
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if o == 0:
+            continue
+        if 0 <= o < 32 and ch not in "\t\n\r":
+            out.append(" ")
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
 def redact(text: str, *, case_type: CaseType | None = None) -> RedactionResult:
     """Redact PII from `text`. Regex stage only.
 
     `case_type` overrides auto-detection; pass when known from upstream metadata.
+    Sanitizes NULL bytes and other DB-incompatible chars before redaction.
     """
+    text = sanitize_for_db(text)
     if case_type is None:
         case_type = detect_case_type(text)
 
@@ -345,5 +372,6 @@ __all__ = [
     "SENSITIVE_CASE_TYPES",
     "detect_case_type",
     "redact",
+    "sanitize_for_db",
     "verhoeff_valid",
 ]

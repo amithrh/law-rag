@@ -26,6 +26,7 @@ from sentence_transformers import SentenceTransformer
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "packages"))
 from chunking.judgment import chunk_judgment  # noqa: E402
+from ingest.normalize.redact import sanitize_for_db  # noqa: E402
 
 ROOT = Path(__file__).parent.parent
 SC_DIR = ROOT / "data" / "processed" / "sc"
@@ -207,7 +208,14 @@ async def main():
                 loaded.add(did)
                 year_judgments += 1
 
-                for c in chunk_judgment(did, row["text"]):
+                # Sanitize the source text before chunking. PyMuPDF can emit
+                # NULL bytes from binary PDF glyphs which Postgres rejects;
+                # we strip them at this boundary.
+                clean_text = sanitize_for_db(row["text"])
+                for c in chunk_judgment(did, clean_text):
+                    # Belt-and-braces: in case the chunker re-introduced any
+                    if "\x00" in c.text:
+                        c.text = sanitize_for_db(c.text)
                     buffer.append((doc_pk, row, c))
                     if len(buffer) >= FLUSH_EVERY:
                         inserted = await flush_buffer(conn, model, buffer)
