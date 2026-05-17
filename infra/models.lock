@@ -1,0 +1,49 @@
+# Pinned models used by law-rag. Bumping any of these is a deliberate PR.
+# Digests filled in after first successful pull; format: "tag@digest".
+# Validated by `make doctor`.
+
+llm:
+  primary:
+    name: llama3.1
+    tag: 8b-instruct-q4_K_M
+    runtime: ollama
+    digest: ""  # fill after first `ollama pull` via `ollama show --modelfile`
+  fallback:
+    name: qwen2.5
+    tag: 7b-instruct-q4_K_M
+    runtime: ollama
+    digest: ""
+
+embeddings:
+  primary:
+    name: BAAI/bge-m3
+    revision: main         # pin to a specific commit hash after first download
+    runtime: tei           # text-embeddings-inference
+    dim: 1024
+    max_tokens: 8192
+
+reranker:
+  primary:
+    name: BAAI/bge-reranker-v2-m3
+    revision: main
+    runtime: in-process    # loaded directly in apps/api via sentence-transformers / FlagEmbedding
+
+nli:
+  primary:
+    name: MoritzLaurer/DeBERTa-v3-base-mnli
+    revision: main
+    runtime: in-process
+    notes: |
+      General-domain MNLI checkpoint. Known to under-perform on legal phrasing
+      by ~10-20% (PLAN §2.4). Tracked as a known bias; legal-NLI replacement
+      is post-slice work.
+
+pii_ner:
+  primary:
+    name: ai4bharat/IndicNER
+    revision: main
+    runtime: in-process
+  fallback:
+    name: en_core_web_lg
+    revision: "3.7.1"
+    runtime: spacy

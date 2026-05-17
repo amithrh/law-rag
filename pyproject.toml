@@ -1,0 +1,128 @@
+[project]
+name = "law-rag"
+version = "0.1.0"
+description = "Self-hosted RAG over Indian primary law"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "Amit Mishra" }]
+
+dependencies = [
+    # HTTP / async
+    "httpx[http2]>=0.27",
+    "tenacity>=8.2",
+    "playwright>=1.45",
+    # Data / formats
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "datasets>=2.20",
+    "pyarrow>=16",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.2",
+    "pymupdf>=1.24",            # PyMuPDF for PDF→text
+    "ocrmypdf>=16.4",           # OCR fallback (system tesseract required)
+    # NLP / chunking / verifier
+    "regex>=2024.5",            # better Unicode than stdlib re
+    "pysbd>=0.3",               # sentence segmentation
+    "sentence-transformers>=3.0",
+    "FlagEmbedding>=1.3",       # bge-m3 sparse + reranker tools
+    "spacy>=3.7",
+    # DB / storage
+    "asyncpg>=0.29",
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+    "redis>=5.0",
+    "minio>=7.2",
+    # API / serving
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sse-starlette>=2.1",
+    # LLM client (Ollama HTTP)
+    "ollama>=0.3",
+    # Observability / logging
+    "loguru>=0.7",
+    "prometheus-client>=0.20",
+    # CLI
+    "click>=8.1",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "respx>=0.21",              # httpx mocking
+    "ruff>=0.6",
+    "pyright>=1.1",
+    "ipython>=8.26",
+]
+eval = [
+    # offline LLM-as-judge for answer_correctness (EVAL_JUDGE=claude); out of runtime path.
+    "anthropic>=0.34",
+    "ragas>=0.1",
+]
+
+[project.scripts]
+lawrag-ingest = "ingest.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["packages/ingest", "packages/chunking", "packages/retrieval", "packages/eval"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# --- ruff ---
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["packages", "apps"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "RUF",      # ruff-specific
+    "PL",       # pylint subset
+    "SIM",      # simplifications
+]
+ignore = [
+    "PLR0913",  # too-many-arguments — fine in adapter constructors
+    "PLR2004",  # magic numbers — fine in tests/constants
+    "E501",     # let formatter handle line length
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "B011", "S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# --- pyright ---
+[tool.pyright]
+pythonVersion = "3.11"
+include = ["packages", "apps"]
+exclude = ["**/__pycache__", "**/.venv", "**/node_modules"]
+typeCheckingMode = "standard"
+reportMissingTypeStubs = "none"
+
+# --- pytest ---
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages/*/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "needs_stack: requires docker compose stack up",
+    "needs_models: requires Ollama models pulled",
+]
