@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -91,20 +92,54 @@ def refetch_act_pdf(url: str) -> tuple[bytes, str, int] | tuple[None, str, int]:
     return data, "ok", int(http_code) if http_code.isdigit() else 200
 
 
-def refetch_sc_tar_member(url: str) -> tuple[bytes, str, int] | tuple[None, str, int]:
-    """For SC chunks from HF Rahul1872, the canonical source is the eSCR PDF
-    inside the year tar. We re-extract the same PDF from the cached tar and
-    treat that as the "canonical" baseline — this is an extraction-consistency
-    check, not a true upstream check.
+HF_CACHE_ROOT = Path.home() / ".cache" / "huggingface" / "hub"
+RAHUL_DATASET_CACHE = (
+    HF_CACHE_ROOT / "datasets--Rahul1872--Indian-Supreme-Court-Judgments" / "snapshots"
+)
 
-    Caller passes the URL we stored, which is the HF dataset path or
-    eSCR URL. We resolve it to the local cached tar and extract the named PDF.
 
-    For TRUE upstream verification against eSCR, the verifier needs to run
-    from an India-region host (digiscr.sci.gov.in is geo-fenced). That's a
-    separate post-slice job; this script handles the local consistency tier.
+def refetch_sc_year_tar(year: int) -> Path | None:
+    """Resolve the local HF cache path for a year's SC tar. Returns None
+    if the dataset isn't cached locally (script never ran before)."""
+    if not RAHUL_DATASET_CACHE.exists():
+        return None
+    for snapshot_dir in RAHUL_DATASET_CACHE.iterdir():
+        tar = snapshot_dir / "data" / "tar" / f"year={year}" / "english" / "english.tar"
+        if tar.exists():
+            return tar
+    return None
+
+
+def extract_sc_pdf_from_tar(tar_path: Path, judgment_filename: str) -> tuple[bytes, str] | tuple[None, str]:
+    """Open the year tar and extract a specific PDF by filename. The Rahul1872
+    dataset names files like `2024_10_108_125_EN.pdf` which matches the eSCR
+    URL pattern (year_volume_startpage_endpage_lang.pdf).
     """
-    return None, "sc_upstream_geo_fenced", 0
+    import tarfile
+    if not tar_path.exists():
+        return None, "tar_missing"
+    try:
+        with tarfile.open(tar_path, "r") as tar:
+            for m in tar:
+                if m.name == judgment_filename or m.name.endswith(f"/{judgment_filename}"):
+                    f = tar.extractfile(m)
+                    if f:
+                        return f.read(), "ok"
+        return None, "filename_not_in_tar"
+    except Exception as e:
+        return None, f"tar_error: {e}"
+
+
+def refetch_sc_canonical_spot(case_id: str) -> tuple[bytes, str, int] | tuple[None, str, int]:
+    """Best-effort canonical check via scr.sci.gov.in or judgments.ecourts.gov.in.
+
+    Both portals are reachable from outside India (unlike digiscr.sci.gov.in
+    which is geo-fenced). They have CAPTCHA on the search form, so direct
+    URL-based fetch is rate-limited and brittle. We return a stub for now;
+    full canonical verification needs Playwright + CAPTCHA solving OR an
+    India-region machine where direct eSCR access works.
+    """
+    return None, "canonical_spot_needs_playwright", 0
 
 
 def text_similarity(stored: str, refetched: str) -> float:
@@ -196,15 +231,107 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
         out["text_similarity"] = sim
         out["text_match"] = (sim >= 0.90)  # threshold for "same content"
         out["notes"] = f"sim={sim:.3f} stored_chunks={len(chunks)}"
-    elif origin.startswith("hf:"):
-        # HF mirror — for SC, this needs an India-region eSCR fetch.
-        # For now we mark as unverifiable from this network.
-        out["refetch_status"] = "hf_mirror_needs_canonical_audit"
-        out["notes"] = (
-            "HF-mirror provenance verification requires fetching the original "
-            "eSCR PDF for a sample of judgments; eSCR is geo-fenced and not "
-            "reachable from this network. Defer to India-region verifier run."
-        )
+    elif origin.startswith("hf:") and "Rahul1872" in origin:
+        # SC via HF Rahul1872. Extraction-consistency check: re-extract the
+        # original PDF from the local HF tar cache and compare against the
+        # stored chunks. This proves the whole pipeline (PDF → PyMuPDF →
+        # redact → chunk → DB) is deterministic and the DB hasn't drifted
+        # from the source file we ingested.
+        #
+        # True upstream verification against digiscr.sci.gov.in (the
+        # canonical Govt source) is geo-fenced and needs an India-region
+        # runner (PLAN §13.4 productization).
+        #
+        # The filename → case_id mapping isn't in documents.metadata; we
+        # bridge via the year's JSONL file (which carries `filename` +
+        # `case_id` in every row).
+        year_match = re.search(r"year=(\d{4})", source_row["url"])
+        if not year_match:
+            out["refetch_status"] = "no_year_in_url"
+            return out
+        year = int(year_match.group(1))
+        tar_path = refetch_sc_year_tar(year)
+        if tar_path is None:
+            out["refetch_status"] = "hf_cache_missing"
+            out["notes"] = f"no local cache for year={year}; pull tar first"
+            return out
+
+        # Build filename ↔ case_id mapping from the JSONL we wrote at ingest
+        jsonl_path = ROOT / "data" / "processed" / "sc" / f"year={year}.jsonl"
+        if not jsonl_path.exists():
+            out["refetch_status"] = "jsonl_missing"
+            out["notes"] = f"no {jsonl_path.name} on disk; can't map filenames"
+            return out
+        caseid_to_filename: dict[str, str] = {}
+        with jsonl_path.open() as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                cid = (row.get("case_id") or "").strip()
+                fn = row.get("filename")
+                if cid and fn:
+                    caseid_to_filename[cid] = fn
+
+        # Sample 5 random judgments from this source's chunks. Larger n
+        # smooths out transient I/O issues (e.g. tar being concurrently
+        # written by background ingest).
+        sample_docs = await conn.fetch("""
+            SELECT d.id, d.metadata, d.title
+            FROM documents d
+            WHERE d.source_id = $1
+            ORDER BY random()
+            LIMIT 5
+        """, source_row["id"])
+        per_doc_results = []
+        for doc in sample_docs:
+            meta = doc["metadata"] if isinstance(doc["metadata"], dict) else (
+                json.loads(doc["metadata"]) if doc["metadata"] else {}
+            )
+            case_id = (meta.get("case_id") or "").strip()
+            filename = caseid_to_filename.get(case_id)
+            if not filename:
+                per_doc_results.append((doc["id"], None, f"no_filename_for_case_id={case_id!r}"))
+                continue
+            pdf_bytes, status = extract_sc_pdf_from_tar(tar_path, filename)
+            if pdf_bytes is None:
+                per_doc_results.append((doc["id"], None, status))
+                continue
+            text, _ = extract_pdf_text(pdf_bytes)
+            if text is None:
+                per_doc_results.append((doc["id"], None, "extract_failed"))
+                continue
+            # Compare against this judgment's stored chunks
+            doc_chunks = await conn.fetch(
+                "SELECT text FROM chunks WHERE document_id=$1 AND NOT quarantined LIMIT 200",
+                doc["id"],
+            )
+            stored = " ".join(c["text"] for c in doc_chunks)
+            sim = text_similarity(stored, text)
+            per_doc_results.append((doc["id"], sim, "ok"))
+
+        # Aggregate using MEDIAN to be robust to a single bad sample
+        # (e.g. concurrent tar write during a long-running ingest).
+        scored = sorted(s for _, s, st in per_doc_results if s is not None)
+        if scored:
+            median_sim = scored[len(scored) // 2]
+            avg_sim = sum(scored) / len(scored)
+            out["text_similarity"] = median_sim
+            # Threshold 0.85: chunker prepends section/para headings that
+            # weren't in the original PDF, so even a perfect ingest won't
+            # hit 1.0 on n-gram recall. 0.85 ≈ 85% of stored 4-grams must
+            # exist in source PDF — comfortable margin above noise.
+            out["text_match"] = median_sim >= 0.85
+            out["refetch_status"] = "ok"
+            out["notes"] = (
+                f"extraction-consistency over {len(scored)} samples: "
+                f"median={median_sim:.3f}, mean={avg_sim:.3f}; "
+                f"per-doc: {per_doc_results}"
+            )
+        else:
+            out["refetch_status"] = "no_docs_extractable"
+            out["notes"] = f"per-doc: {per_doc_results}"
     else:
         out["refetch_status"] = "unknown_origin"
         out["notes"] = f"no verifier for origin={origin}"
