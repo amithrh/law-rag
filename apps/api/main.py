@@ -195,51 +195,63 @@ async def answer(req: AnswerRequest):
             for p in passages
         ])}
 
-        buf = ""
-        emitted_count = 0
-        unsupported_count = 0
-        skip_threshold = settings.skip_ratio_stop
+        # Mutable state — closured into _check_and_emit so the strict-stop
+        # check runs identically in the streaming-loop and final-flush paths.
+        state = {"emitted": 0, "unsupported": 0, "skip_threshold": settings.skip_ratio_stop}
 
+        def _stop_event() -> dict:
+            return {"event": "stop", "data": json.dumps({
+                "reason": "insufficient_support",
+                "message": ("The sources I have don't cover your question clearly "
+                            "enough for me to give a useful answer. Try rephrasing "
+                            "it more narrowly, or talk to a lawyer for your "
+                            "specific situation."),
+                "unsupported_count": state["unsupported"],
+                "emitted_count": state["emitted"],
+            })}
+
+        def _emit_and_check(v: SentenceVerification) -> tuple[dict, bool]:
+            """Return (sentence-event, should_stop_now). Updates counters."""
+            ev = _sentence_event(v)
+            if v.status in (SentenceStatus.UNSUPPORTED, SentenceStatus.UNKNOWN_CITATION):
+                state["unsupported"] += 1
+            if v.status != SentenceStatus.META:
+                state["emitted"] += 1
+            triggered = (
+                state["emitted"]
+                and state["unsupported"] / max(1, state["emitted"]) > state["skip_threshold"]
+            )
+            return ev, triggered
+
+        buf = ""
         try:
             async for delta in stream_chat(messages):
                 buf += delta
-                # Try to emit complete sentences from the buffer
-                # A 'complete' sentence ends with . ! ? optionally followed by
-                # a citation tag — keep at least 80 chars of unfinished tail in buf.
                 sentences = segment_sentences(buf)
                 if len(sentences) <= 1:
                     continue
-                # The last segment may be incomplete; hold it back
                 ready = sentences[:-1]
-                tail = sentences[-1]
-                buf = tail
+                buf = sentences[-1]
 
                 for sent in ready:
                     v = verify_sentence(sent, idx_map, skip_nli=req.skip_nli)
-                    yield _sentence_event(v)
-                    if v.status in (SentenceStatus.UNSUPPORTED, SentenceStatus.UNKNOWN_CITATION):
-                        unsupported_count += 1
-                    if v.status != SentenceStatus.META:
-                        emitted_count += 1
-                    # Strict stop policy
-                    if (emitted_count and
-                        unsupported_count / max(1, emitted_count) > skip_threshold):
-                        yield {"event": "stop", "data": json.dumps({
-                            "reason": "insufficient_support",
-                            "message": ("The sources I have don't cover your question clearly "
-                                        "enough for me to give a useful answer. Try rephrasing "
-                                        "it more narrowly, or talk to a lawyer for your "
-                                        "specific situation."),
-                            "unsupported_count": unsupported_count,
-                            "emitted_count": emitted_count,
-                        })}
+                    sentence_ev, should_stop = _emit_and_check(v)
+                    yield sentence_ev
+                    if should_stop:
+                        yield _stop_event()
                         yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
                         return
 
-            # Flush the tail
+            # Flush the tail. Strict-stop check applies here too — a wrong
+            # final sentence is just as much a citation-correctness defect.
             if buf.strip():
                 v = verify_sentence(buf.strip(), idx_map, skip_nli=req.skip_nli)
-                yield _sentence_event(v)
+                sentence_ev, should_stop = _emit_and_check(v)
+                yield sentence_ev
+                if should_stop:
+                    yield _stop_event()
+                    yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                    return
 
             # Final disclaimer event — always
             yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
