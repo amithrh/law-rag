@@ -92,6 +92,16 @@ async def hybrid_retrieve(
         # Judgment chunks have no as_at (NULL) and pass through.
         params.append(as_of)
         where.append(f"(c.as_at IS NULL OR c.as_at <= ${len(params)})")
+
+    # Provenance gate: in production mode, only return chunks from documents
+    # whose source has been verified against the canonical Govt source.
+    if s.require_provenance_verified:
+        # Subquery: documents.provenance_verified must be true for chunk's doc
+        where.append(
+            "EXISTS (SELECT 1 FROM documents d2 "
+            "WHERE d2.id = c.document_id AND d2.provenance_verified = true)"
+        )
+
     where_clause = " AND ".join(where)
 
     async with pool.acquire() as conn:

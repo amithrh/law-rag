@@ -113,3 +113,9 @@ class TestSettingsDefaults:
         assert s.rerank_input_k > s.rerank_top_k, (
             "input must be larger than output for rerank to be meaningful"
         )
+
+    def test_require_provenance_verified_off_by_default(self):
+        """In development (where the corpus is being loaded), we don't want
+        to block queries against unverified content. Production overrides
+        via env var REQUIRE_PROVENANCE_VERIFIED=true."""
+        assert Settings(database_url="postgresql://x").require_provenance_verified is False

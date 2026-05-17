@@ -261,6 +261,9 @@ def phase_2_older_sc(client: Minio, bucket: str) -> None:
                 # Sanitize then redact
                 text = sanitize_for_db(text)
                 red = redact(text)
+                # infer_subject_area now spans slice + 8 "other" categories so
+                # almost no judgment is left without a tag. Real "(unknown)"
+                # signals a parse problem or extreme edge case worth surfacing.
                 subj = infer_subject_area(red.text)
                 subject_dist[subj or "(unknown)"] = subject_dist.get(subj or "(unknown)", 0) + 1
 
@@ -347,16 +350,69 @@ def download_pdf(url: str, out_path: Path) -> int | None:
     return out_path.stat().st_size
 
 
-def is_meaningful_act_text(text: str) -> bool:
-    """Cheap sanity: must contain a section heading pattern and Indian-Act
-    front-matter markers."""
+def is_meaningful_act_text(text: str, *, expected_title: str | None = None) -> bool:
+    """Cheap sanity gate for downloaded act PDFs.
+
+    Requirements:
+      1. Length ≥ 2000 chars (rule out empty / nearly-empty PDFs).
+      2. Contains an Indian-Act front-matter marker.
+      3. ASCII letter ratio in the first 3000 chars ≥ 0.95 (rule out OCR-garbled
+         PDFs and Hindi/Bengali scans — those drop to ~0.75 or lower).
+      4. If `expected_title` is given, the document's actual short title
+         (the first occurrence of "THE <title>") must match. This catches
+         IndiaCode handles that link to *adjacent* acts with similar names
+         (e.g. "Commercial Documents Evidence Act" returned for "Indian
+         Evidence Act" query).
+    """
     if len(text) < 2000:
         return False
-    if not re.search(r"^\s*1\.\s+[A-Z]", text, re.MULTILINE):
-        return False
-    return any(marker in text[:5000] for marker in (
+    head = text[:5000]
+    if not any(marker in head for marker in (
         "ARRANGEMENT OF SECTIONS", "ACT NO.", "Short title", "extends to",
-    ))
+    )):
+        return False
+
+    # Reject garbled OCR (Hindi/Bengali mixed with English). We measure
+    # the fraction of *letter* characters (excluding whitespace and digits)
+    # that are ASCII — pure English text scores 1.0; OCR'd Hindi/Bengali
+    # interleaved with English drops well below 0.90.
+    sample = text[:3000]
+    letters = [c for c in sample if c.isalpha()]
+    if letters:
+        ascii_ratio = sum(1 for c in letters if c.isascii()) / len(letters)
+        if ascii_ratio < 0.90:
+            return False
+
+    # Reject Bills outright — we want enacted Acts, not bills under
+    # consideration. IndiaCode does sometimes return bill PDFs.
+    if re.search(r"\bBILL,?\s*\d{4}\b", head, re.IGNORECASE):
+        return False
+
+    # Title check: the PDF's own "THE <title> ACT, <year>" line must overlap
+    # with the expected query
+    if expected_title:
+        m = re.search(r"THE\s+([A-Z][A-Z ,\-&/()]+ACT(?:\s*,?\s*\d{4})?)", head)
+        if not m:
+            # No "THE … ACT" header at all → suspicious. Reject when we have
+            # an expected title to compare against.
+            return False
+        actual = m.group(1).upper()
+        # Take significant words from expected (strip stop words)
+        expected_tokens = {
+            w.upper() for w in re.findall(r"[A-Za-z]+", expected_title)
+            if w.upper() not in {"THE", "OF", "AND", "ACT", "FOR", "TO", "IN", "A"}
+        }
+        if expected_tokens:
+            actual_tokens = set(re.findall(r"[A-Z]+", actual))
+            overlap = expected_tokens & actual_tokens
+            # Require ≥ 60% of expected meaningful tokens in the actual
+            # title. Loose enough for "Code of Criminal Procedure" vs the
+            # abbreviated "CrPC"; strict enough to catch "Commercial
+            # Documents Evidence Act 1939" returned for "Indian Evidence
+            # Act 1872" query.
+            if len(overlap) / len(expected_tokens) < 0.6:
+                return False
+    return True
 
 
 def phase_3_missing_acts(client: Minio, bucket: str, env: dict) -> None:
@@ -409,8 +465,9 @@ def phase_3_missing_acts(client: Minio, bucket: str, env: dict) -> None:
                 local.unlink(missing_ok=True)
                 continue
             text = sanitize_for_db(text)
-            if not is_meaningful_act_text(text):
-                log(f"    handle {cand['handle_id']}: PDF doesn't look like a real act, trying next", phase="acts")
+            if not is_meaningful_act_text(text, expected_title=act["title"]):
+                log(f"    handle {cand['handle_id']}: PDF rejected (failed title/quality "
+                    f"check for {act['title']!r}), trying next", phase="acts")
                 continue
 
             # Got a good one

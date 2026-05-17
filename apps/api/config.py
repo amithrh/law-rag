@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     nli_model: str = "MoritzLaurer/DeBERTa-v3-base-mnli"
     answer_fast_enabled: bool = False     # disabled in production
 
+    # Provenance gate (PLAN §10.1 + provenance system).
+    # In production, retrieval must only return chunks from documents whose
+    # source has been verified against the canonical Govt of India source.
+    # Set to False during development / evaluation to access the full corpus.
+    require_provenance_verified: bool = False
+
     # Other
     log_level: str = "info"
 

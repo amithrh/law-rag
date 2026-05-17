@@ -200,9 +200,16 @@ async def main():
                 if did in loaded:
                     year_skipped += 1
                     continue
-                if row.get("subject_area") is None:
-                    year_skipped += 1
-                    continue
+                # Don't drop judgments with no subject_area tag — surface them
+                # honestly with subject_area=null (the coverage chip + retrieval
+                # filters can decide what to do with them).
+                # If subject_area is missing from JSONL, infer it now from text.
+                if not row.get("subject_area"):
+                    try:
+                        from ingest.adapters.base import infer_subject_area
+                        row["subject_area"] = infer_subject_area(row["text"])
+                    except Exception:
+                        row["subject_area"] = None
                 # Materialize the doc (so chunks have a valid foreign key)
                 doc_pk = await ensure_document(conn, src_id, did, row)
                 loaded.add(did)
