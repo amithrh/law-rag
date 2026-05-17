@@ -129,6 +129,7 @@ class _NLIWorker:
         self.model_name = model_name
         self._model = None
         self._tokenizer = None
+        self._entailment_label_idx: int = 0   # resolved at load time
         self._lock = threading.Lock()
 
     def _ensure(self):
@@ -147,6 +148,21 @@ class _NLIWorker:
             self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self._model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
             self._model.eval()
+            # Resolve entailment label index from the model's own config.
+            # Different MNLI fine-tunes use different label orderings.
+            id2label = {int(k): str(v).lower() for k, v in self._model.config.id2label.items()}
+            for idx, name in id2label.items():
+                if name == "entailment":
+                    self._entailment_label_idx = idx
+                    break
+            else:
+                logger.warning(
+                    "NLI model %s has no 'entailment' label in config.id2label=%s; "
+                    "defaulting to index 0",
+                    self.model_name, id2label,
+                )
+            logger.info("entailment label idx=%d", self._entailment_label_idx)
+
             # Use MPS when available
             if torch.backends.mps.is_available():
                 self._model = self._model.to("mps")
@@ -158,7 +174,10 @@ class _NLIWorker:
         import torch
 
         self._ensure()
-        # DeBERTa-v3-mnli labels: 0=contradiction, 1=neutral, 2=entailment
+        # Label mapping resolved from the model's own config — DON'T assume.
+        # MoritzLaurer/DeBERTa-v3-base-mnli: 0=entailment, 1=neutral, 2=contradiction
+        # (verified via model.config.id2label).
+        ent_idx = self._entailment_label_idx
         inputs = self._tokenizer(
             premise, hypothesis,
             truncation=True, max_length=512, return_tensors="pt", padding=True,
@@ -167,8 +186,7 @@ class _NLIWorker:
         with torch.no_grad():
             logits = self._model(**inputs).logits[0]
         probs = torch.softmax(logits, dim=-1).cpu().numpy()
-        # entailment is index 2 in MoritzLaurer/DeBERTa-v3-base-mnli
-        return float(probs[2])
+        return float(probs[ent_idx])
 
 
 @lru_cache

@@ -209,3 +209,59 @@ class TestVerifyAnswer:
         v = verify_answer(text, self.idx_map, skip_nli=True)
         assert v.unsupported_count == 2
         assert v.skip_ratio == 1.0
+
+
+# -------------------- NLI integration (real model) -------------------------
+
+class TestNLIIntegration:
+    """End-to-end NLI tests. Need DeBERTa-v3-base-mnli loaded — skip if not."""
+
+    @pytest.mark.needs_models
+    @pytest.mark.slow
+    def test_entailing_sentence_passes_with_high_score(self) -> None:
+        from apps.api.verifier import nli_score
+        s = nli_score(
+            premise="Anticipatory bail under Section 438 of the CrPC can be granted even after an FIR is filed.",
+            hypothesis="You can apply for anticipatory bail even if an FIR has already been filed.",
+        )
+        assert s is not None
+        assert s > 0.7, f"expected high entailment, got {s}"
+
+    @pytest.mark.needs_models
+    @pytest.mark.slow
+    def test_contradicting_sentence_scored_low(self) -> None:
+        from apps.api.verifier import nli_score
+        s = nli_score(
+            premise="No confession made to a police officer shall be proved against the accused.",
+            hypothesis="Police confessions are admissible as evidence against the accused.",
+        )
+        assert s is not None
+        assert s < 0.2, f"expected very low entailment for contradiction, got {s}"
+
+    @pytest.mark.needs_models
+    @pytest.mark.slow
+    def test_verify_sentence_with_nli_marks_weak_support(self) -> None:
+        """A sentence whose cited passage doesn't entail it should be flagged
+        weak_support (entailment below threshold)."""
+        idx_map = {
+            1: "The court awarded costs of Rs. 50,000 to the petitioner.",
+        }
+        # Hypothesis claims something not supported by the premise (different amount)
+        sentence = "The court awarded Rs. 5,00,000 in compensation [1]."
+        v = verify_sentence(sentence, idx_map, skip_nli=False, nli_threshold=0.5)
+        # Either weak_support OR ok with low score; both surface the discrepancy
+        assert v.entailment_score is not None
+        assert v.entailment_score < 0.5, f"expected low entailment, got {v.entailment_score}"
+        assert v.status == SentenceStatus.WEAK_SUPPORT
+
+    @pytest.mark.needs_models
+    @pytest.mark.slow
+    def test_verify_sentence_with_nli_marks_ok_for_supported_claim(self) -> None:
+        idx_map = {
+            1: "Anticipatory bail under Section 438 of the CrPC may be granted even after an FIR has been filed.",
+        }
+        sentence = "Anticipatory bail can be granted after an FIR is filed [1]."
+        v = verify_sentence(sentence, idx_map, skip_nli=False, nli_threshold=0.5)
+        assert v.status == SentenceStatus.OK
+        assert v.entailment_score is not None
+        assert v.entailment_score > 0.5

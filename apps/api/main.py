@@ -110,7 +110,7 @@ class AnswerRequest(BaseModel):
     sources: list[str] | None = None
     subjects: list[str] | None = None
     top_k: int = 8           # passages handed to the LLM
-    skip_nli: bool = False   # /answer-fast variant
+    skip_nli: bool = False   # /answer-fast variant; NLI on by default since Q1 bench (p95 72ms) makes it viable
 
 
 def _make_passages(retrieved: list[RetrievedChunk], n: int) -> tuple[list[dict], dict[int, str]]:
