@@ -12,12 +12,14 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from apps.api import config as cfg
+from apps.api import metrics
 from apps.api.db import close_pool, get_pool
 from apps.api.llm import build_messages, load_answer_prompt, stream_chat
 from apps.api.retrieval import RetrievedChunk, hybrid_retrieve
@@ -83,7 +85,9 @@ async def search(
     hits = await hybrid_retrieve(
         pool, q, source_types=src_types, subject_areas=subj, top_k=top_k,
     )
-    elapsed_ms = (time.perf_counter() - t0) * 1000
+    elapsed = time.perf_counter() - t0
+    metrics.retrieval_latency.observe(elapsed)
+    elapsed_ms = elapsed * 1000
 
     return JSONResponse({
         "query": q,
@@ -152,15 +156,20 @@ async def answer(req: AnswerRequest):
     """
     settings = cfg.get_settings()
     pool = await get_pool()
+    src_filter_label = ",".join(sorted(req.sources)) if req.sources else "all"
+    metrics.query_total.labels(source_filter=src_filter_label).inc()
 
     # Retrieve
     src_types = req.sources
     subj = req.subjects
+    t_retr = time.perf_counter()
     retrieved = await hybrid_retrieve(
         pool, req.q, source_types=src_types, subject_areas=subj,
         top_k=max(req.top_k, settings.rerank_top_k),
     )
+    metrics.retrieval_latency.observe(time.perf_counter() - t_retr)
     if not retrieved:
+        metrics.refused_total.inc()
         async def empty():
             yield {"event": "refused", "data": json.dumps({
                 "message": "The sources I have don't cover this clearly. I won't guess. "
@@ -213,10 +222,13 @@ async def answer(req: AnswerRequest):
             })}
 
         def _emit_and_check(v: SentenceVerification) -> tuple[dict, bool]:
-            """Return (sentence-event, should_stop_now). Updates counters."""
+            """Return (sentence-event, should_stop_now). Updates counters + metrics."""
             ev = _sentence_event(v)
             if v.status in (SentenceStatus.UNSUPPORTED, SentenceStatus.UNKNOWN_CITATION):
                 state["unsupported"] += 1
+                metrics.unsupported_total.labels(status=v.status.value).inc()
+            elif v.status == SentenceStatus.WEAK_SUPPORT:
+                metrics.weak_support_total.inc()
             if v.status != SentenceStatus.META:
                 state["emitted"] += 1
             triggered = (
@@ -226,8 +238,13 @@ async def answer(req: AnswerRequest):
             return ev, triggered
 
         buf = ""
+        llm_t0 = time.perf_counter()
+        first_token_seen = False
         try:
             async for delta in stream_chat(messages):
+                if not first_token_seen and delta.strip():
+                    metrics.llm_ttft.observe(time.perf_counter() - llm_t0)
+                    first_token_seen = True
                 buf += delta
                 sentences = segment_sentences(buf)
                 if len(sentences) <= 1:
@@ -240,8 +257,10 @@ async def answer(req: AnswerRequest):
                     sentence_ev, should_stop = _emit_and_check(v)
                     yield sentence_ev
                     if should_stop:
+                        metrics.stopped_total.inc()
                         yield _stop_event()
                         yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                        _record_final_metrics(state, llm_t0)
                         return
 
             # Flush the tail. Strict-stop check applies here too — a wrong
@@ -251,12 +270,15 @@ async def answer(req: AnswerRequest):
                 sentence_ev, should_stop = _emit_and_check(v)
                 yield sentence_ev
                 if should_stop:
+                    metrics.stopped_total.inc()
                     yield _stop_event()
                     yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                    _record_final_metrics(state, llm_t0)
                     return
 
             # Final disclaimer event — always
             yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+            _record_final_metrics(state, llm_t0)
         except Exception as e:
             logger.exception("answer stream error: %s", e)
             yield {"event": "error", "data": json.dumps({"message": str(e)})}
@@ -277,6 +299,13 @@ def _sentence_event(v: SentenceVerification) -> dict:
     }
 
 
+def _record_final_metrics(state: dict, llm_t0: float) -> None:
+    """End-of-stream metrics (skip_ratio + total LLM time)."""
+    metrics.llm_total.observe(time.perf_counter() - llm_t0)
+    if state["emitted"]:
+        metrics.skip_ratio.observe(state["unsupported"] / state["emitted"])
+
+
 # ----- health ---------------------------------------------------------------
 
 @app.get("/healthz")
@@ -290,3 +319,9 @@ async def healthz():
         "chunks": chunk_count,
         "documents": doc_count,
     }
+
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Prometheus scrape endpoint (PLAN §6.4)."""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

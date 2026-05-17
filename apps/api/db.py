@@ -16,17 +16,19 @@ _state = _State()
 async def get_pool() -> asyncpg.Pool:
     if _state.pool is None:
         s = get_settings()
-        # API runs on the host (outside docker), so always connect to localhost
-        # at the mapped host port. Inside docker we'd use s.postgres_host.
-        _state.pool = await asyncpg.create_pool(
-            host="localhost",
-            port=s.postgres_host_port,
-            database=s.postgres_db,
-            user=s.postgres_user,
-            password=s.postgres_password,
-            min_size=2,
-            max_size=8,
-        )
+        # If DATABASE_URL is explicitly set, trust the caller.
+        # Otherwise pick the right form based on where the API is running:
+        #   - inside docker network (env API_IN_DOCKER=1 set by prod compose)
+        #     → use service-name URL
+        #   - else (host-side dev) → localhost:host_port
+        import os
+        if s.database_url:
+            dsn = s.database_url
+        elif os.environ.get("API_IN_DOCKER") == "1":
+            dsn = s.resolved_database_url
+        else:
+            dsn = s.resolved_database_url_host_side
+        _state.pool = await asyncpg.create_pool(dsn=dsn, min_size=2, max_size=8)
     return _state.pool
 
 
