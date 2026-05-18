@@ -99,10 +99,14 @@ class TestSettingsDefaults:
     def test_rerank_enabled_by_default(self):
         assert Settings(database_url="postgresql://x").rerank_enabled is True
 
-    def test_skip_ratio_stop_is_zero_for_public_product(self):
-        # PLAN §4.3 strict-stop default for public product
+    def test_strict_stop_thresholds_with_suppression(self):
+        # Per Codex review #1, uncited sentences are suppressed (dropped
+        # from the user stream) instead of being shipped with a badge.
+        # skip_ratio_stop=0.4 controls when the *stop banner* appears; the
+        # citation guarantee comes from suppression itself, not the banner.
         s = Settings(database_url="postgresql://x")
-        assert s.skip_ratio_stop == 0.0
+        assert s.skip_ratio_stop == 0.4
+        assert s.min_unsupported_before_stop == 2
 
     def test_embedding_max_seq_len_512(self):
         # bge-m3 supports 8k but we cap at 512 per Q3 bench (MPS memory)

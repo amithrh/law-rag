@@ -33,7 +33,21 @@ export function SentenceLine({
     <p className="my-2 leading-relaxed">
       <span className={STATUS_STYLE[sentence.status]}>
         {renderWithCitations(sentence.text, passagesByIndex)}
+        {sentence.auto_cited && sentence.citations.length > 0 && (
+          <CitationChip
+            n={sentence.citations[0]}
+            passage={passagesByIndex.get(sentence.citations[0])}
+          />
+        )}
       </span>
+      {sentence.auto_cited && (
+        <span
+          className="ml-2 align-baseline rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-700"
+          title={sentence.reason ?? "Citation attached by lexical match — the model did not write one inline."}
+        >
+          auto-cite
+        </span>
+      )}
       {badge && (
         <span
           className="ml-2 align-baseline rounded border border-red-200 bg-red-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-700"

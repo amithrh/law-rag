@@ -77,6 +77,14 @@ async def stream_chat(
         "model": model,
         "messages": messages,
         "stream": True,
+        # Modern open-weight models (Gemma 3, GLM 4.7, Qwen 3.5) default to
+        # chain-of-thought "thinking" mode and emit reasoning into a separate
+        # `thinking` field. The user-facing `content` stream only opens
+        # AFTER thinking ends — at num_predict=1024 we routinely ran out of
+        # budget mid-thought and got zero content. Ollama exposes `think:
+        # false` as a per-request opt-out; we always disable thinking so the
+        # entire generation budget goes to the cited answer.
+        "think": False,
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,

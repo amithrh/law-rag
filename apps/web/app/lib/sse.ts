@@ -21,7 +21,12 @@ export async function* readSse(
       if (signal.aborted) return;
       const { value, done } = await reader.read();
       if (done) break;
-      buf += decoder.decode(value, { stream: true });
+      // Normalize CRLF to LF up front. Node's HTTP layer (Next dev/start
+      // rewrites the SSE through Node's http parser) emits CRLF line
+      // endings — splitting on "\n\n" alone never finds a block boundary
+      // and the UI receives zero packets. The Anthropic-style SSE spec
+      // says either LF or CRLF is valid; this normalization handles both.
+      buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
 
       // Split on blank lines (\n\n). Anything after the last \n\n is partial.
       let idx: number;

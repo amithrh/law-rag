@@ -29,6 +29,7 @@ export interface SentenceEvent {
   citations: number[];
   entailment_score: number | null;
   reason: string | null;
+  auto_cited?: boolean;
 }
 
 export interface StopEvent {

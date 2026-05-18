@@ -86,10 +86,35 @@ class Settings(BaseSettings):
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
 
     # Verifier (PLAN §4.3)
-    skip_ratio_stop: float = 0.0          # public-product default per §4.3
-    nli_weak_support_below: float = 0.5
+    # Per Codex adversarial review #1: unsupported sentences are SUPPRESSED
+    # from the user stream (main.py:_emit_and_check) rather than shipped
+    # with a red strikethrough. So `skip_ratio_stop` here is no longer the
+    # "what users see" knob — it's the "how bad does the answer have to be
+    # before we show the stop banner instead of a partial answer" knob.
+    # 0.4 = stop if 40%+ of emitted sentences are bad. Lower would over-
+    # stop on the common single-trailing-fluff pattern; higher would let
+    # very weak answers ship as 2-3 visible sentences.
+    skip_ratio_stop: float = 0.4
+    # Below this absolute unsupported count, drop silently (don't show a
+    # stop banner). Critical: a single uncited sentence STILL gets dropped
+    # — it just doesn't trigger the banner. The citation guarantee is
+    # preserved by suppression, not by the banner.
+    min_unsupported_before_stop: int = 2
+    # NLI entailment score below which a cited sentence is flagged
+    # weak_support. 0.5 was too harsh — paraphrased legal text consistently
+    # scores 0.3-0.5 even when the cited passage clearly supports it
+    # (battery v2 weak-support rates of 30-60% per subject confirmed this).
+    nli_weak_support_below: float = 0.35
     nli_model: str = "MoritzLaurer/DeBERTa-v3-base-mnli"
     answer_fast_enabled: bool = False     # disabled in production
+    # Auto-cite: lexical 4-gram recall fallback when the LLM forgets the
+    # inline [N]. The chosen passage still has to clear NLI in step 3, so
+    # this can never let a hallucinated claim through — it just keeps the
+    # strict-stop from killing answers that small Q4 models would otherwise
+    # ship un-cited. Threshold 0.5 = the sentence's 4-grams must be at least
+    # 50% covered by the passage.
+    auto_cite_enabled: bool = True
+    auto_cite_min_recall: float = 0.4
 
     # Provenance gate (PLAN §10.1 + provenance system).
     # In production, retrieval must only return chunks from documents whose

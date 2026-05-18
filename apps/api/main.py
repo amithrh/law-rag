@@ -208,7 +208,12 @@ async def answer(req: AnswerRequest):
 
         # Mutable state — closured into _check_and_emit so the strict-stop
         # check runs identically in the streaming-loop and final-flush paths.
-        state = {"emitted": 0, "unsupported": 0, "skip_threshold": settings.skip_ratio_stop}
+        state = {
+            "emitted": 0,
+            "unsupported": 0,
+            "skip_threshold": settings.skip_ratio_stop,
+            "min_unsupported": settings.min_unsupported_before_stop,
+        }
 
         def _stop_event() -> dict:
             return {"event": "stop", "data": json.dumps({
@@ -221,10 +226,26 @@ async def answer(req: AnswerRequest):
                 "emitted_count": state["emitted"],
             })}
 
-        def _emit_and_check(v: SentenceVerification) -> tuple[dict, bool]:
-            """Return (sentence-event, should_stop_now). Updates counters + metrics."""
-            ev = _sentence_event(v)
-            if v.status in (SentenceStatus.UNSUPPORTED, SentenceStatus.UNKNOWN_CITATION):
+        def _emit_and_check(v: SentenceVerification) -> tuple[dict | None, bool]:
+            """Return (sentence-event-or-None, should_stop_now).
+
+            Per Codex adversarial review #1: we do NOT ship unsupported or
+            unknown-citation sentences to the user — they get SUPPRESSED
+            (event=None) while still counting against the stop budget. This
+            preserves the citation guarantee (no uncited legal claim ever
+            reaches the user) while letting harmless trailing fluff drop
+            silently instead of killing the whole answer.
+
+            Stop still fires when BOTH:
+              (a) ratio of unsupported/emitted exceeds skip_threshold, AND
+              (b) we've seen at least min_unsupported absolute count.
+            With suppression, stop firing means most of the answer was
+            uncited — a genuinely bad response — so the explicit banner
+            is the right UX."""
+            is_bad = v.status in (
+                SentenceStatus.UNSUPPORTED, SentenceStatus.UNKNOWN_CITATION,
+            )
+            if is_bad:
                 state["unsupported"] += 1
                 metrics.unsupported_total.labels(status=v.status.value).inc()
             elif v.status == SentenceStatus.WEAK_SUPPORT:
@@ -232,9 +253,13 @@ async def answer(req: AnswerRequest):
             if v.status != SentenceStatus.META:
                 state["emitted"] += 1
             triggered = (
-                state["emitted"]
+                state["unsupported"] >= state["min_unsupported"]
+                and state["emitted"]
                 and state["unsupported"] / max(1, state["emitted"]) > state["skip_threshold"]
             )
+            # Suppress: don't yield bad sentences. The counters still tick;
+            # if the answer is broadly uncited, `triggered` fires.
+            ev = None if is_bad else _sentence_event(v)
             return ev, triggered
 
         buf = ""
@@ -247,15 +272,32 @@ async def answer(req: AnswerRequest):
                     first_token_seen = True
                 buf += delta
                 sentences = segment_sentences(buf)
-                if len(sentences) <= 1:
+                # Keep the LAST TWO segments in the buffer (1-sentence lookahead).
+                # pysbd has no lookahead — a buffer ending in "Cr.P." will be
+                # split there even though "C. [1]" is about to arrive in the
+                # next token. Holding the tail sentence lets a later delta
+                # re-merge the false split.
+                #
+                # CRITICAL: slice the ORIGINAL buf rather than joining the
+                # segmented sentences back together. pysbd strips/normalizes
+                # whitespace between segments, and re-joining with " "
+                # injects spaces where the original had none ("Cr.P.\n"+"C."
+                # → "Cr.P. C." → pysbd splits this forever). Sliced original
+                # buf preserves the LLM's exact byte stream.
+                if len(sentences) < 3:
                     continue
-                ready = sentences[:-1]
-                buf = sentences[-1]
+                ready = sentences[:-2]
+                # Find where the last two sentences begin in buf by searching
+                # for their text. pysbd stripped them so use lstrip-aware
+                # search.
+                tail_start = _find_tail_start(buf, sentences[-2])
+                buf = buf[tail_start:] if tail_start >= 0 else " ".join(sentences[-2:])
 
                 for sent in ready:
                     v = verify_sentence(sent, idx_map, skip_nli=req.skip_nli)
                     sentence_ev, should_stop = _emit_and_check(v)
-                    yield sentence_ev
+                    if sentence_ev is not None:
+                        yield sentence_ev
                     if should_stop:
                         metrics.stopped_total.inc()
                         yield _stop_event()
@@ -263,18 +305,22 @@ async def answer(req: AnswerRequest):
                         _record_final_metrics(state, llm_t0)
                         return
 
-            # Flush the tail. Strict-stop check applies here too — a wrong
-            # final sentence is just as much a citation-correctness defect.
+            # Flush the tail. Stream is done so there's no lookahead value
+            # left — emit every remaining sentence. Strict-stop check applies
+            # here too — a wrong final sentence is just as much a citation-
+            # correctness defect.
             if buf.strip():
-                v = verify_sentence(buf.strip(), idx_map, skip_nli=req.skip_nli)
-                sentence_ev, should_stop = _emit_and_check(v)
-                yield sentence_ev
-                if should_stop:
-                    metrics.stopped_total.inc()
-                    yield _stop_event()
-                    yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
-                    _record_final_metrics(state, llm_t0)
-                    return
+                for sent in segment_sentences(buf):
+                    v = verify_sentence(sent, idx_map, skip_nli=req.skip_nli)
+                    sentence_ev, should_stop = _emit_and_check(v)
+                    if sentence_ev is not None:
+                        yield sentence_ev
+                    if should_stop:
+                        metrics.stopped_total.inc()
+                        yield _stop_event()
+                        yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                        _record_final_metrics(state, llm_t0)
+                        return
 
             # Final disclaimer event — always
             yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
@@ -286,6 +332,17 @@ async def answer(req: AnswerRequest):
     return EventSourceResponse(event_stream())
 
 
+def _find_tail_start(buf: str, second_to_last: str) -> int:
+    """Locate where the second-to-last segmented sentence starts inside the
+    original buffer text. pysbd strips outer whitespace and may normalize
+    internal whitespace; we look for the first ~16-char prefix that survives
+    intact, then return that index. Falls back to -1 if not found."""
+    needle = second_to_last.strip()[:16]
+    if not needle:
+        return -1
+    return buf.find(needle)
+
+
 def _sentence_event(v: SentenceVerification) -> dict:
     return {
         "event": "sentence",
@@ -295,6 +352,7 @@ def _sentence_event(v: SentenceVerification) -> dict:
             "citations": v.citations,
             "entailment_score": v.entailment_score,
             "reason": v.reason,
+            "auto_cited": v.auto_cited,
         }),
     }
 

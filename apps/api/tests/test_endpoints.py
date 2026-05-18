@@ -194,16 +194,17 @@ def test_answer_emits_coverage_passages_and_sentences(monkeypatch):
 
 
 @pytest.mark.needs_stack
-def test_answer_strict_stop_on_uncited_sentence(monkeypatch):
-    """SKIP_RATIO_STOP=0 default — any unsupported sentence kills the stream."""
+def test_answer_suppresses_single_uncited_sentence(monkeypatch):
+    """Per Codex review #1: uncited sentences must NOT be emitted to the
+    user stream. They get suppressed (event=None) while still counting
+    against the stop budget. The user sees a clean answer without the
+    bad sentence; no red-strikethrough display."""
     from apps.api import main as api_main
 
-    # Sentence 1 has a citation; sentence 2 doesn't. With strict default,
-    # sentence 2 should trigger a `stop` event.
     fake = _FakeStream(
         "**Short answer**\n",
         "The consumer can file a complaint [1]. ",
-        "They will probably win their case.",  # no citation
+        "They will probably win their case.",  # no citation — SUPPRESSED
     )
     monkeypatch.setattr(api_main, "stream_chat", fake)
 
@@ -214,24 +215,61 @@ def test_answer_strict_stop_on_uncited_sentence(monkeypatch):
             "skip_nli": True,
         }) as r:
             assert r.status_code == 200
-            event_names = []
-            stop_data = None
+            event_names: list[str] = []
+            sentence_texts: list[str] = []
+            current: str | None = None
             for line in r.iter_lines():
                 if not line:
+                    current = None
                     continue
                 if line.startswith("event:"):
-                    cur = line.split(":", 1)[1].strip()
-                    event_names.append(cur)
-                elif line.startswith("data:") and event_names and event_names[-1] == "stop":
+                    current = line.split(":", 1)[1].strip()
+                    event_names.append(current)
+                elif line.startswith("data:") and current == "sentence":
                     try:
-                        stop_data = json.loads(line.split(":", 1)[1].strip())
+                        d = json.loads(line.split(":", 1)[1].strip())
+                        sentence_texts.append(d.get("text", ""))
                     except json.JSONDecodeError:
                         pass
 
-            assert "stop" in event_names, f"expected stop event, got: {event_names}"
-            assert stop_data is not None
-            assert stop_data["reason"] == "insufficient_support"
-            assert "narrowing" in stop_data["message"] or "lawyer" in stop_data["message"]
+            # The uncited sentence MUST NOT appear in the user-visible stream.
+            assert not any("probably win" in s for s in sentence_texts), (
+                f"uncited sentence leaked to user: {sentence_texts}"
+            )
+            # And with min_unsupported_before_stop=2, a single drop must not
+            # trigger the stop banner.
+            assert "stop" not in event_names, (
+                f"single uncited sentence should not stop the stream, got: {event_names}"
+            )
+
+
+@pytest.mark.needs_stack
+def test_answer_stops_when_unsupported_dominate(monkeypatch):
+    """Stop still fires when ≥2 unsupported AND ratio > skip_threshold."""
+    from apps.api import main as api_main
+
+    fake = _FakeStream(
+        "**Short answer**\n",
+        "The consumer can file a complaint [1]. ",
+        "They will win their case. ",         # uncited #1
+        "The court will award costs. ",        # uncited #2
+        "And the police will help.",            # uncited #3
+    )
+    monkeypatch.setattr(api_main, "stream_chat", fake)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order broken refund",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            assert r.status_code == 200
+            event_names = [
+                line.split(":", 1)[1].strip()
+                for line in r.iter_lines()
+                if line.startswith("event:")
+            ]
+            assert "stop" in event_names, f"expected stop, got {event_names}"
 
 
 @pytest.mark.needs_stack
