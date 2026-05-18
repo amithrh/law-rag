@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -114,7 +115,15 @@ class AnswerRequest(BaseModel):
     sources: list[str] | None = None
     subjects: list[str] | None = None
     top_k: int = 8           # passages handed to the LLM
-    skip_nli: bool = False   # /answer-fast variant; NLI on by default since Q1 bench (p95 72ms) makes it viable
+    # `skip_nli` is a CLIENT HINT, not a directive. Per round-3 review
+    # (security #4): exposing it as a free toggle let a caller `curl ...
+    # -d '{"skip_nli":true}'` and bypass NLI for every cited sentence,
+    # shipping fabricated content with valid [N] indices. The server
+    # honours this flag ONLY when settings.answer_fast_enabled=True
+    # (an env-gated /answer-fast mode). In production
+    # (answer_fast_enabled=False), the client hint is ignored and NLI
+    # always runs.
+    skip_nli: bool = False
 
 
 def _make_passages(retrieved: list[RetrievedChunk], n: int) -> tuple[list[dict], dict[int, str]]:
@@ -159,6 +168,12 @@ async def answer(req: AnswerRequest):
     src_filter_label = ",".join(sorted(req.sources)) if req.sources else "all"
     metrics.query_total.labels(source_filter=src_filter_label).inc()
 
+    # NLI policy: the client hint is honoured ONLY when fast-mode is
+    # enabled server-side. In production (answer_fast_enabled=False)
+    # NLI always runs, regardless of what the request asks for. See
+    # AnswerRequest comment + round-3 review #4.
+    skip_nli = req.skip_nli and settings.answer_fast_enabled
+
     # Retrieve
     src_types = req.sources
     subj = req.subjects
@@ -183,14 +198,36 @@ async def answer(req: AnswerRequest):
     # know" prose grounded in tangential passages. Refuse honestly instead.
     # Threshold derived empirically: in-slice queries score 0.6-0.9 at top;
     # out-of-slice (tenant, IP, "swallow") score < 0.15.
-    top_rerank = max(
-        (h.rerank_score for h in retrieved if h.rerank_score is not None),
-        default=None,
-    )
-    if (
-        top_rerank is not None
-        and top_rerank < settings.refuse_below_rerank
-    ):
+    #
+    # Per Codex review (round 2) #3: the gate must fail CLOSED when rerank
+    # scores are absent — the original implementation skipped the gate when
+    # `top_rerank is None`, which is precisely the degraded state (reranker
+    # disabled/unavailable/predict failure) where out-of-slice queries
+    # would slip through. If reranking is enabled in config but scores are
+    # missing, treat it as service degraded and refuse.
+    rerank_scores = [h.rerank_score for h in retrieved if h.rerank_score is not None]
+    top_rerank = max(rerank_scores, default=None)
+    if settings.rerank_enabled and top_rerank is None:
+        # Reranker is supposed to be running but produced no scores.
+        # Fail closed.
+        metrics.refused_total.inc()
+        logger.warning(
+            "coverage-gate refusal: reranker enabled but no rerank scores "
+            "produced (degraded service) for query %r",
+            req.q[:120],
+        )
+        async def degraded():
+            yield {"event": "refused", "data": json.dumps({
+                "message": "The retrieval service is in a degraded state right "
+                           "now (the reranker did not return scores). I won't "
+                           "answer without that quality signal. Please try again "
+                           "shortly, or talk to a lawyer for your specific "
+                           "situation.",
+                "reason": "rerank_unavailable",
+                "disclaimer": DISCLAIMER_FOOTER,
+            })}
+        return EventSourceResponse(degraded())
+    if top_rerank is not None and top_rerank < settings.refuse_below_rerank:
         metrics.refused_total.inc()
         logger.info("coverage-gate refusal: top_rerank=%.3f < %.3f for query %r",
                     top_rerank, settings.refuse_below_rerank, req.q[:120])
@@ -202,9 +239,34 @@ async def answer(req: AnswerRequest):
                            "situation, or rephrase the question to focus on the "
                            "specific law or section you're asking about.",
                 "top_rerank_score": round(top_rerank, 3),
+                "reason": "low_coverage",
                 "disclaimer": DISCLAIMER_FOOTER,
             })}
         return EventSourceResponse(low_coverage())
+
+    # Per round-3 review (security #5): when reranker is disabled in
+    # config (operator chose ablation), the rerank-based gate above
+    # can't fire — fall back to a calibrated combined-score gate on the
+    # BM25+dense fusion so out-of-slice queries can't leak through the
+    # disabled-rerank state.
+    if not settings.rerank_enabled:
+        top_combined = max((h.combined_score for h in retrieved), default=0.0)
+        if top_combined < settings.refuse_below_combined:
+            metrics.refused_total.inc()
+            logger.info(
+                "coverage-gate (no-rerank) refusal: top_combined=%.3f < %.3f for query %r",
+                top_combined, settings.refuse_below_combined, req.q[:120],
+            )
+            async def low_dense():
+                yield {"event": "refused", "data": json.dumps({
+                    "message": "I don't have sources that clearly cover your question. "
+                               "I won't guess. You should talk to a lawyer for your "
+                               "specific situation, or rephrase the question.",
+                    "top_combined_score": round(top_combined, 3),
+                    "reason": "low_coverage_dense_fallback",
+                    "disclaimer": DISCLAIMER_FOOTER,
+                })}
+            return EventSourceResponse(low_dense())
 
     passages, idx_map = _make_passages(retrieved, req.top_k)
 
@@ -241,6 +303,14 @@ async def answer(req: AnswerRequest):
             "unsupported": 0,
             "skip_threshold": settings.skip_ratio_stop,
             "min_unsupported": settings.min_unsupported_before_stop,
+            # Per Codex review (round 2) #4: the model can't be trusted to
+            # author the Sources section — a fabricated "[1] SC — INVENTED
+            # CASE v. SOMEONE, 2007, para 99." passes the [N] index check
+            # while the case name is fiction. We strip everything between
+            # the "**Sources**" header and the next major section header
+            # (or end-of-stream) and emit our own authoritative sources
+            # event from the retrieved metadata after the answer.
+            "in_sources_section": False,
         }
 
         def _stop_event() -> dict:
@@ -270,12 +340,48 @@ async def answer(req: AnswerRequest):
             With suppression, stop firing means most of the answer was
             uncited — a genuinely bad response — so the explicit banner
             is the right UX."""
+            # Detect Sources-section boundary. Per round-3 review (security
+            # finding #1) the model can write the header in many shapes
+            # — "**Sources**", "## Sources", "Sources:", "SOURCES",
+            # "References:", "** Sources **" — and any of those followed by
+            # "[N] FAKE CASE v MADE UP, 2099" would ship as OK (valid [N]).
+            # Match TOLERANTLY: any line that, after stripping markdown
+            # markup, is just the word "sources" or "references".
+            if _SOURCES_HEADER_RE.match(v.text.strip()):
+                state["in_sources_section"] = True
+                return None, False  # drop the header itself
+            if state["in_sources_section"]:
+                # End suppression on ANY major section header so an
+                # answer that omits **Disclaimer** doesn't suppress its
+                # entire trailing prose. Sources is the LAST section in
+                # our template, so any other header means the model has
+                # moved on (it shouldn't, but be defensive).
+                if _MAJOR_HEADER_RE.match(v.text.strip()):
+                    state["in_sources_section"] = False
+                    # Don't fall through — re-check below as a fresh sentence.
+                else:
+                    return None, False  # inside Sources, drop
+
             is_bad = v.status in (
                 SentenceStatus.UNSUPPORTED, SentenceStatus.UNKNOWN_CITATION,
             )
-            if is_bad:
+            # Per Codex review (round 2) #2: auto-cited sentences are
+            # citation-by-lexical-overlap, NOT by entailment. If NLI cleared
+            # them (status=OK) they're safe to emit. If NLI flagged them as
+            # WEAK or was unavailable, they MUST be suppressed — a lexical
+            # match without entailment confirmation is not citation evidence
+            # and shipping it as cited prose breaks the citation guarantee.
+            is_unconfirmed_auto_cite = (
+                v.status == SentenceStatus.WEAK_SUPPORT and v.auto_cited
+            )
+            suppress = is_bad or is_unconfirmed_auto_cite
+            if is_bad or is_unconfirmed_auto_cite:
                 state["unsupported"] += 1
-                metrics.unsupported_total.labels(status=v.status.value).inc()
+                # Use the closest existing status label for the metric so
+                # the suppression rate is observable.
+                metrics.unsupported_total.labels(
+                    status=v.status.value if is_bad else "weak_auto_cite",
+                ).inc()
             elif v.status == SentenceStatus.WEAK_SUPPORT:
                 metrics.weak_support_total.inc()
             if v.status != SentenceStatus.META:
@@ -285,9 +391,7 @@ async def answer(req: AnswerRequest):
                 and state["emitted"]
                 and state["unsupported"] / max(1, state["emitted"]) > state["skip_threshold"]
             )
-            # Suppress: don't yield bad sentences. The counters still tick;
-            # if the answer is broadly uncited, `triggered` fires.
-            ev = None if is_bad else _sentence_event(v)
+            ev = None if suppress else _sentence_event(v)
             return ev, triggered
 
         buf = ""
@@ -322,7 +426,7 @@ async def answer(req: AnswerRequest):
                 buf = buf[tail_start:] if tail_start >= 0 else " ".join(sentences[-2:])
 
                 for sent in ready:
-                    v = verify_sentence(sent, idx_map, skip_nli=req.skip_nli)
+                    v = verify_sentence(sent, idx_map, skip_nli=skip_nli)
                     sentence_ev, should_stop = _emit_and_check(v)
                     if sentence_ev is not None:
                         yield sentence_ev
@@ -339,7 +443,7 @@ async def answer(req: AnswerRequest):
             # correctness defect.
             if buf.strip():
                 for sent in segment_sentences(buf):
-                    v = verify_sentence(sent, idx_map, skip_nli=req.skip_nli)
+                    v = verify_sentence(sent, idx_map, skip_nli=skip_nli)
                     sentence_ev, should_stop = _emit_and_check(v)
                     if sentence_ev is not None:
                         yield sentence_ev
@@ -350,6 +454,23 @@ async def answer(req: AnswerRequest):
                         _record_final_metrics(state, llm_t0)
                         return
 
+            # Server-authored authoritative Sources event. Per Codex review
+            # (round 2) #4, the LLM is no longer allowed to author the
+            # Sources section because it can fabricate case names while
+            # using a real [N] index. The UI renders this `sources` event
+            # exactly as-is from the retrieval result.
+            yield {"event": "sources", "data": json.dumps([
+                {
+                    "index": p["index"],
+                    "title": p["title"],
+                    "court": p["court"],
+                    "citation": p["citation"],
+                    "anchor": p["anchor"],
+                    "as_at": p["as_at"],
+                }
+                for p in passages
+            ])}
+
             # Final disclaimer event — always
             yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
             _record_final_metrics(state, llm_t0)
@@ -358,6 +479,18 @@ async def answer(req: AnswerRequest):
             yield {"event": "error", "data": json.dumps({"message": str(e)})}
 
     return EventSourceResponse(event_stream())
+
+
+# Section-header detectors used by the Sources-stripping path. Match
+# tolerantly so the model can't slip a fabricated source list through by
+# varying the header style. See main.py:_emit_and_check Sources branch.
+_SOURCES_HEADER_RE = re.compile(
+    r"^\s*(?:#{1,6}\s*)?(?:\*\*\s*)?(sources?|references?|bibliography)(?:\s*\*\*)?\s*:?\s*$",
+    re.IGNORECASE,
+)
+_MAJOR_HEADER_RE = re.compile(
+    r"^\s*(?:#{1,6}\s*)?\*\*\s*[A-Za-z][^*]+?\*\*\s*:?\s*$"
+)
 
 
 def _find_tail_start(buf: str, second_to_last: str) -> int:

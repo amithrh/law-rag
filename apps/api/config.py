@@ -105,6 +105,15 @@ class Settings(BaseSettings):
     # scores 0.3-0.5 even when the cited passage clearly supports it
     # (battery v2 weak-support rates of 30-60% per subject confirmed this).
     nli_weak_support_below: float = 0.35
+    # Per round-3 review (security #2): any cited sentence whose NLI score
+    # falls below this hard floor is treated as UNSUPPORTED regardless of
+    # `auto_cited` and SUPPRESSED from the user stream. The previous
+    # WEAK_SUPPORT-with-badge behavior let fabricated content
+    # (invented section numbers, made-up sub-section dates) ship as long
+    # as the [N] index was real. Floor 0.10 is well below the typical
+    # paraphrase scoring band (0.20-0.50) so genuine paraphrase still
+    # surfaces as WEAK with a badge.
+    nli_hard_floor: float = 0.10
     nli_model: str = "MoritzLaurer/DeBERTa-v3-base-mnli"
     answer_fast_enabled: bool = False     # disabled in production
     # Auto-cite: lexical 4-gram recall fallback when the LLM forgets the
@@ -120,6 +129,13 @@ class Settings(BaseSettings):
     # for the top hit; out-of-slice (e.g., tenancy / tax / IP / nonsense)
     # score < 0.15. Threshold 0.3 is well between the two.
     refuse_below_rerank: float = 0.3
+    # Per round-3 review (security #5): when rerank is disabled in config
+    # (ablation / model-unavailable), the rerank-based gate can't fire and
+    # out-of-slice queries used to leak through. Fall back to a calibrated
+    # combined-score threshold (BM25 + dense fusion). Threshold tuned
+    # conservatively: in-slice top combined_score is typically > 0.5; the
+    # original online-refund tangent ran at ~0.15-0.25 combined.
+    refuse_below_combined: float = 0.35
 
     # Provenance gate (PLAN §10.1 + provenance system).
     # In production, retrieval must only return chunks from documents whose

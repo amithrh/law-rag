@@ -72,15 +72,23 @@ _META_PATTERNS = [
 # cited claim that happens to start with "Based on…" still gets verified.
 # Without this whitelist, small Q4 models trip strict-stop on their opening
 # transition sentence even when the rest of the answer cites correctly.
+# Per Codex review (round 2) #1: the preamble whitelist must ONLY match
+# phrases that explicitly frame the response as drawn from the retrieved
+# sources. Generic "according to" / "based on" / sentences ending in ":"
+# would let real legal claims like "According to Section 154(3), you can
+# complain to the Superintendent of Police." slip through as META. Match
+# only the narrow set of source-framing openings; nothing else.
 _PREAMBLE_PATTERNS = [
-    re.compile(r"^\s*(based on|according to|looking at|in response to|here (are|is)|from the (provided|retrieved) (cases|passages|sources)|the (provided|retrieved) (cases|passages|sources)) ", re.IGNORECASE),
-    re.compile(r"^\s*(below|here)\s+(are|is)\s+(the|a|some)\b", re.IGNORECASE),
-    re.compile(r"^\s*(let me|i'?ll|let's) (explain|walk you through|address)", re.IGNORECASE),
-    # Sentences that end with ":" are introducing a list, not making a claim.
-    # The cited claims appear in the list items that follow. Conservative —
-    # only match when no citation is in the sentence (the outer check
-    # guarantees that).
-    re.compile(r":\s*$"),
+    re.compile(
+        r"^\s*("
+        r"based on (the )?(provided|retrieved) (passages|cases|sources)"
+        r"|according to (the )?(provided|retrieved) (passages|cases|sources)"
+        r"|from (the )?(provided|retrieved) (passages|cases|sources)"
+        r"|the (provided|retrieved) (passages|cases|sources)"
+        r"|here (are|is) (the )?(key |main )?(points|highlights) (from|in) (the )?(passages|cases|sources)"
+        r")\b",
+        re.IGNORECASE,
+    ),
 ]
 
 # [n] or [n][m] or [n,m] tag patterns.
@@ -503,17 +511,35 @@ def verify_sentence(
             max_score = sc
 
     if nli_unavailable and max_score is None:
-        # NLI is unavailable and we couldn't score any passage. For
-        # auto-cited sentences this is unsafe (lexical-only match with no
-        # entailment confirmation) — fail closed to WEAK_SUPPORT so the
-        # UI badges it and downstream consumers can drop it. For
-        # explicitly-cited sentences this matches prior behavior.
+        # NLI is unavailable and we couldn't score any passage. Per
+        # round-3 review (security #3): fail CLOSED for explicit-cite too.
+        # Previously we returned OK for explicit-cite on NLI-unavailable,
+        # which meant a degraded-NLI state silently downgraded the
+        # entailment guarantee to coverage-only. Return WEAK_SUPPORT for
+        # both paths so the downstream suppress-logic in main.py can
+        # decide what to ship (auto-cite suppressed always; explicit-cite
+        # WEAK_SUPPORT shipped with badge by current policy, but available
+        # for tighter policies).
         return SentenceVerification(
             text=sentence,
-            status=SentenceStatus.WEAK_SUPPORT if auto_cited else SentenceStatus.OK,
+            status=SentenceStatus.WEAK_SUPPORT,
             citations=citations,
             reason="nli unavailable; "
-                   + ("auto-cite cannot confirm entailment" if auto_cited else "coverage-only verdict"),
+                   + ("auto-cite cannot confirm entailment" if auto_cited else "explicit-cite entailment unconfirmed"),
+            auto_cited=auto_cited,
+        )
+
+    # Per round-3 review (security #2): hard floor on NLI. Below this,
+    # the cited passage so weakly entails the sentence that we treat it
+    # as UNSUPPORTED — the [N] index is real but the content isn't
+    # actually supported. Suppresses fabricated section numbers,
+    # invented dates, hallucinated holdings that happen to share a topic
+    # word with a real passage.
+    if max_score is not None and max_score < s.nli_hard_floor:
+        return SentenceVerification(
+            text=sentence, status=SentenceStatus.UNSUPPORTED,
+            citations=citations, entailment_score=max_score,
+            reason=f"max entailment {max_score:.2f} < hard floor {s.nli_hard_floor:.2f}",
             auto_cited=auto_cited,
         )
 

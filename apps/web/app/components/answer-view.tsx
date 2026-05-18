@@ -9,6 +9,7 @@ import type {
   PassageEvent,
   RefusedEvent,
   SentenceEvent,
+  SourcesEvent,
   StopEvent,
 } from "../lib/types";
 import { CoverageChip } from "./coverage-chip";
@@ -19,6 +20,11 @@ interface AnswerState {
   pending: boolean;
   coverage: CoverageEvent | null;
   passages: PassageEvent[];
+  // Server-authored authoritative source list (round-3). The UI prefers
+  // this over `passages` when present — it's emitted at end-of-stream
+  // and may diverge from the early retrieval snapshot once we add
+  // post-filtering / redaction.
+  sources: SourcesEvent | null;
   sentences: SentenceEvent[];
   stop: StopEvent | null;
   refused: RefusedEvent | null;
@@ -32,6 +38,7 @@ const INITIAL: AnswerState = {
   pending: false,
   coverage: null,
   passages: [],
+  sources: null,
   sentences: [],
   stop: null,
   refused: null,
@@ -174,7 +181,14 @@ export function AnswerView() {
 
       <section className="mt-6">
         {state.refused && (
-          <Notice tone="amber" title="Not enough sources for this question">
+          <Notice
+            tone={state.refused.reason === "rerank_unavailable" ? "red" : "amber"}
+            title={
+              state.refused.reason === "rerank_unavailable"
+                ? "Search service is having trouble"
+                : "Not enough sources for this question"
+            }
+          >
             {state.refused.message}
           </Notice>
         )}
@@ -217,29 +231,53 @@ export function AnswerView() {
           </Notice>
         )}
 
-        {state.passages.length > 0 && (
-          <details className="mt-6 rounded-lg bg-white p-4 text-sm shadow-sm ring-1 ring-stone-200">
-            <summary className="cursor-pointer font-medium text-stone-800">
-              Sources ({state.passages.length})
-            </summary>
-            <ol className="mt-3 space-y-3">
-              {state.passages.map((p) => (
-                <li key={p.index} className="border-l-2 border-stone-300 pl-3">
-                  <span className="block">
-                    <span className="font-medium text-stone-900">
-                      [{p.index}] {p.title}
+        {(() => {
+          // Prefer the server-authored authoritative source list. Fall
+          // back to the early retrieval `passages` snapshot if the
+          // sources event hasn't arrived yet (mid-stream or stream cut
+          // short).
+          const list: PassageEvent[] | null = state.sources ?? (
+            state.passages.length > 0 ? state.passages : null
+          );
+          if (!list) return null;
+          // Limit to indices the answer actually referenced — otherwise
+          // we'd dump all retrieved passages even though only some were
+          // cited.
+          const cited = new Set<number>();
+          for (const s of state.sentences) {
+            for (const c of s.citations ?? []) cited.add(c);
+          }
+          const display = cited.size > 0
+            ? list.filter((p) => cited.has(p.index))
+            : list;
+          if (display.length === 0) return null;
+          return (
+            <details
+              className="mt-6 rounded-lg bg-white p-4 text-sm shadow-sm ring-1 ring-stone-200"
+              open={display.length <= 4}
+            >
+              <summary className="cursor-pointer font-medium text-stone-800">
+                Sources cited in this answer ({display.length})
+              </summary>
+              <ol className="mt-3 space-y-3">
+                {display.map((p) => (
+                  <li key={p.index} className="border-l-2 border-stone-300 pl-3">
+                    <span className="block">
+                      <span className="font-medium text-stone-900">
+                        [{p.index}] {p.title}
+                      </span>
                     </span>
-                  </span>
-                  <span className="block text-xs text-stone-500">
-                    {p.court ? `${p.court} · ` : ""}
-                    {p.citation ?? p.anchor}
-                    {p.as_at ? ` · as-at ${p.as_at}` : ""}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </details>
-        )}
+                    <span className="block text-xs text-stone-500">
+                      {p.court ? `${p.court} · ` : ""}
+                      {p.citation ?? p.anchor}
+                      {p.as_at ? ` · as-at ${p.as_at}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          );
+        })()}
 
         {(state.disclaimer || state.refused?.disclaimer) && (
           <p className="mt-6 border-t border-stone-200 pt-4 text-xs text-stone-500">
@@ -290,6 +328,10 @@ function applyEvent(s: AnswerState, event: string, data: unknown): AnswerState {
       return { ...s, stop: data as StopEvent };
     case "refused":
       return { ...s, refused: data as RefusedEvent };
+    case "sources":
+      // Server-authored authoritative source list — overrides the
+      // earlier `passages` snapshot for the final Sources block.
+      return { ...s, sources: data as SourcesEvent };
     case "disclaimer":
       return { ...s, disclaimer: (data as DisclaimerEvent).text };
     case "error":

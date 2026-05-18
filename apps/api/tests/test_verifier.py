@@ -176,11 +176,33 @@ class TestVerifySentence:
     # strict-stop would kill the answer on sentence 1 even when the rest of
     # the answer cites correctly.
 
-    def test_preamble_without_citation_is_meta(self) -> None:
-        s = "Based on the cases provided, here are the key points regarding FIR registration."
+    def test_preamble_source_framing_is_meta(self) -> None:
+        """Narrow whitelist (post round-2 Codex review): only sentences that
+        explicitly frame as drawn from sources qualify as preamble META."""
+        s = "Based on the provided passages, here are the key points regarding FIR registration."
         v = verify_sentence(s, self.idx_map, skip_nli=True)
         assert v.status == SentenceStatus.META, (
             f"expected META preamble, got {v.status} ({v.reason})"
+        )
+
+    def test_preamble_does_NOT_match_generic_according_to(self) -> None:
+        """Codex round-2 #1: 'According to Section 154(3), you can complain'
+        is a legal claim. The old broad pattern marked it META and shipped.
+        Now it must be UNSUPPORTED (no [N]) and get suppressed."""
+        s = "According to Section 154(3), you can complain to the Superintendent of Police."
+        v = verify_sentence(s, self.idx_map, skip_nli=True)
+        assert v.status == SentenceStatus.UNSUPPORTED, (
+            f"sentence with 'According to Section X' but no [N] must be UNSUPPORTED, "
+            f"got {v.status}"
+        )
+
+    def test_preamble_does_NOT_match_colon_ended_claim(self) -> None:
+        """Codex round-2 #1: colon-ended sentences are NOT META. The old
+        generic colon rule let any list-introducer slip through."""
+        s = "The police must register your FIR for the following reasons:"
+        v = verify_sentence(s, self.idx_map, skip_nli=True)
+        assert v.status == SentenceStatus.UNSUPPORTED, (
+            f"colon-ended claim without [N] must be UNSUPPORTED, got {v.status}"
         )
 
     def test_preamble_with_citation_is_verified_normally(self) -> None:
@@ -190,16 +212,6 @@ class TestVerifySentence:
         v = verify_sentence(s, self.idx_map, skip_nli=True)
         assert v.status == SentenceStatus.OK
         assert v.citations == [1]
-
-    def test_preamble_here_are_pattern(self) -> None:
-        s = "Here are the steps you can take when the police refuse to register an FIR:"
-        v = verify_sentence(s, self.idx_map, skip_nli=True)
-        assert v.status == SentenceStatus.META
-
-    def test_preamble_let_me_explain_pattern(self) -> None:
-        s = "Let me explain how this works in practice."
-        v = verify_sentence(s, self.idx_map, skip_nli=True)
-        assert v.status == SentenceStatus.META
 
     def test_non_preamble_unsupported_still_fails(self) -> None:
         """Don't let the preamble whitelist mask real uncited claims."""
@@ -399,19 +411,21 @@ class TestNLIIntegration:
 
     @pytest.mark.needs_models
     @pytest.mark.slow
-    def test_verify_sentence_with_nli_marks_weak_support(self) -> None:
-        """A sentence whose cited passage doesn't entail it should be flagged
-        weak_support (entailment below threshold)."""
+    def test_verify_sentence_with_nli_marks_weak_or_unsupported(self) -> None:
+        """A sentence whose cited passage doesn't entail it should be flagged.
+        Per round-3 review (security #2), entailment below the hard floor
+        (0.10) is UNSUPPORTED (fabricated amounts/numbers). Above the floor
+        but below the weak threshold is WEAK_SUPPORT. Either outcome is a
+        correct surfacing of the discrepancy."""
         idx_map = {
             1: "The court awarded costs of Rs. 50,000 to the petitioner.",
         }
-        # Hypothesis claims something not supported by the premise (different amount)
+        # Hypothesis claims a different amount → either WEAK or UNSUPPORTED.
         sentence = "The court awarded Rs. 5,00,000 in compensation [1]."
         v = verify_sentence(sentence, idx_map, skip_nli=False, nli_threshold=0.5)
-        # Either weak_support OR ok with low score; both surface the discrepancy
         assert v.entailment_score is not None
         assert v.entailment_score < 0.5, f"expected low entailment, got {v.entailment_score}"
-        assert v.status == SentenceStatus.WEAK_SUPPORT
+        assert v.status in (SentenceStatus.WEAK_SUPPORT, SentenceStatus.UNSUPPORTED), v.status
 
     @pytest.mark.needs_models
     @pytest.mark.slow
