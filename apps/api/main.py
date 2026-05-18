@@ -233,12 +233,13 @@ async def answer(req: AnswerRequest):
                     top_rerank, settings.refuse_below_rerank, req.q[:120])
         async def low_coverage():
             yield {"event": "refused", "data": json.dumps({
-                "message": "I don't have sources in this index that clearly cover "
-                           "your question. I won't guess from tangentially related "
-                           "judgments. You should talk to a lawyer for your specific "
-                           "situation, or rephrase the question to focus on the "
-                           "specific law or section you're asking about.",
-                "top_rerank_score": round(top_rerank, 3),
+                "message": "I couldn't find sources in this index that clearly "
+                           "cover your question. I won't make something up from "
+                           "tangentially related judgments. Try asking the same "
+                           "question more concretely — for example "
+                           "'my landlord won't return my deposit' instead of "
+                           "'tenant rights' — or talk to a lawyer or legal-aid "
+                           "service for your specific situation.",
                 "reason": "low_coverage",
                 "disclaimer": DISCLAIMER_FOOTER,
             })}
@@ -259,10 +260,10 @@ async def answer(req: AnswerRequest):
             )
             async def low_dense():
                 yield {"event": "refused", "data": json.dumps({
-                    "message": "I don't have sources that clearly cover your question. "
-                               "I won't guess. You should talk to a lawyer for your "
-                               "specific situation, or rephrase the question.",
-                    "top_combined_score": round(top_combined, 3),
+                    "message": "I couldn't find sources that clearly cover your "
+                               "question. Try asking more concretely, or talk to "
+                               "a lawyer or legal-aid service for your specific "
+                               "situation.",
                     "reason": "low_coverage_dense_fallback",
                     "disclaimer": DISCLAIMER_FOOTER,
                 })}
@@ -311,6 +312,16 @@ async def answer(req: AnswerRequest):
             # (or end-of-stream) and emit our own authoritative sources
             # event from the retrieved metadata after the answer.
             "in_sources_section": False,
+            # Strip the model's "**Disclaimer**" block the same way —
+            # the server emits the canonical disclaimer event at end of
+            # stream, so the model's version is just a duplicate (real
+            # user reports showed "**Disclaimer** ..." rendered twice).
+            "in_disclaimer_section": False,
+            # Dedupe normalized sentence text — small Q4 models routinely
+            # loop, emitting the same bullet 4-5 times in a row. The
+            # verifier passes each one individually but the UX is broken.
+            # Drop verbatim repeats.
+            "seen_sentences": set(),
         }
 
         def _stop_event() -> dict:
@@ -323,6 +334,13 @@ async def answer(req: AnswerRequest):
                 "unsupported_count": state["unsupported"],
                 "emitted_count": state["emitted"],
             })}
+
+        def _suppressed_marker() -> dict:
+            """Per round-3 UX review: a lightweight signal the UI renders as
+            "…" so users can see when a sentence was dropped. Without this,
+            the suppress path is invisible: the model wrote "X. Y (uncited).
+            Z." and the user sees "X. Z." as if Y never existed."""
+            return {"event": "suppressed", "data": json.dumps({})}
 
         def _emit_and_check(v: SentenceVerification) -> tuple[dict | None, bool]:
             """Return (sentence-event-or-None, should_stop_now).
@@ -350,17 +368,31 @@ async def answer(req: AnswerRequest):
             if _SOURCES_HEADER_RE.match(v.text.strip()):
                 state["in_sources_section"] = True
                 return None, False  # drop the header itself
-            if state["in_sources_section"]:
+            # Same treatment for the model's Disclaimer block — the server
+            # emits the canonical disclaimer at end-of-stream, so anything
+            # the model writes under "**Disclaimer**" is a duplicate.
+            if _DISCLAIMER_HEADER_RE.match(v.text.strip()):
+                state["in_disclaimer_section"] = True
+                return None, False
+            if state["in_sources_section"] or state["in_disclaimer_section"]:
                 # End suppression on ANY major section header so an
-                # answer that omits **Disclaimer** doesn't suppress its
-                # entire trailing prose. Sources is the LAST section in
-                # our template, so any other header means the model has
-                # moved on (it shouldn't, but be defensive).
+                # answer that omits the closing header doesn't suppress
+                # the rest of the stream. Both Sources and Disclaimer
+                # are last-ish sections; any other major header means
+                # the model moved on (defensive).
                 if _MAJOR_HEADER_RE.match(v.text.strip()):
                     state["in_sources_section"] = False
-                    # Don't fall through — re-check below as a fresh sentence.
+                    state["in_disclaimer_section"] = False
                 else:
-                    return None, False  # inside Sources, drop
+                    return None, False  # inside Sources/Disclaimer, drop
+
+            # Sentence dedupe — small models loop. Normalize and check.
+            normalized = _normalize_for_dedupe(v.text)
+            if normalized and normalized in state["seen_sentences"]:
+                logger.debug("dedupe: dropping repeated sentence %r", v.text[:80])
+                return None, False
+            if normalized:
+                state["seen_sentences"].add(normalized)
 
             is_bad = v.status in (
                 SentenceStatus.UNSUPPORTED, SentenceStatus.UNKNOWN_CITATION,
@@ -391,8 +423,12 @@ async def answer(req: AnswerRequest):
                 and state["emitted"]
                 and state["unsupported"] / max(1, state["emitted"]) > state["skip_threshold"]
             )
-            ev = None if suppress else _sentence_event(v)
-            return ev, triggered
+            if suppress:
+                # Lightweight marker so the UI can render "…" — see
+                # _suppressed_marker docstring. We return it as the event
+                # so the caller can yield it; counters still tick above.
+                return _suppressed_marker(), triggered
+            return _sentence_event(v), triggered
 
         buf = ""
         llm_t0 = time.perf_counter()
@@ -481,16 +517,32 @@ async def answer(req: AnswerRequest):
     return EventSourceResponse(event_stream())
 
 
-# Section-header detectors used by the Sources-stripping path. Match
-# tolerantly so the model can't slip a fabricated source list through by
-# varying the header style. See main.py:_emit_and_check Sources branch.
+# Section-header detectors used by the Sources/Disclaimer stripping path.
+# Match tolerantly so the model can't slip fabricated content through by
+# varying header style. See main.py:_emit_and_check.
 _SOURCES_HEADER_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:\*\*\s*)?(sources?|references?|bibliography)(?:\s*\*\*)?\s*:?\s*$",
+    re.IGNORECASE,
+)
+_DISCLAIMER_HEADER_RE = re.compile(
+    r"^\s*(?:#{1,6}\s*)?(?:\*\*\s*)?disclaimer(?:\s*\*\*)?\s*:?\s*$",
     re.IGNORECASE,
 )
 _MAJOR_HEADER_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?\*\*\s*[A-Za-z][^*]+?\*\*\s*:?\s*$"
 )
+
+
+def _normalize_for_dedupe(text: str) -> str:
+    """Normalize a sentence for verbatim-repeat detection. Strip leading
+    bullet markers, citation tags, surrounding whitespace, and casefold.
+    A sentence like "- You may apply ... [1][2]." and "  You may apply ...
+    [1] [2]" should compare equal."""
+    s = text.strip()
+    s = re.sub(r"^\s*[-*]\s*", "", s)
+    s = re.sub(r"\[\d+\]", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.lower().strip(" .;:")
 
 
 def _find_tail_start(buf: str, second_to_last: str) -> int:

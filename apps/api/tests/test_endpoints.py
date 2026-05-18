@@ -397,6 +397,104 @@ def test_answer_emits_server_authored_sources_event(monkeypatch):
 
 
 @pytest.mark.needs_stack
+def test_answer_drops_duplicate_bullets(monkeypatch):
+    """Real user output (wages query, 2026-05-18) showed gemma4 emitting
+    the same bullet 5 times in 'What you can do next'. The verifier
+    passed each one because it's properly cited; the UX was broken.
+    Server-side dedupe must drop verbatim repeats."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+
+    # Model emits the same bullet five times — classic small-model loop.
+    fake = _FakeStream(
+        "**Short answer**\n",
+        "You can recover unpaid wages by applying to the authority [1]. ",
+        "**What you can do next**\n",
+        "- Apply to the State authority within twelve months [1]. ",
+        "- Apply to the State authority within twelve months [1]. ",
+        "- Apply to the State authority within twelve months [1]. ",
+        "- Apply to the State authority within twelve months [1]. ",
+        "- Apply to the State authority within twelve months [1].",
+    )
+    monkeypatch.setattr(api_main, "stream_chat", fake)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "wages recovery", "top_k": 4, "skip_nli": True,
+        }) as r:
+            sentence_texts = []
+            current = None
+            for line in r.iter_lines():
+                if not line:
+                    current = None
+                    continue
+                if line.startswith("event:"):
+                    current = line.split(":", 1)[1].strip()
+                elif line.startswith("data:") and current == "sentence":
+                    d = json.loads(line.split(":", 1)[1].strip())
+                    sentence_texts.append(d.get("text", ""))
+
+            # The bullet should appear ONCE (first instance), not five times
+            bullet_count = sum(
+                1 for t in sentence_texts
+                if "Apply to the State authority within twelve months" in t
+            )
+            assert bullet_count == 1, (
+                f"expected 1 emission of looped bullet, got {bullet_count}: {sentence_texts}"
+            )
+
+
+@pytest.mark.needs_stack
+def test_answer_strips_model_disclaimer_section(monkeypatch):
+    """The server emits a canonical disclaimer event at end-of-stream.
+    Anything the model writes under '**Disclaimer**' is a duplicate and
+    must be suppressed — verified live UI showed two disclaimers."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+
+    fake = _FakeStream(
+        "**Short answer**\n",
+        "The District Forum has jurisdiction up to twenty lakh rupees [2]. ",
+        "**Disclaimer**\n",
+        "This is the model's own disclaimer text that we want suppressed. ",
+        "And another disclaimer sentence the model wrote. ",
+    )
+    monkeypatch.setattr(api_main, "stream_chat", fake)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "consumer forum", "top_k": 4, "skip_nli": True,
+        }) as r:
+            sentence_texts = []
+            current = None
+            for line in r.iter_lines():
+                if not line:
+                    current = None
+                    continue
+                if line.startswith("event:"):
+                    current = line.split(":", 1)[1].strip()
+                elif line.startswith("data:") and current == "sentence":
+                    d = json.loads(line.split(":", 1)[1].strip())
+                    sentence_texts.append(d.get("text", ""))
+
+            # Neither the model's "**Disclaimer**" header nor the
+            # subsequent prose may reach the user.
+            assert not any("**Disclaimer" in t for t in sentence_texts), (
+                f"Disclaimer header leaked: {sentence_texts}"
+            )
+            assert not any("model's own disclaimer" in t for t in sentence_texts), (
+                f"Model disclaimer prose leaked: {sentence_texts}"
+            )
+            assert not any("another disclaimer sentence" in t for t in sentence_texts), (
+                f"Second model disclaimer line leaked: {sentence_texts}"
+            )
+
+
+@pytest.mark.needs_stack
 def test_answer_strips_variant_sources_headers(monkeypatch):
     """Round-3 review (security #1): the model can write 'Sources' under
     many markdown forms ('## Sources', 'sources:', 'References:',
@@ -581,8 +679,14 @@ def test_answer_refuses_on_low_coverage(monkeypatch):
 
             assert "refused" in event_names, f"expected refused, got {event_names}"
             assert refused_data is not None
-            assert "top_rerank_score" in refused_data
-            assert refused_data["top_rerank_score"] == 0.1
+            # Per round-4 UX cleanup: top_rerank_score is logged server-side
+            # but kept OUT of the user-visible refused payload (engineering
+            # number, no value to a lay user). The `reason` tag is the
+            # public signal.
+            assert refused_data.get("reason") == "low_coverage"
+            assert "top_rerank_score" not in refused_data, (
+                f"top_rerank_score should not leak to UI: {refused_data}"
+            )
 
 
 @pytest.mark.needs_stack

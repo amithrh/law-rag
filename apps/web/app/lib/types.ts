@@ -56,6 +56,13 @@ export interface RefusedEvent {
 // event carries the canonical metadata from the retrieval result.
 export type SourcesEvent = PassageEvent[];
 
+// Lightweight marker emitted when the server suppresses an uncited or
+// weak-auto-cited sentence. UI renders as "…" so users can see that a
+// claim was dropped — the suppress path was previously invisible.
+export interface SuppressedEvent {
+  // Currently empty; reserved for future fields (e.g. count, reason).
+}
+
 export interface DisclaimerEvent {
   text: string;
 }

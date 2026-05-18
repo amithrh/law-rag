@@ -72,7 +72,11 @@ class Settings(BaseSettings):
 
     # LLM (Ollama)
     ollama_host_port: int = 11434
-    llm_model: str = "llama3.1:8b-instruct-q4_K_M"
+    # Per deep-research report (May 2026): qwen3:14b (Apache-2.0) — dense
+    # 14B, hybrid thinking (we disable via `think:false` in llm.py). Largest
+    # single-step quality jump over gemma4:e4b on instruction following +
+    # citation discipline while staying inside the Metal latency budget.
+    llm_model: str = "qwen3:14b"
     llm_max_tokens: int = 1024
 
     # Retrieval
@@ -114,7 +118,15 @@ class Settings(BaseSettings):
     # paraphrase scoring band (0.20-0.50) so genuine paraphrase still
     # surfaces as WEAK with a badge.
     nli_hard_floor: float = 0.10
-    nli_model: str = "MoritzLaurer/DeBERTa-v3-base-mnli"
+    # Per deep-research report (May 2026): upgraded from base-mnli (184M,
+    # general MNLI only) to the large variant trained on 5 datasets
+    # (MNLI + FEVER + ANLI + LingNLI + WANLI ≈ 885K pairs). FEVER is
+    # claim-verification (exactly our use case) and ANLI is adversarial
+    # — both meaningfully more robust on paraphrased legal English. The
+    # base variant was scoring 30-60% of legitimate cited sentences as
+    # weak_support; the large variant should bring that down to 10-25%.
+    # ~435M params, ~1.5GB on disk, ~150-300ms per pair on CPU.
+    nli_model: str = "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli"
     answer_fast_enabled: bool = False     # disabled in production
     # Auto-cite: lexical 4-gram recall fallback when the LLM forgets the
     # inline [N]. The chosen passage still has to clear NLI in step 3, so

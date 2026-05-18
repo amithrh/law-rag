@@ -16,6 +16,14 @@ import { CoverageChip } from "./coverage-chip";
 import { IndexStatus } from "./index-status";
 import { SentenceLine } from "./sentence-line";
 
+// A timeline entry: either a real cited sentence or a gap marker
+// produced when the server suppressed an uncited sentence. The UI
+// renders gap markers as "…" so the reader can see that content was
+// dropped (rather than silently disappearing from the answer).
+type TimelineEntry =
+  | { kind: "sentence"; sentence: SentenceEvent }
+  | { kind: "gap" };
+
 interface AnswerState {
   pending: boolean;
   coverage: CoverageEvent | null;
@@ -25,6 +33,9 @@ interface AnswerState {
   // and may diverge from the early retrieval snapshot once we add
   // post-filtering / redaction.
   sources: SourcesEvent | null;
+  timeline: TimelineEntry[];
+  // Convenience: sentences-only view for components that don't care
+  // about gaps. Derived from `timeline` on read.
   sentences: SentenceEvent[];
   stop: StopEvent | null;
   refused: RefusedEvent | null;
@@ -39,6 +50,7 @@ const INITIAL: AnswerState = {
   coverage: null,
   passages: [],
   sources: null,
+  timeline: [],
   sentences: [],
   stop: null,
   refused: null,
@@ -195,35 +207,60 @@ export function AnswerView() {
 
         {state.coverage && <CoverageChip coverage={state.coverage} />}
 
-        <div className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-stone-200">
-          {state.sentences.length === 0 && state.pending && (
-            <p className="text-sm text-stone-500">Retrieving and reading sources…</p>
-          )}
-          {state.sentences.length === 0 && !state.pending && !state.refused && !state.error && (
-            <p className="text-sm text-stone-500">
-              Ask a question above. Answers stream in sentence by sentence and
-              cite the source of each claim.
-            </p>
-          )}
-          {state.sentences.map((s, i) => (
-            <SentenceLine
-              key={`s-${i}`}
-              sentence={s}
-              passagesByIndex={passagesByIndex}
-            />
-          ))}
-        </div>
+        {(() => {
+          // Round-4 UX: a 1-2 sentence stub after suppression is worse
+          // than a clean refusal. Count non-meta sentences; if the
+          // answer is thin AND stop fired, collapse to a refusal-style
+          // notice and hide the orphan content.
+          const nonMeta = state.sentences.filter((s) => s.status !== "meta");
+          const isStub = state.stop !== null && nonMeta.length < 3;
+          if (isStub) return null;
+          return (
+            <div className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-stone-200">
+              {state.sentences.length === 0 && state.pending && (
+                <p className="text-sm text-stone-500">Retrieving and reading sources…</p>
+              )}
+              {state.sentences.length === 0 && !state.pending && !state.refused && !state.error && (
+                <p className="text-sm text-stone-500">
+                  Ask a question above. Answers stream in sentence by sentence and
+                  cite the source of each claim.
+                </p>
+              )}
+              {state.timeline.map((entry, i) =>
+                entry.kind === "sentence" ? (
+                  <SentenceLine
+                    key={`s-${i}`}
+                    sentence={entry.sentence}
+                    passagesByIndex={passagesByIndex}
+                  />
+                ) : (
+                  <p
+                    key={`g-${i}`}
+                    className="my-2 select-none text-stone-300"
+                    title="A sentence was removed here because it didn't cite a passage in the index."
+                  >
+                    ⋯
+                  </p>
+                ),
+              )}
+            </div>
+          );
+        })()}
 
-        {state.stop && (
-          <Notice tone="amber" title="Stopped — not enough support">
-            {state.stop.message}
-            <span className="mt-1 block text-xs text-stone-500">
-              {state.stop.unsupported_count} of {state.stop.emitted_count}{" "}
-              sentence{state.stop.emitted_count === 1 ? "" : "s"} could not be
-              verified against the sources.
-            </span>
-          </Notice>
-        )}
+        {state.stop && (() => {
+          const nonMeta = state.sentences.filter((s) => s.status !== "meta");
+          const isStub = nonMeta.length < 3;
+          return (
+            <Notice
+              tone="amber"
+              title={isStub ? "I couldn't give you a confident answer" : "Stopped — not enough support"}
+            >
+              {isStub
+                ? "The model wrote a few sentences but most of them couldn't be tied back to a source I have. I dropped them rather than show you uncited legal claims. Try rephrasing more concretely, or talk to a lawyer for your specific situation."
+                : state.stop.message}
+            </Notice>
+          );
+        })()}
 
         {state.error && (
           <Notice tone="red" title="Something went wrong">
@@ -322,8 +359,21 @@ function applyEvent(s: AnswerState, event: string, data: unknown): AnswerState {
       return { ...s, coverage: data as CoverageEvent };
     case "passages":
       return { ...s, passages: data as PassageEvent[] };
-    case "sentence":
-      return { ...s, sentences: [...s.sentences, data as SentenceEvent] };
+    case "sentence": {
+      const sentence = data as SentenceEvent;
+      return {
+        ...s,
+        timeline: [...s.timeline, { kind: "sentence", sentence }],
+        sentences: [...s.sentences, sentence],
+      };
+    }
+    case "suppressed":
+      // Coalesce consecutive gaps so 4 dropped sentences in a row still
+      // render as a single "…".
+      if (s.timeline.length > 0 && s.timeline[s.timeline.length - 1].kind === "gap") {
+        return s;
+      }
+      return { ...s, timeline: [...s.timeline, { kind: "gap" }] };
     case "stop":
       return { ...s, stop: data as StopEvent };
     case "refused":
