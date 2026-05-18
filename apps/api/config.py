@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     # 50% covered by the passage.
     auto_cite_enabled: bool = True
     auto_cite_min_recall: float = 0.4
+    # Coverage gate: refuse the query honestly when the reranker can't find
+    # a passage above this score. In-slice queries reliably score 0.6-0.9
+    # for the top hit; out-of-slice (e.g., tenancy / tax / IP / nonsense)
+    # score < 0.15. Threshold 0.3 is well between the two.
+    refuse_below_rerank: float = 0.3
 
     # Provenance gate (PLAN §10.1 + provenance system).
     # In production, retrieval must only return chunks from documents whose

@@ -178,6 +178,34 @@ async def answer(req: AnswerRequest):
             })}
         return EventSourceResponse(empty())
 
+    # Coverage gate: when the reranker can't find anything close to the
+    # query, the LLM will either hallucinate or produce verbose "I don't
+    # know" prose grounded in tangential passages. Refuse honestly instead.
+    # Threshold derived empirically: in-slice queries score 0.6-0.9 at top;
+    # out-of-slice (tenant, IP, "swallow") score < 0.15.
+    top_rerank = max(
+        (h.rerank_score for h in retrieved if h.rerank_score is not None),
+        default=None,
+    )
+    if (
+        top_rerank is not None
+        and top_rerank < settings.refuse_below_rerank
+    ):
+        metrics.refused_total.inc()
+        logger.info("coverage-gate refusal: top_rerank=%.3f < %.3f for query %r",
+                    top_rerank, settings.refuse_below_rerank, req.q[:120])
+        async def low_coverage():
+            yield {"event": "refused", "data": json.dumps({
+                "message": "I don't have sources in this index that clearly cover "
+                           "your question. I won't guess from tangentially related "
+                           "judgments. You should talk to a lawyer for your specific "
+                           "situation, or rephrase the question to focus on the "
+                           "specific law or section you're asking about.",
+                "top_rerank_score": round(top_rerank, 3),
+                "disclaimer": DISCLAIMER_FOOTER,
+            })}
+        return EventSourceResponse(low_coverage())
+
     passages, idx_map = _make_passages(retrieved, req.top_k)
 
     # Build prompt

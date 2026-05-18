@@ -148,10 +148,41 @@ class _FakeStream:
             yield d
 
 
+def _patch_high_score_retrieve(monkeypatch):
+    """Stub hybrid_retrieve to return chunks that score ABOVE the coverage
+    gate threshold (0.3). Without this, /answer tests refuse before
+    reaching the LLM stream we're trying to exercise."""
+    from apps.api import main as api_main
+    from apps.api import retrieval
+
+    async def fake_retrieve(*args, **kwargs):
+        return [
+            retrieval.RetrievedChunk(
+                chunk_id=1, document_id=1, anchor="cpa-2019#sec-2",
+                text="Section 12 of the Consumer Protection Act provides for District Forums.",
+                title="Consumer Protection Act 2019", source_type="bare_act",
+                subject_area="consumer", as_at=None, paragraph_no=None,
+                citation=None, court=None, statute_short="CPA-2019",
+                dense_score=0.85, bm25_score=0.6, rerank_score=0.82,
+            ),
+            retrieval.RetrievedChunk(
+                chunk_id=2, document_id=1, anchor="cpa-2019#sec-34",
+                text="The District Forum has jurisdiction up to twenty lakh rupees in value.",
+                title="Consumer Protection Act 2019", source_type="bare_act",
+                subject_area="consumer", as_at=None, paragraph_no=None,
+                citation=None, court=None, statute_short="CPA-2019",
+                dense_score=0.78, bm25_score=0.55, rerank_score=0.71,
+            ),
+        ]
+    monkeypatch.setattr(api_main, "hybrid_retrieve", fake_retrieve)
+
+
 @pytest.mark.needs_stack
 def test_answer_emits_coverage_passages_and_sentences(monkeypatch):
     """A well-cited LLM answer should reach the user."""
     from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
 
     # Script a clean 2-sentence answer where each sentence cites a real passage.
     fake = _FakeStream(
@@ -201,6 +232,7 @@ def test_answer_suppresses_single_uncited_sentence(monkeypatch):
     bad sentence; no red-strikethrough display."""
     from apps.api import main as api_main
 
+    _patch_high_score_retrieve(monkeypatch)
     fake = _FakeStream(
         "**Short answer**\n",
         "The consumer can file a complaint [1]. ",
@@ -244,10 +276,61 @@ def test_answer_suppresses_single_uncited_sentence(monkeypatch):
 
 
 @pytest.mark.needs_stack
+def test_answer_refuses_on_low_coverage(monkeypatch):
+    """Coverage gate: when no retrieved passage exceeds refuse_below_rerank,
+    /answer must refuse honestly instead of asking the LLM to synthesise
+    from tangentially-related judgments. Saves ~30s of LLM time and gives
+    the user an honest signal."""
+    from apps.api import main as api_main
+    from apps.api import retrieval
+
+    # All passages score below the 0.3 threshold (mimics out-of-slice
+    # query like "tenant not vacating" with our SC-judgment corpus).
+    async def low_score_retrieve(*args, **kwargs):
+        return [
+            retrieval.RetrievedChunk(
+                chunk_id=1, document_id=1, anchor="x",
+                text="customs refund procedure",
+                title="Customs case", source_type="sc_judgment",
+                subject_area="criminal", as_at=None, paragraph_no=None,
+                citation="[2020] 1 SCR 1", court="SC", statute_short=None,
+                dense_score=0.5, bm25_score=0.1, rerank_score=0.10,
+            ),
+        ]
+    monkeypatch.setattr(api_main, "hybrid_retrieve", low_score_retrieve)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "my tenant is not vacating after notice period",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            assert r.status_code == 200
+            event_names = []
+            refused_data = None
+            current = None
+            for line in r.iter_lines():
+                if not line:
+                    current = None
+                    continue
+                if line.startswith("event:"):
+                    current = line.split(":", 1)[1].strip()
+                    event_names.append(current)
+                elif line.startswith("data:") and current == "refused":
+                    refused_data = json.loads(line.split(":", 1)[1].strip())
+
+            assert "refused" in event_names, f"expected refused, got {event_names}"
+            assert refused_data is not None
+            assert "top_rerank_score" in refused_data
+            assert refused_data["top_rerank_score"] == 0.1
+
+
+@pytest.mark.needs_stack
 def test_answer_stops_when_unsupported_dominate(monkeypatch):
     """Stop still fires when ≥2 unsupported AND ratio > skip_threshold."""
     from apps.api import main as api_main
 
+    _patch_high_score_retrieve(monkeypatch)
     fake = _FakeStream(
         "**Short answer**\n",
         "The consumer can file a complaint [1]. ",
