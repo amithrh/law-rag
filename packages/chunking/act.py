@@ -324,11 +324,40 @@ def find_body_start(text: str) -> BodyStart:
 
 # --- Chunker ----------------------------------------------------------------
 
+def _metadata_prefix(act_title: str | None, sec_no: str | None) -> str:
+    """Build the legal-context prefix that travels with every section chunk.
+
+    Why this exists — the 5-agent review (2026-05-19) found the same root
+    cause across BM25, dense, and rerank failures for queries that name a
+    specific Act or section ("section 138 NI Act notice 30 days"): the
+    bare-act chunk text starts with "138. Dishonour of cheque..." — no
+    occurrence of "section 138", "NI Act", or "Negotiable Instruments"
+    anywhere in the chunk body. Meanwhile SC judgments DO contain those
+    phrases in their cited-quote paragraphs. So lexical, semantic, AND
+    cross-encoder rerank all preferred SC caselaw over the bare-Act
+    chunk that IS the operative law.
+
+    Prepending the Act title + canonical section reference puts the
+    legal context inside the chunk's text — fixes all three layers at
+    once with one re-embed pass.
+
+    Format: "<Act Title>, Section <N>\n\n<body>". Two newlines after
+    the prefix so the section title (which starts on the next line of
+    the body like "138. Dishonour of cheque...") still reads naturally.
+    """
+    if not act_title:
+        return ""
+    if sec_no:
+        return f"{act_title}, Section {sec_no}\n\n"
+    return f"{act_title}\n\n"
+
+
 def chunk_act(
     slug: str,
     text: str,
     *,
     as_at: date | None = None,
+    act_title: str | None = None,
 ) -> Iterator[Chunk]:
     """Yield Chunks for an act.
 
@@ -337,6 +366,12 @@ def chunk_act(
         <slug>/sec-<N>[@<as_at>]                  — full section
         <slug>/sec-<N>-<a|b|c>[@<as_at>]          — sub-split of a long section
         <slug>/sec-<N>__<dup-idx>[@<as_at>]       — duplicate section (e.g. in schedule)
+
+    `act_title`, if supplied, is prepended to every section chunk's text
+    along with the canonical "Section <N>" reference — see
+    `_metadata_prefix` for the rationale (2026-05-19 multi-agent review).
+    Kept as a keyword arg with a None default so existing tests / older
+    callers (e.g. `scripts/add_more_acts.py`) keep working unchanged.
     """
     if as_at is None:
         as_at = extract_as_at(text)
@@ -395,10 +430,14 @@ def chunk_act(
         seen_sec_no[sec_no] = dup_idx + 1
         dup_suffix = "" if dup_idx == 0 else f"__{dup_idx + 1}"
 
-        tok = estimate_tokens(section_body)
+        # Legal-context prefix: "<Act Title>, Section <N>\n\n<body>".
+        # See `_metadata_prefix` docstring for why.
+        prefix = _metadata_prefix(act_title, sec_no)
+        chunk_text = prefix + section_body
+        tok = estimate_tokens(chunk_text)
         if tok <= SECTION_MAX_TOKENS:
             yield Chunk(
-                text=section_body,
+                text=chunk_text,
                 anchor=f"{slug}/sec-{sec_no}{dup_suffix}{anchor_suffix}",
                 chunk_strategy=ChunkStrategy.SECTION,
                 token_count=tok,
@@ -410,6 +449,7 @@ def chunk_act(
             yield from _split_long_section(
                 slug, sec_no, sec_title, section_body,
                 as_at=as_at, anchor_suffix=anchor_suffix, dup_suffix=dup_suffix,
+                act_title=act_title,
             )
 
 
@@ -422,14 +462,18 @@ def _split_long_section(
     as_at: date | None,
     anchor_suffix: str,
     dup_suffix: str,
+    act_title: str | None = None,
 ) -> Iterator[Chunk]:
     """Sub-split an oversized section. Section header travels with each sub-chunk."""
     seg = pysbd.Segmenter(language="en", clean=False)
     sentences = seg.segment(body)
     # First sentence is typically the section title — keep in every chunk
-    header = sentences[0] if sentences else f"{sec_no}. {sec_title}."
+    section_header = sentences[0] if sentences else f"{sec_no}. {sec_title}."
     rest = sentences[1:]
-    header_tokens = estimate_tokens(header)
+    # Legal-context prefix travels with every sub-chunk too — the same
+    # rerank/BM25 blind spot bites here.
+    metadata_prefix = _metadata_prefix(act_title, sec_no)
+    header_tokens = estimate_tokens(metadata_prefix + section_header)
 
     sub_idx = 0
     buf: list[str] = []
@@ -439,7 +483,10 @@ def _split_long_section(
         nonlocal sub_idx
         if not buf:
             return
-        chunk_text = (header + " " + " ".join(buf).strip()).strip()
+        chunk_text = (
+            metadata_prefix
+            + (section_header + " " + " ".join(buf).strip()).strip()
+        )
         yield Chunk(
             text=chunk_text,
             anchor=f"{slug}/sec-{sec_no}{dup_suffix}-{chr(ord('a') + sub_idx)}{anchor_suffix}",

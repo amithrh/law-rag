@@ -579,7 +579,12 @@ async def main() -> None:
     print("\nStep 2: chunk")
     all_chunks: list[tuple[dict, Any]] = []
     for r in new_rows:
-        chunks = list(chunk_act(r["slug"], r["text"]))
+        # Pass act_title so the chunker prepends "<Act Title>, Section <N>"
+        # to every section chunk's text — fixes the 5-agent-confirmed root
+        # cause where bare-act chunks lost to SC judgments at BM25, dense
+        # AND rerank because chunk text alone never contained the Act's
+        # name or section reference. See packages/chunking/act.py docstring.
+        chunks = list(chunk_act(r["slug"], r["text"], act_title=r["title"]))
         all_chunks.extend((r, c) for c in chunks)
         print(f"  {r['slug']:42s}  {len(chunks):>4d} chunks  ({r['pdf_pages']} pages)")
     print(f"  TOTAL: {len(all_chunks)} chunks")
