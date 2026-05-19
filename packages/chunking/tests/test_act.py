@@ -59,6 +59,14 @@ class TestAsAtExtraction:
 # -------------------- body-start detection ---------------------------------
 
 class TestFindBodyStart:
+    """The strategy chain `_REAL_BODY_START_RE` → `_SUBSECTION_RE` → `_find_section_heads`
+    was replaced (2026-05-19) with a single `_find_section_heads(text)` truth source,
+    which (a) handles CGST/JJ marginal-note layouts that the em-dash heuristic missed
+    and (b) fixes NI Act 1881 where the old heuristic placed body-start at offset
+    89580, discarding sections 1-100. The strategy name is now always
+    `first_real_section` when any section heads are found, else `doc_start`.
+    """
+
     def test_em_dash_subsection_detected(self) -> None:
         # Real act body starts with em-dash + (1)
         toc = (
@@ -75,7 +83,7 @@ class TestFindBodyStart:
         )
         text = toc + body
         bs = find_body_start(text)
-        assert bs.strategy == "em_dash_subsection"
+        assert bs.strategy == "first_real_section"
         assert bs.offset >= len(toc) - 5  # tolerance for whitespace
 
     def test_em_dash_double_hyphen_detected(self) -> None:
@@ -86,7 +94,7 @@ class TestFindBodyStart:
             "\n1. Short title.––(1) This Act may be called the Y Act.\n"
         )
         bs = find_body_start(text)
-        assert bs.strategy == "em_dash_subsection"
+        assert bs.strategy == "first_real_section"
 
     def test_fallback_to_first_subsection(self) -> None:
         # No em-dash anywhere, but (1) sub-section markers appear
@@ -96,17 +104,40 @@ class TestFindBodyStart:
             "\n1. Short title.\n(1) This Act may be called the Z Act, 2024.\n"
         )
         bs = find_body_start(text)
-        # Either em_dash_subsection OR first_subsection_marker is acceptable
-        assert bs.strategy in ("em_dash_subsection", "first_subsection_marker")
+        # Real act detection should find the body's restatement of "1. Short title."
+        # via the `(1)` lookahead (now scoped to "before next head").
+        assert bs.strategy in ("first_real_section", "doc_start")
 
     def test_fallback_to_doc_start_when_no_subsections(self) -> None:
-        # With the strict 2-step section detector, text with no `(N)` markers
-        # at all has no real sections — we treat the whole doc as body.
-        # (Real acts always have sub-sections; this guards the edge case.)
+        # No `(1)` markers anywhere AND no substantial body between heads
+        # → no real heads found → doc_start.
         text = "Some preamble.\n1. Definitions.\nClause text follows.\n2. Application.\nMore text.\n"
         bs = find_body_start(text)
-        assert bs.strategy in ("first_heading", "first_subsection_marker", "doc_start")
+        assert bs.strategy in ("first_real_section", "doc_start")
         assert bs.offset >= 0
+
+    def test_cgst_marginal_note_layout(self) -> None:
+        """CGST 2017 / JJ Act 2015 style: title rendered as a marginal note
+        (lost in text extraction), body line has no title-period — just an
+        em-dash terminating the lead-in. The old regex required a `.`
+        terminator and emitted 0-2 chunks on a 103-page Act."""
+        text = (
+            "TOC line one.\n"
+            "TOC line two.\n"
+            "\n\n"
+            "2. In this Act, unless the context otherwise requires,—\n"
+            "(1) \"actionable claim\" shall have the same meaning;\n"
+            "(2) \"address of delivery\" means the address;\n"
+            "\n"
+            "3. Officers under this Act.—The Government shall, by notification, "
+            "appoint the following classes of officers for the purposes of this Act, "
+            "namely:— (a) Principal Chief Commissioners; (b) Chief Commissioners; "
+            "(c) Principal Commissioners; (d) Commissioners.\n"
+        )
+        bs = find_body_start(text)
+        assert bs.strategy == "first_real_section"
+        # Body should start at section 2, not in TOC
+        assert text[bs.offset:bs.offset + 5].startswith("2.")
 
 
 # -------------------- TOC isolation (the core defect) -----------------------
@@ -284,8 +315,15 @@ class TestRealActSmoke:
     def test_no_section_chunk_starts_with_a_different_section_number(self, acts: dict) -> None:
         """The bug being fixed: sec-37 chunk's text starts with "37. <title>." but
         body continues with sec-9's content (TOC pollution).
+
+        Newer rows in acts.jsonl from `scripts/add_p0_batch.py` omit the
+        `text` field (the PDFs are large — IT Act 1961 alone is 3M chars
+        — and the text isn't needed at ingest time once chunks are in the
+        DB). Skip those rows; older rows still have the field.
         """
         for slug, row in acts.items():
+            if "text" not in row:
+                continue
             chunks = list(chunk_act(slug, row["text"]))
             for c in chunks:
                 if "/sec-" not in c.anchor:
@@ -312,6 +350,8 @@ class TestRealActSmoke:
         so we only flag chunks where the *body after the heading* is < 3 chars.
         """
         for slug, row in acts.items():
+            if "text" not in row:
+                continue  # newer P0-batch rows omit text; PDFs hold it
             chunks = [c for c in chunk_act(slug, row["text"]) if "/sec-" in c.anchor]
             for c in chunks:
                 # Drop the first "heading" line and any blank lines; what
@@ -335,6 +375,8 @@ class TestRealActSmoke:
         thresholds = {slug: 0.20 for slug in SCHEDULE_HEAVY}
         print()
         for slug, row in acts.items():
+            if "text" not in row:
+                continue  # newer P0-batch rows omit text; PDFs hold it
             chunks = [c for c in chunk_act(slug, row["text"]) if "/sec-" in c.anchor]
             if not chunks:
                 continue

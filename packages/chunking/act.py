@@ -38,13 +38,25 @@ from .types import Chunk, ChunkStrategy, estimate_tokens
 
 # --- Patterns ---------------------------------------------------------------
 
-# Candidate section heading: "NN. Title." at line start. Permissive on what
-# follows (could be EOL, em-dash, inline content, etc.). We do a second-stage
-# check to filter candidates down to real sections (see `_find_section_heads`).
+# Candidate section heading: "NN. Title<terminator>" at line start.
+# Two real-world layouts to handle:
+#
+#   (a) Title-period-em-dash inline: "5. Powers of officers.—(1) ..."
+#       (most acts: HSA, CPC, Companies Act, etc.)
+#
+#   (b) Marginal-note layout (CGST, JJ Act, OSH Code): the title is rendered
+#       in a separate column on the printed page and gets text-extracted as
+#       a free-floating word; the section body line itself looks like
+#       "2. In this Act, unless the context otherwise requires,—"
+#       — no title-period at all, just an em-dash terminating the lead-in.
+#
+# So we accept ANY of `.`, `—`, `–` as the title terminator. The
+# `_is_real_section_head` second-stage filter throws out TOC entries
+# (no body follows) and Schedule entries (no `(1)` and < 200 chars body).
 #
 # Captures: group(1) = section number ("1", "12A", "234B"); group(2) = title.
 _SECTION_HEAD_CANDIDATE_RE = re.compile(
-    r"^[ \t]*(\d{1,4}[A-Z]{0,2})\.[ \t]+([A-Z][^\n.]{0,300}?)\.",
+    r"^[ \t]*(\d{1,4}[A-Z]{0,2})\.[ \t]+([A-Z][^\n]{0,300}?)[\.—–]",
     re.MULTILINE,
 )
 
@@ -56,35 +68,62 @@ _SUBSECTION_MARKER_RE = re.compile(r"\(\s*1\s*\)\s+[A-Z\"“]", re.MULTILINE)
 
 
 def _is_real_section_head(text: str, head_match: re.Match[str], lookahead: int = 600) -> bool:
-    """Confirm a candidate heading by looking for a `(1)` sub-section marker
-    within `lookahead` chars after the heading's title-terminal period.
+    """Confirm a candidate heading by inspecting the body that follows.
 
-    This filters out TOC entries (no body follows) and Schedule entries
-    (one-line content like "Father's brother's daughter.").
+    A candidate qualifies as a real section head iff EITHER:
 
-    NOTE: Some real sections have no sub-sections (e.g. "4. Punishments.—
-    The punishments to which offenders are liable…"). We give those a
-    fallback: if no `(1)` is found, but a substantial body paragraph (>200
-    chars with no other section heading) follows, accept the heading.
+      (a) A `(1)` sub-section marker appears within `lookahead` chars
+          AND no other candidate section heading appears before that
+          `(1)` marker. This second condition is the TOC-isolation
+          guard: a TOC entry "1. Short title.\\n2. Definitions.\\n..."
+          followed eventually by the body "1. Short title.—(1)..."
+          would otherwise pass on `(1)` belonging to the body
+          restatement. By requiring the `(1)` to come BEFORE any
+          intervening section head, we tie it back to this heading.
+
+      (b) Or: no `(1)` marker exists in the window, but the body
+          between this heading and the next section heading is ≥ 200
+          chars (catches short, non-subsectioned sections like
+          "4. Punishments.—The punishments to which offenders are
+          liable under this Sanhita are—(a) Death. (b) …").
+
+    Tested against:
+      - BNS-like TOC + body fixture (test_section_1_chunk_contains_section_1_body)
+      - CGST 2017 marginal-note layout ("2. In this Act, ...,—\\n(1) …")
+      - JJ Act 2015 same marginal-note layout
+      - NI Act 1881 (mostly short non-subsectioned sections)
+      - HSA / CPC / Companies / IT Act baselines (regression)
     """
     end = head_match.end()
     window = text[end:end + lookahead]
-    if _SUBSECTION_MARKER_RE.search(window):
+
+    # Find positions of the next section head and the next (1) marker.
+    next_head_m = _SECTION_HEAD_CANDIDATE_RE.search(window)
+    next_subsec_m = _SUBSECTION_MARKER_RE.search(window)
+
+    next_head_pos = next_head_m.start() if next_head_m else len(window) + 1
+    next_subsec_pos = next_subsec_m.start() if next_subsec_m else len(window) + 1
+
+    # (a) `(1)` marker belongs to THIS heading (no intervening section head)
+    if next_subsec_pos < next_head_pos:
         return True
-    # Fallback: substantial body without another section heading in the way
-    next_head = _SECTION_HEAD_CANDIDATE_RE.search(window)
-    body_end = next_head.start() if next_head else len(window)
-    body_text = window[:body_end].strip()
+
+    # (b) Substantial body before the next section heading
+    body_text = window[:next_head_pos].strip()
     return len(body_text) >= 200
 
 
 def _find_section_heads(text: str) -> list[re.Match[str]]:
     """Return real section heading matches in `text`. Filters candidates
-    through the sub-section marker check and the footnote-title blacklist.
+    through the sub-section marker check, the footnote-title blacklist,
+    and the footnote-body sniff (for bare-prefix titles like "Ins" /
+    "Subs" / "Omitted" that the title check doesn't catch).
     """
     out: list[re.Match[str]] = []
     for m in _SECTION_HEAD_CANDIDATE_RE.finditer(text):
         if _is_footnote_title(m.group(2)):
+            continue
+        if _looks_like_footnote(text, m):
             continue
         if not _is_real_section_head(text, m):
             continue
@@ -137,6 +176,46 @@ _FOOTNOTE_TITLE_MARKERS = (
 def _is_footnote_title(title: str) -> bool:
     """Return True if a matched section "title" looks like an amendment annotation."""
     return any(m in title for m in _FOOTNOTE_TITLE_MARKERS)
+
+
+# Footnote-citation patterns that follow a footnote's "marginal number".
+# Acts use a footnote convention "1. Subs. by Act X of Y, s. Z (w.e.f. ...)"
+# where the leading "1." would otherwise look like Section 1. We catch
+# these by checking the text IMMEDIATELY after the matched heading: a
+# footnote leads with " by Act N of YYYY" or "ibid" / "w.e.f." / etc.
+_FOOTNOTE_BODY_MARKERS = (
+    "by Act ",
+    "by s. ",
+    "ibid.",
+    "w.e.f.",
+    "for the words",
+    "Omitted by",
+)
+
+
+def _looks_like_footnote(text: str, head_match: re.Match[str]) -> bool:
+    """Detect candidate "section" matches that are actually footnotes.
+
+    The chunker regex catches "1. Ins. by Act 33 of 2009..." as
+    `(group1=1, group2=Ins)`. The bare title "Ins" doesn't trip
+    `_is_footnote_title` (it's looking for "Ins. by"), but the
+    immediately-following content does. We check the next 80 chars
+    after the match for footnote phrases.
+
+    This came up after the 2026-05-19 chunker fix moved body-start
+    earlier: footnote regions that were previously hidden in
+    pre-body text now get scanned by `_find_section_heads`, which
+    inflates the candidate set with hundreds of fake "sections" per
+    long act (Income Tax 1961 had 495 such false positives).
+    """
+    title = head_match.group(2)
+    # If the title contains explicit footnote markers, it was already
+    # rejected upstream by _is_footnote_title — this is the bare-prefix
+    # case ("Ins", "Subs", "Omitted") only.
+    if len(title) > 12:
+        return False
+    post = text[head_match.end():head_match.end() + 80]
+    return any(m in post for m in _FOOTNOTE_BODY_MARKERS)
 
 
 # --- as_at -------------------------------------------------------------------
@@ -214,32 +293,32 @@ class BodyStart:
 def find_body_start(text: str) -> BodyStart:
     """Locate where the act's real section bodies begin.
 
-    Strategy priority:
-      1. First `<n>. <Title>.[—–]\\s*(1)` pattern — em-dash + sub-section.
-         Highly specific to real section bodies; TOC never has this.
-      2. First `(1)` sub-section marker (without the section heading right
-         before it). Less specific but works for acts where the heading
-         and body are split across page breaks.
-      3. First section heading match (if neither 1 nor 2 fires, the act
-         either has no sub-section structure or the heuristics missed —
-         treat the whole doc as body).
+    Strategy: trust `_find_section_heads(text)` as the source of truth.
+    A "real" section head is one that passes the sub-section / body-length
+    filter — which is what we already use elsewhere to chunk sections. The
+    first one is the body start; everything before it is TOC + preamble.
+
+    Two failure modes the previous heuristic chain hit and this avoids:
+
+      1. NI Act 1881: the chain matched `_REAL_BODY_START_RE` at offset
+         89580 (a sub-section-bearing section deep in the doc), but the
+         act actually has 128 real sections starting near offset 130. Body
+         was being chunked from offset 89580, losing sections 1-100ish.
+
+      2. CGST 2017 / JJ 2015: chain fell back to `_SUBSECTION_RE` which
+         matched a `(1) "term" means...` inside a definition list at
+         offset ~1800, then `_find_section_heads(text[:1800])` returned
+         no real heads (because sections 1-5 are short and pre-fix the
+         section regex missed them). Body became `text[1800:]` and only
+         one section was found.
+
+    Treating `_find_section_heads(text)` as authoritative collapses both.
+    Edge case (notification/preamble-only doc with no section structure):
+    return offset=0 so the caller emits a single chunk for the whole text.
     """
-    m = _REAL_BODY_START_RE.search(text)
-    if m:
-        return BodyStart(offset=m.start(), strategy="em_dash_subsection")
-
-    m = _SUBSECTION_RE.search(text)
-    if m:
-        # Back up to the most recent section heading before this sub-section
-        head_iter = _find_section_heads(text[:m.start()])
-        if head_iter:
-            return BodyStart(offset=head_iter[-1].start(), strategy="first_subsection_marker")
-        return BodyStart(offset=m.start(), strategy="first_subsection_marker")
-
-    headings = _find_section_heads(text)
-    if headings:
-        return BodyStart(offset=headings[0].start(), strategy="first_heading")
-
+    heads = _find_section_heads(text)
+    if heads:
+        return BodyStart(offset=heads[0].start(), strategy="first_real_section")
     return BodyStart(offset=0, strategy="doc_start")
 
 
