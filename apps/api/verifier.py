@@ -413,7 +413,172 @@ def nli_score(premise: str, hypothesis: str) -> float | None:
         return None
 
 
+# --- bge (reranker as verifier) ----------------------------------------------
+#
+# Architecture-research task #2: reuse the existing bge-reranker-v2-m3
+# cross-encoder for per-sentence verification. The score is "how relevant is
+# this passage to this query" — when the query is the sentence and the
+# passage is the cited evidence, that correlates with answer-support.
+#
+# Two safety properties we lean on:
+#   1. The model is ALREADY loaded for retrieval-stage reranking. Calling
+#      it again for verification adds zero load cost — just inference cost.
+#   2. If NLI is retired (verifier_backend=bge), we free ~1.5 GB of NLI
+#      model RAM.
+#
+# Two caveats vs categorical entailment (see docs/VERIFIER_SWAP.md):
+#   - bge does not encode negation/contradiction directly. A sentence that
+#     contradicts the passage may still score moderately positive because
+#     the topic overlaps. NLI handles contradiction natively.
+#   - bge scores are in roughly [-10, +10], NOT a probability. Threshold
+#     calibration is essential — a hard-coded 0.5 doesn't transfer.
+
+def bge_score(premise: str, hypothesis: str) -> float | None:
+    """Cross-encoder relevance score for (passage, sentence). Higher = more
+    supportive. Returns None if the reranker is unavailable.
+
+    Signature mirrors `nli_score(premise, hypothesis)` so the two backends
+    can be swapped at the call site. Premise = cited passage text;
+    hypothesis = sentence being verified.
+
+    Shares the singleton reranker with the retrieval rerank step
+    (apps.api.rerank.get_reranker()) — DON'T load a second copy of the
+    1-2 GB model.
+    """
+    # Lazy import to avoid circular import (rerank.py imports config which
+    # imports verifier indirectly via main.py at app startup).
+    from apps.api.rerank import get_reranker
+
+    worker = get_reranker()
+    if not worker.is_available():
+        return None
+    try:
+        scores = worker.score_pairs(hypothesis, [premise])
+    except Exception as e:  # defensive; worker.score_pairs already logs+falls back
+        logger.warning("bge_score failed: %s", e)
+        return None
+    if scores is None:
+        return None
+    return scores[0]
+
+
+# --- Backend dispatch --------------------------------------------------------
+#
+# Two backends, identical contract:
+#   _score(premise, hypothesis) -> float | None
+# The verify_sentence() core calls _score() per (cited passage, sentence)
+# and applies backend-specific thresholds.
+
+_STATUS_RANK: dict[SentenceStatus, int] = {
+    SentenceStatus.META: 0,                # best — exempt from claims gate
+    SentenceStatus.OK: 1,
+    SentenceStatus.WEAK_SUPPORT: 2,
+    SentenceStatus.UNSUPPORTED: 3,
+    SentenceStatus.UNKNOWN_CITATION: 4,    # worst — index check failed
+}
+
+
+def _worse(a: SentenceStatus, b: SentenceStatus) -> SentenceStatus:
+    """Return the pessimistic (worse) of two sentence statuses. Used by the
+    ensemble backend to AND the two safety nets together — a sentence only
+    survives ensemble when BOTH backends agree it's safe."""
+    return a if _STATUS_RANK[a] >= _STATUS_RANK[b] else b
+
+
 # --- Public API --------------------------------------------------------------
+
+@dataclass(slots=True)
+class _BackendVerdict:
+    """Per-backend output of the entailment step. Wraps the backend-specific
+    score with the resulting status. Used internally by verify_sentence()
+    so the ensemble path can compare two verdicts side-by-side."""
+    status: SentenceStatus
+    score: float | None
+    reason: str
+    # If True, the backend ran but the model was unavailable / failed and
+    # we fell back to a fail-closed verdict (WEAK_SUPPORT). Used by the
+    # ensemble path to decide whether to "trust this verdict" or skip the
+    # backend entirely.
+    unavailable: bool = False
+
+
+def _entailment_verdict(
+    backend: str,
+    sentence: str,
+    citations: list[int],
+    retrieved_by_idx: dict[int, str],
+    *,
+    auto_cited: bool,
+    nli_threshold: float,
+    bge_threshold: float,
+) -> _BackendVerdict:
+    """Run one backend (nli or bge) against the cited passages and return
+    a verdict. Same hard-floor / fail-closed semantics as the original NLI
+    code path — only the scorer + thresholds differ.
+
+    Aggregation: take max score across cited passages (a sentence is
+    supported if ANY cited passage supports it).
+    """
+    s = get_settings()
+    if backend == "nli":
+        scorer = nli_score
+        threshold = nli_threshold
+        hard_floor = s.nli_hard_floor
+        name = "nli"
+    elif backend == "bge":
+        scorer = bge_score
+        threshold = bge_threshold
+        hard_floor = s.bge_verifier_hard_floor
+        name = "bge"
+    else:
+        raise ValueError(f"unknown backend {backend!r}")
+
+    max_score: float | None = None
+    unavailable = False
+    for n in citations:
+        passage = retrieved_by_idx.get(n)
+        if not passage:
+            continue
+        sc = scorer(passage, sentence)
+        if sc is None:
+            unavailable = True
+            continue
+        if max_score is None or sc > max_score:
+            max_score = sc
+
+    if unavailable and max_score is None:
+        # Backend unavailable, no passages scored. Per round-3 review
+        # (security #3): fail CLOSED for explicit-cite too — degraded
+        # entailment service must not silently downgrade to coverage-only.
+        return _BackendVerdict(
+            status=SentenceStatus.WEAK_SUPPORT,
+            score=None,
+            reason=f"{name} unavailable; "
+                   + ("auto-cite cannot confirm entailment"
+                      if auto_cited else "explicit-cite entailment unconfirmed"),
+            unavailable=True,
+        )
+
+    if max_score is not None and max_score < hard_floor:
+        return _BackendVerdict(
+            status=SentenceStatus.UNSUPPORTED,
+            score=max_score,
+            reason=f"max {name} {max_score:.2f} < hard floor {hard_floor:.2f}",
+        )
+
+    if max_score is not None and max_score < threshold:
+        return _BackendVerdict(
+            status=SentenceStatus.WEAK_SUPPORT,
+            score=max_score,
+            reason=f"max {name} {max_score:.2f} < threshold {threshold:.2f}",
+        )
+
+    return _BackendVerdict(
+        status=SentenceStatus.OK,
+        score=max_score,
+        reason="",
+    )
+
 
 def verify_sentence(
     sentence: str,
@@ -421,9 +586,25 @@ def verify_sentence(
     *,
     skip_nli: bool = False,
     nli_threshold: float | None = None,
+    backend: str | None = None,
 ) -> SentenceVerification:
-    """Run index → coverage → NLI on a single sentence."""
+    """Run index → coverage → entailment on a single sentence.
+
+    `backend` selects the entailment scorer:
+      - "nli"      : DeBERTa MNLI (legacy behaviour).
+      - "bge"      : bge-reranker-v2-m3 cross-encoder relevance score.
+      - "ensemble" : run both, take the pessimistic (worse) verdict.
+    None falls back to settings.verifier_backend.
+
+    `skip_nli=True` is the legacy /answer-fast path — explicit-cite sentences
+    skip entailment entirely. It applies symmetrically: for any backend,
+    skip_nli=True + explicit-cite means OK without scoring. Auto-cited
+    sentences ALWAYS run entailment (per Codex review #3) regardless of
+    skip_nli or backend.
+    """
     s = get_settings()
+    if backend is None:
+        backend = s.verifier_backend
     if nli_threshold is None:
         nli_threshold = s.nli_weak_support_below
 
@@ -444,7 +625,7 @@ def verify_sentence(
     # retrieved passage. If a passage's content covers the sentence ≥
     # auto_cite_min_recall, attach it as the citation. This preserves the
     # strict-stop guarantee (we never let an unsupported sentence through),
-    # because the attached passage still has to clear NLI in step 3.
+    # because the attached passage still has to clear entailment in step 3.
     auto_cited = False
     if not citations and s.auto_cite_enabled:
         auto = _auto_cite(sentence, retrieved_by_idx, s.auto_cite_min_recall)
@@ -474,88 +655,94 @@ def verify_sentence(
         # end-anchor check doesn't apply.)
         logger.debug("sentence has citations but not at end: %r", sentence[:80])
 
-    # Step 3: NLI. Per Codex review #3 — NLI is FORCED for auto-cited
-    # sentences regardless of the skip_nli flag, because auto-cite chose
-    # the passage by lexical overlap alone and a negated/overbroad
-    # sentence ("you CANNOT approach the SP under Section 154(3)") would
-    # otherwise be greenlit despite contradicting the cited passage.
-    if not citations:
-        # Unreachable in normal flow (auto-cite would have attached or
-        # we'd have returned UNSUPPORTED above), but guard anyway.
-        return SentenceVerification(
-            text=sentence, status=SentenceStatus.UNSUPPORTED,
-            reason="no citation tag (post-auto-cite)",
-            auto_cited=auto_cited,
-        )
-
+    # Step 3: entailment. Per Codex review #3 — entailment is FORCED for
+    # auto-cited sentences regardless of the skip_nli flag, because
+    # auto-cite chose the passage by lexical overlap alone and a
+    # negated/overbroad sentence ("you CANNOT approach the SP under
+    # Section 154(3)") would otherwise be greenlit despite contradicting
+    # the cited passage.
     if skip_nli and not auto_cited:
-        # Explicit citation, NLI explicitly skipped (eval / fast path).
+        # Explicit citation, entailment explicitly skipped (eval / fast path).
         return SentenceVerification(
             text=sentence, status=SentenceStatus.OK, citations=citations,
             auto_cited=auto_cited,
         )
 
-    # Aggregate evidence from cited passages. Take max entailment across
-    # passages (a sentence is supported if ANY cited passage entails it).
-    max_score: float | None = None
-    nli_unavailable = False
-    for n in citations:
-        passage = retrieved_by_idx.get(n)
-        if not passage:
-            continue
-        sc = nli_score(passage, sentence)
-        if sc is None:
-            nli_unavailable = True
-            continue
-        if max_score is None or sc > max_score:
-            max_score = sc
-
-    if nli_unavailable and max_score is None:
-        # NLI is unavailable and we couldn't score any passage. Per
-        # round-3 review (security #3): fail CLOSED for explicit-cite too.
-        # Previously we returned OK for explicit-cite on NLI-unavailable,
-        # which meant a degraded-NLI state silently downgraded the
-        # entailment guarantee to coverage-only. Return WEAK_SUPPORT for
-        # both paths so the downstream suppress-logic in main.py can
-        # decide what to ship (auto-cite suppressed always; explicit-cite
-        # WEAK_SUPPORT shipped with badge by current policy, but available
-        # for tighter policies).
-        return SentenceVerification(
-            text=sentence,
-            status=SentenceStatus.WEAK_SUPPORT,
-            citations=citations,
-            reason="nli unavailable; "
-                   + ("auto-cite cannot confirm entailment" if auto_cited else "explicit-cite entailment unconfirmed"),
+    if backend == "nli":
+        v = _entailment_verdict(
+            "nli", sentence, citations, retrieved_by_idx,
             auto_cited=auto_cited,
+            nli_threshold=nli_threshold,
+            bge_threshold=s.bge_verifier_threshold,
+        )
+        return SentenceVerification(
+            text=sentence, status=v.status, citations=citations,
+            entailment_score=v.score, reason=v.reason, auto_cited=auto_cited,
         )
 
-    # Per round-3 review (security #2): hard floor on NLI. Below this,
-    # the cited passage so weakly entails the sentence that we treat it
-    # as UNSUPPORTED — the [N] index is real but the content isn't
-    # actually supported. Suppresses fabricated section numbers,
-    # invented dates, hallucinated holdings that happen to share a topic
-    # word with a real passage.
-    if max_score is not None and max_score < s.nli_hard_floor:
-        return SentenceVerification(
-            text=sentence, status=SentenceStatus.UNSUPPORTED,
-            citations=citations, entailment_score=max_score,
-            reason=f"max entailment {max_score:.2f} < hard floor {s.nli_hard_floor:.2f}",
+    if backend == "bge":
+        v = _entailment_verdict(
+            "bge", sentence, citations, retrieved_by_idx,
             auto_cited=auto_cited,
+            nli_threshold=nli_threshold,
+            bge_threshold=s.bge_verifier_threshold,
+        )
+        return SentenceVerification(
+            text=sentence, status=v.status, citations=citations,
+            entailment_score=v.score, reason=v.reason, auto_cited=auto_cited,
         )
 
-    if max_score is not None and max_score < nli_threshold:
-        return SentenceVerification(
-            text=sentence, status=SentenceStatus.WEAK_SUPPORT,
-            citations=citations, entailment_score=max_score,
-            reason=f"max entailment {max_score:.2f} < threshold {nli_threshold:.2f}",
+    if backend == "ensemble":
+        nli_v = _entailment_verdict(
+            "nli", sentence, citations, retrieved_by_idx,
             auto_cited=auto_cited,
+            nli_threshold=nli_threshold,
+            bge_threshold=s.bge_verifier_threshold,
+        )
+        bge_v = _entailment_verdict(
+            "bge", sentence, citations, retrieved_by_idx,
+            auto_cited=auto_cited,
+            nli_threshold=nli_threshold,
+            bge_threshold=s.bge_verifier_threshold,
+        )
+        # Fail-closed graceful degradation: if exactly ONE backend is
+        # unavailable, fall back to the OTHER (don't double-penalize the
+        # sentence). If BOTH are unavailable, the surviving WEAK_SUPPORT
+        # verdict propagates (which is the fail-closed contract).
+        if nli_v.unavailable and not bge_v.unavailable:
+            note = f"ensemble→bge (nli unavailable); {bge_v.reason}".rstrip("; ")
+            v = _BackendVerdict(status=bge_v.status, score=bge_v.score, reason=note)
+        elif bge_v.unavailable and not nli_v.unavailable:
+            note = f"ensemble→nli (bge unavailable); {nli_v.reason}".rstrip("; ")
+            v = _BackendVerdict(status=nli_v.status, score=nli_v.score, reason=note)
+        else:
+            # Pessimistic AND: take the worse of the two verdicts.
+            worse_status = _worse(nli_v.status, bge_v.status)
+            reason_bits = []
+            if nli_v.score is not None:
+                reason_bits.append(f"nli={nli_v.score:.2f}")
+            if bge_v.score is not None:
+                reason_bits.append(f"bge={bge_v.score:.2f}")
+            reason = (
+                f"ensemble {worse_status.value}: " + ", ".join(reason_bits)
+                if reason_bits else f"ensemble {worse_status.value}"
+            )
+            # Report NLI score in entailment_score for backward-compat
+            # with existing UI / metrics consumers. NLI is the primary
+            # signal; bge is the safety net. If NLI is missing, fall
+            # through to bge so the field is never None when one
+            # backend produced a score.
+            v = _BackendVerdict(
+                status=worse_status,
+                score=nli_v.score if nli_v.score is not None else bge_v.score,
+                reason=reason,
+            )
+        return SentenceVerification(
+            text=sentence, status=v.status, citations=citations,
+            entailment_score=v.score, reason=v.reason, auto_cited=auto_cited,
         )
 
-    return SentenceVerification(
-        text=sentence, status=SentenceStatus.OK,
-        citations=citations, entailment_score=max_score,
-        auto_cited=auto_cited,
-    )
+    raise ValueError(f"unknown verifier_backend {backend!r}")
 
 
 def verify_answer(
@@ -563,10 +750,13 @@ def verify_answer(
     retrieved_by_idx: dict[int, str],
     *,
     skip_nli: bool = False,
+    backend: str | None = None,
 ) -> AnswerVerification:
     out = AnswerVerification()
     for sent in segment_sentences(text):
-        out.sentences.append(verify_sentence(sent, retrieved_by_idx, skip_nli=skip_nli))
+        out.sentences.append(
+            verify_sentence(sent, retrieved_by_idx, skip_nli=skip_nli, backend=backend),
+        )
     return out
 
 
@@ -574,6 +764,7 @@ __all__ = [
     "AnswerVerification",
     "SentenceStatus",
     "SentenceVerification",
+    "bge_score",
     "nli_score",
     "parse_citation_tags",
     "segment_sentences",

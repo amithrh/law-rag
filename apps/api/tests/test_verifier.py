@@ -382,6 +382,139 @@ class TestVerifyAnswer:
         assert v.skip_ratio == 1.0
 
 
+# -------------------- bge backend + ensemble (architecture-research task #2)
+#
+# These tests exercise the bge and ensemble backends without loading any
+# real model. We monkeypatch `apps.api.verifier.nli_score` and
+# `apps.api.verifier.bge_score` to return controlled values, then verify
+# that the backend dispatch + threshold logic in verify_sentence behaves
+# correctly.
+#
+# The bge-as-verifier swap is described in docs/VERIFIER_SWAP.md.
+
+class TestBgeBackend:
+    """bge backend exercised in isolation. All bge thresholds come from
+    Settings defaults — bge_verifier_threshold=0.222 (from calibration)
+    and bge_verifier_hard_floor=0.003. Tests pick scores well above/below
+    these values to stay robust to minor recalibration."""
+
+    def setup_method(self) -> None:
+        self.idx_map = {
+            1: "Section 12 of the Consumer Protection Act provides for District Forums to hear consumer complaints up to twenty lakh rupees in value.",
+            2: "The forum has jurisdiction up to twenty lakh rupees.",
+        }
+
+    def test_bge_backend_ok_for_supported_claim(self, monkeypatch) -> None:
+        """A bge score well above the threshold should produce OK on the bge
+        backend (no NLI involvement)."""
+        import apps.api.verifier as v_mod
+        # Force bge=high (well above 0.222); NLI must NOT be called on bge backend
+        nli_called = []
+        monkeypatch.setattr(v_mod, "bge_score", lambda p, h: 0.95)
+        monkeypatch.setattr(v_mod, "nli_score",
+                            lambda p, h: (nli_called.append((p, h)) or 0.99))
+        s = "Consumer complaints up to twenty lakh rupees are heard by District Forums [1]."
+        v = verify_sentence(s, self.idx_map, backend="bge")
+        assert v.status == SentenceStatus.OK, (v.status, v.reason)
+        assert v.entailment_score == pytest.approx(0.95)
+        # NLI must NOT have been called on the bge-only backend
+        assert nli_called == [], "bge backend must not invoke NLI"
+
+    def test_bge_backend_hard_floor_suppresses_fabrication(self, monkeypatch) -> None:
+        """A bge score below the hard floor (0.003) should produce
+        UNSUPPORTED on the bge backend, matching how the NLI floor
+        suppresses fabricated content."""
+        import apps.api.verifier as v_mod
+        # Stub bge to a value below the floor
+        monkeypatch.setattr(v_mod, "bge_score", lambda p, h: 0.0001)
+        s = "The Consumer Protection Act mandates a refund within 7 days [1]."
+        v = verify_sentence(s, self.idx_map, backend="bge")
+        assert v.status == SentenceStatus.UNSUPPORTED, (v.status, v.reason)
+        assert "hard floor" in v.reason.lower()
+        # Score must be carried for observability
+        assert v.entailment_score is not None
+        assert v.entailment_score < 0.003
+
+    def test_bge_backend_weak_between_floor_and_threshold(self, monkeypatch) -> None:
+        """Coverage: a bge score above the floor but below the threshold
+        is WEAK_SUPPORT, not OK. Locks the bge threshold semantics so a
+        future recalibration that flips the inequality is caught."""
+        import apps.api.verifier as v_mod
+        # 0.10 is above floor (0.003) but below threshold (0.222)
+        monkeypatch.setattr(v_mod, "bge_score", lambda p, h: 0.10)
+        s = "Consumer complaints have a fee of fifty rupees [1]."
+        v = verify_sentence(s, self.idx_map, backend="bge")
+        assert v.status == SentenceStatus.WEAK_SUPPORT, (v.status, v.reason)
+
+
+class TestEnsembleBackend:
+    """The ensemble backend ANDs NLI and bge — the worse verdict wins."""
+
+    def setup_method(self) -> None:
+        self.idx_map = {
+            1: "Section 12 of the Consumer Protection Act provides for District Forums to hear consumer complaints up to twenty lakh rupees in value.",
+            2: "The forum has jurisdiction up to twenty lakh rupees.",
+        }
+
+    def test_ensemble_pessimistic(self, monkeypatch) -> None:
+        """When NLI says OK (>=0.35) but bge says WEAK (<0.222), the
+        ensemble verdict is WEAK_SUPPORT. Pessimistic AND across backends."""
+        import apps.api.verifier as v_mod
+        monkeypatch.setattr(v_mod, "nli_score", lambda p, h: 0.80)
+        monkeypatch.setattr(v_mod, "bge_score", lambda p, h: 0.15)
+        s = "Consumer complaints up to twenty lakh rupees are heard by District Forums [1]."
+        v = verify_sentence(s, self.idx_map, backend="ensemble")
+        assert v.status == SentenceStatus.WEAK_SUPPORT, (v.status, v.reason)
+        # Reason should reference both scores so we can debug disagreements
+        assert "nli=" in v.reason and "bge=" in v.reason, v.reason
+
+    def test_ensemble_unsupported_when_one_backend_below_floor(self, monkeypatch) -> None:
+        """If either backend says UNSUPPORTED (below its hard floor), the
+        ensemble verdict is UNSUPPORTED. The bge backend in particular
+        catches relevance failures the NLI backend may miss."""
+        import apps.api.verifier as v_mod
+        monkeypatch.setattr(v_mod, "nli_score", lambda p, h: 0.80)  # NLI: OK
+        monkeypatch.setattr(v_mod, "bge_score", lambda p, h: 0.0001)  # bge: below floor
+        s = "Consumer complaints up to twenty lakh rupees are heard by District Forums [1]."
+        v = verify_sentence(s, self.idx_map, backend="ensemble")
+        assert v.status == SentenceStatus.UNSUPPORTED, (v.status, v.reason)
+
+    def test_ensemble_fail_closed_when_one_backend_unavailable(self, monkeypatch) -> None:
+        """If exactly ONE backend is unavailable (returns None), the ensemble
+        falls back to the OTHER backend and emits a reason naming the
+        unavailable one. Don't double-penalize the sentence for a backend
+        availability issue."""
+        import apps.api.verifier as v_mod
+        # Simulate bge model failing to load
+        monkeypatch.setattr(v_mod, "bge_score", lambda p, h: None)
+        monkeypatch.setattr(v_mod, "nli_score", lambda p, h: 0.95)
+        s = "Consumer complaints are heard by District Forums [1]."
+        v = verify_sentence(s, self.idx_map, backend="ensemble")
+        # NLI says OK → ensemble should pass through OK (with note in reason)
+        assert v.status == SentenceStatus.OK, (v.status, v.reason)
+        assert "bge unavailable" in v.reason.lower(), v.reason
+
+    def test_auto_cited_still_requires_entailment_on_bge(self, monkeypatch) -> None:
+        """Per Codex review #3, auto-cited sentences MUST run entailment
+        regardless of skip_nli, AND must be suppressed when entailment fails.
+        Verify that the bge backend enforces this — an auto-cite that
+        scores below the bge hard floor is UNSUPPORTED, not OK."""
+        import apps.api.verifier as v_mod
+        # bge below floor — auto-cite must be suppressed
+        monkeypatch.setattr(v_mod, "bge_score", lambda p, h: 0.0001)
+        # High-lexical-overlap sentence (auto-cite will fire on idx 1)
+        idx_map = {
+            1: "Section 12 of the Consumer Protection Act provides for District Forums to hear consumer complaints up to twenty lakh rupees in value.",
+        }
+        # Sentence shares most content words with passage 1 → auto-cite attaches [1]
+        s = "Section 12 of the Consumer Protection Act provides for District Forums to hear consumer complaints up to twenty lakh rupees in value."
+        v = verify_sentence(s, idx_map, backend="bge", skip_nli=True)
+        # Auto-cite should have fired but bge below floor → UNSUPPORTED
+        assert v.auto_cited is True, "auto-cite should have attached citation"
+        assert v.status == SentenceStatus.UNSUPPORTED, (v.status, v.reason)
+        assert "hard floor" in v.reason.lower()
+
+
 # -------------------- NLI integration (real model) -------------------------
 
 class TestNLIIntegration:
@@ -416,13 +549,19 @@ class TestNLIIntegration:
         Per round-3 review (security #2), entailment below the hard floor
         (0.10) is UNSUPPORTED (fabricated amounts/numbers). Above the floor
         but below the weak threshold is WEAK_SUPPORT. Either outcome is a
-        correct surfacing of the discrepancy."""
+        correct surfacing of the discrepancy.
+
+        Explicit `backend="nli"` so this test exercises the NLI code path
+        even when the global default is ensemble (architecture-research
+        task #2).
+        """
         idx_map = {
             1: "The court awarded costs of Rs. 50,000 to the petitioner.",
         }
         # Hypothesis claims a different amount → either WEAK or UNSUPPORTED.
         sentence = "The court awarded Rs. 5,00,000 in compensation [1]."
-        v = verify_sentence(sentence, idx_map, skip_nli=False, nli_threshold=0.5)
+        v = verify_sentence(sentence, idx_map, skip_nli=False, nli_threshold=0.5,
+                            backend="nli")
         assert v.entailment_score is not None
         assert v.entailment_score < 0.5, f"expected low entailment, got {v.entailment_score}"
         assert v.status in (SentenceStatus.WEAK_SUPPORT, SentenceStatus.UNSUPPORTED), v.status
@@ -434,7 +573,8 @@ class TestNLIIntegration:
             1: "Anticipatory bail under Section 438 of the CrPC may be granted even after an FIR has been filed.",
         }
         sentence = "Anticipatory bail can be granted after an FIR is filed [1]."
-        v = verify_sentence(sentence, idx_map, skip_nli=False, nli_threshold=0.5)
+        v = verify_sentence(sentence, idx_map, skip_nli=False, nli_threshold=0.5,
+                            backend="nli")
         assert v.status == SentenceStatus.OK
         assert v.entailment_score is not None
         assert v.entailment_score > 0.5

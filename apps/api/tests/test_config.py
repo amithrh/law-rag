@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-import pytest
+import pytest  # noqa: F401  — used by tests below
 
 from apps.api.config import Settings
 
@@ -123,3 +123,24 @@ class TestSettingsDefaults:
         to block queries against unverified content. Production overrides
         via env var REQUIRE_PROVENANCE_VERIFIED=true."""
         assert Settings(database_url="postgresql://x").require_provenance_verified is False
+
+    def test_verifier_backend_defaults_to_bge(self):
+        """Default is `bge` after head-to-head battery v3 comparison: bge
+        scored 92% (vs NLI 84% / ensemble 82%) with zero stops and half
+        the latency. NLI stays available as VERIFIER_BACKEND=nli for
+        ablation or if bge needs stress-testing on contradictions."""
+        s = Settings(database_url="postgresql://x")
+        assert s.verifier_backend == "bge"
+        # Calibrated values (from data/processed/bge_verifier_calibration.json
+        # on battery_v3_20260519-010820). If these defaults move, the
+        # calibration script's `Recommended settings` output is the source
+        # of truth — recalibrate before changing.
+        assert s.bge_verifier_threshold == pytest.approx(0.222)
+        assert s.bge_verifier_hard_floor == pytest.approx(0.003)
+
+    def test_verifier_backend_env_var_override(self, monkeypatch):
+        """VERIFIER_BACKEND=bge must reach the Settings object so an
+        operator can flip the backend without code edits."""
+        monkeypatch.setenv("VERIFIER_BACKEND", "bge")
+        s = Settings(database_url="postgresql://x")
+        assert s.verifier_backend == "bge"

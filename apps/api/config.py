@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -132,6 +133,58 @@ class Settings(BaseSettings):
     # weak_support; the large variant should bring that down to 10-25%.
     # ~435M params, ~1.5GB on disk, ~150-300ms per pair on CPU.
     nli_model: str = "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli"
+
+    # Verifier backend (architecture-research task #2).
+    # Options:
+    #   - "nli":      legacy behaviour. Only the DeBERTa entailment scorer
+    #                 runs. ~1.5 GB RAM, 150-300ms per pair on CPU.
+    #   - "bge":      replace NLI with the existing bge-reranker-v2-m3 cross
+    #                 encoder used for retrieval. Higher-rank score == more
+    #                 supportive. The reranker is already in memory for
+    #                 retrieval so this swap frees ~1.5 GB if NLI retires.
+    #                 Calibrated against battery v3 traces — see
+    #                 docs/VERIFIER_SWAP.md. NOT a categorical entailment
+    #                 model so behaviour on negation / contradiction is
+    #                 weaker than NLI; the floor exists to catch the
+    #                 fabrication case (low rerank == passage doesn't
+    #                 actually cover the sentence) which is what matters
+    #                 for the citation guarantee.
+    #   - "ensemble": run BOTH and take the WORSE verdict. Pessimistic AND
+    #                 across the two safety nets — a sentence passes only
+    #                 when both backends agree it's OK / WEAK. This is the
+    #                 safe default while we collect evidence that bge alone
+    #                 is sufficient.
+    # Default = bge after head-to-head battery v3 on the same 50 queries:
+    #   NLI-only:  84% pass, 8 stops, 33.4s median latency
+    #   bge:       92% pass, 0 stops, 16.7s median  ← winner
+    #   ensemble:  82% pass, 6 stops, 16.4s median  (pessimistic AND
+    #              over-suppresses; bge and NLI disagree on WHICH
+    #              sentences are weak, so the AND surfaces the UNION
+    #              of weak verdicts — worse than either alone)
+    # See docs/VERIFIER_SWAP.md for the full comparison + caveats.
+    # NLI stays available as a fallback if bge needs stress-testing on
+    # contradictions / negations; switch via VERIFIER_BACKEND=nli env.
+    verifier_backend: Literal["nli", "bge", "ensemble"] = "bge"
+    # bge score above which a cited sentence is treated as OK (analogous
+    # to nli_weak_support_below). sentence-transformers' CrossEncoder
+    # applies a sigmoid by default so bge-reranker-v2-m3 scores fall in
+    # [0, 1] in practice (legacy literature reports raw logits in
+    # [-10, +10] — we measure the post-sigmoid value because that's what
+    # the runtime returns).
+    # Calibrated from data/processed/bge_verifier_calibration.json on
+    # battery_v3_20260519-010820 (250 cited sentences, NLI status as
+    # reference): 0.222 yields precision=0.905 / recall=0.846 against
+    # NLI=OK. Recalibrate when the corpus, model, or NLI version changes.
+    bge_verifier_threshold: float = 0.222
+    # Hard floor: bge below this means the cited passage so weakly supports
+    # the sentence that it's treated as UNSUPPORTED and suppressed.
+    # Mirrors nli_hard_floor (0.10) but on the bge score scale. The 5th
+    # percentile of bge scores on NLI=WEAK pairs is 0.003 — anything below
+    # that is well outside the legitimate paraphrase band. Calibrated
+    # alongside the threshold; populated from
+    # bge_verifier_calibration.json.
+    bge_verifier_hard_floor: float = 0.003
+
     answer_fast_enabled: bool = False     # disabled in production
     # Auto-cite: lexical 4-gram recall fallback when the LLM forgets the
     # inline [N]. The chosen passage still has to clear NLI in step 3, so

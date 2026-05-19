@@ -167,11 +167,21 @@ def score(result: dict, subject: str) -> dict:
 
 
 def main():
+    # Optional label suffix lets multiple backends share the script:
+    #   python scripts/test_battery_v3.py bge      → battery_v3_bge.{json,md}
+    #   python scripts/test_battery_v3.py ensemble → battery_v3_ensemble.{json,md}
+    # No suffix → timestamped filename as before.
+    label = sys.argv[1] if len(sys.argv) > 1 else None
+
     out_dir = ROOT / "data" / "processed"
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    json_path = out_dir / f"battery_v3_{stamp}.json"
-    md_path = out_dir / f"battery_v3_{stamp}.md"
+    if label:
+        json_path = out_dir / f"battery_v3_{label}.json"
+        md_path = out_dir / f"battery_v3_{label}.md"
+    else:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        json_path = out_dir / f"battery_v3_{stamp}.json"
+        md_path = out_dir / f"battery_v3_{stamp}.md"
 
     print(f"=== Battery v3 ({len(QUERIES)} queries) ===")
     print(f"API: {API_BASE}\n", flush=True)
