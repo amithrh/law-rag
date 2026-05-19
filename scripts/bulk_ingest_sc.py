@@ -207,7 +207,9 @@ async def main():
                 if not row.get("subject_area"):
                     try:
                         from ingest.adapters.base import infer_subject_area
-                        row["subject_area"] = infer_subject_area(row["text"])
+                        row["subject_area"] = infer_subject_area(
+                            row["text"], title=row.get("title") or "",
+                        )
                     except Exception:
                         row["subject_area"] = None
                 # Materialize the doc (so chunks have a valid foreign key)

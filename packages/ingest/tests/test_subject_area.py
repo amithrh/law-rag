@@ -170,6 +170,76 @@ class TestEdgeCases:
         assert infer_subject_area("Anticipatory bail granted.") == "criminal"
 
 
+# ---- title override (Task #6, 2026-05-19) -------------------------------
+# The classifier was tagging 87% of SC docs as "criminal" because tax /
+# customs / land cases tangentially mention "FIR" or "CrPC" in the body
+# and "criminal" had more raw keywords than other categories. Title
+# override is the strongest single signal and short-circuits the
+# keyword scoring path.
+
+class TestTitleOverride:
+    def test_income_tax_case_classified_as_tax_not_criminal(self) -> None:
+        """The mis-tag class that motivated this whole rewrite — tax cases
+        with body text that mentions CrPC tangentially used to score
+        higher on 'criminal' than on 'tax'."""
+        text = (
+            "The assessee filed an appeal against the order. Reference "
+            "was made to FIR and CrPC during the proceedings. The "
+            "Income Tax Appellate Tribunal held..."
+        )
+        assert infer_subject_area(
+            text,
+            title="COMMISSIONER OF INCOME TAX versus M/S SANJEEV WOOLEN MILLS",
+        ) == "tax"
+
+    def test_customs_case_classified_as_tax(self) -> None:
+        assert infer_subject_area(
+            "Adversarial proceedings under the Customs Act 1962.",
+            title="COLLECTOR OF CENTRAL EXCISE AND CUSTOMS versus D.C.L. POLYSTER LTD",
+        ) == "tax"
+
+    def test_land_acquisition_classified_as_land_revenue(self) -> None:
+        assert infer_subject_area(
+            "The notification was challenged.",
+            title="S. SHANKARAIAH versus THE LAND ACQUISITION OFFICER",
+        ) == "land_revenue"
+
+    def test_specific_relief_classified_as_property(self) -> None:
+        assert infer_subject_area(
+            "Civil dispute over title and possession.",
+            title="A. RAMASWAMY IYENGAR versus B. KRISHNAMURTHY (under Specific Relief Act)",
+        ) == "property"
+
+    def test_companies_act_classified_as_company_securities(self) -> None:
+        assert infer_subject_area(
+            "Scheme petition.",
+            title="IN RE SOMESCHEME COMPANIES ACT MATTER",
+        ) == "company_securities"
+
+    def test_real_criminal_case_still_criminal(self) -> None:
+        """Title override must not over-eat real criminal cases."""
+        text = "Anticipatory bail under Section 438 CrPC. FIR allegations."
+        assert infer_subject_area(
+            text, title="RAMESH KUMAR versus STATE OF HARYANA",
+        ) == "criminal"
+
+
+class TestMinConfidenceFloor:
+    def test_below_floor_returns_none(self) -> None:
+        """A doc with no strong signal should return None instead of being
+        force-tagged as the least-bad category."""
+        text = "The matter was disposed of with the parties' consent."
+        # No title hint, no keyword hits → None (was: forced to some category)
+        assert infer_subject_area(text) is None
+
+    def test_single_short_keyword_below_floor(self) -> None:
+        """One match of 'FIR' (1 word = 1 weighted point) is below the
+        2-point floor and should return None, not 'criminal'."""
+        text = "The trial court's findings were confirmed. An FIR was mentioned only in passing."
+        # FIR scores 1; nothing else hits → below floor 2 → None
+        assert infer_subject_area(text) is None
+
+
 # ---- slice partition ----------------------------------------------------
 
 def test_slice_subjects_are_exactly_the_six_named() -> None:

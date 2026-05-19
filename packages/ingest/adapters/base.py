@@ -197,27 +197,112 @@ SLICE_SUBJECTS: frozenset[str] = frozenset({
 })
 
 
-def infer_subject_area(text: str) -> str | None:
-    """Best-effort subject-area tag from text. Returns the area with the most
-    keyword hits. Returns None only when the text genuinely has no legal
-    subject signal (vanishingly rare on real judgments — most will match
-    'criminal' at minimum because of references to CrPC / bail / etc.).
+# Hard title signals — phrases that, when they appear in the case
+# title, leave no doubt about the subject. They short-circuit the
+# keyword-scoring path. Built from the audit of mis-tagged cases
+# (2026-05-19): 87% of SC docs were tagged "criminal" because tax /
+# customs / land cases tangentially mentioned "FIR" or "CrPC" in the
+# body, and "criminal" has more keywords than other categories so it
+# accumulated more hits.
+_TITLE_SIGNALS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Order matters — earlier wins on overlap. Tax is first because
+    # "Commissioner of Income Tax" is the single biggest mis-tag class.
+    ("tax", (
+        "income tax", "sales tax", "service tax", "trade tax",
+        "central excise", "excise duty", "customs duty", "customs act",
+        "commissioner of customs", "commissioner of central excise",
+        "commissioner of income tax", "principal commissioner of income tax",
+        "joint commissioner of income tax", "assistant commissioner of income tax",
+        "directorate of revenue intelligence", "income tax appellate",
+        "central goods and services", "cgst", "sgst", "gst act",
+    )),
+    ("land_revenue", (
+        "land acquisition", "revenue divisional officer",
+        "collector ... land", "land acquisition officer",
+        "land acquisition act", "agricultural land",
+    )),
+    ("company_securities", (
+        "companies act", "scheme of arrangement", "national company law",
+        "nclt", "nclat", "ibc ", "insolvency and bankruptcy",
+        "securities and exchange board", "sebi",
+    )),
+    ("property", (
+        "transfer of property", "specific relief act", "specific performance",
+        "agreement to sell", "sale deed", "title suit",
+    )),
+    ("election", (
+        "representation of the people act", "election petition",
+        "election commission",
+    )),
+    ("constitutional", (
+        # Many writ petitions are tagged constitutional already; this
+        # catches the explicit "Article 32 / 226 / 14" mentions in title.
+        "article 32", "article 226", "article 14", "article 19",
+        "fundamental rights",
+    )),
+    ("service_employment", (
+        "departmental enquiry", "ccs rules", "service rules",
+        "compulsory retirement", "pension regulation",
+    )),
+)
 
-    The expanded keyword set (slice + 8 "other" categories) ensures we
-    don't silently drop a constitutional / tax / civil / service judgment
-    just because it doesn't fit the slice. Those judgments still appear in
-    retrieval; they just carry an honest subject_area label.
+
+def infer_subject_area(text: str, *, title: str = "") -> str | None:
+    """Best-effort subject-area tag from a doc's body text plus (preferred)
+    its title. Returns the area with the highest weighted keyword score,
+    or None when no clear signal exists.
+
+    Two-stage classification (rewritten 2026-05-19 after the retrieval
+    audit revealed 87% of SC docs mis-tagged as "criminal"):
+
+    1. TITLE OVERRIDE — if the title contains a hard signal phrase
+       ("Commissioner of Income Tax", "Land Acquisition", "Specific
+       Relief Act", etc.), classify by that immediately. Bodies of
+       tax / customs / property judgments routinely mention "FIR" or
+       "CrPC" tangentially, which let the old classifier mis-tag them
+       as criminal. The title is the most reliable single signal.
+
+    2. KEYWORD SCORING — length-weighted. Multi-word phrases like
+       "Bharatiya Nyaya Sanhita" (3 words) score more than "FIR"
+       (1 word) because longer phrases are less likely to appear by
+       coincidence. The old equal-weight scoring favored categories
+       with many short keywords (criminal had ~15 short ones).
+
+    A minimum confidence floor of 2 weighted points means weakly-
+    signaled docs return None rather than getting force-tagged as the
+    least-bad category.
     """
-    if not text:
+    if not text and not title:
         return None
-    text_lower = text.lower()[:10000]
-    scores: dict[str, int] = {}
+
+    title_lower = (title or "").lower()
+    text_lower = (text or "").lower()[:10000]
+    haystack = f"{title_lower}\n{text_lower}"  # title appears first, so substring matches there get checked first
+
+    # Stage 1 — title override
+    if title_lower:
+        for area, phrases in _TITLE_SIGNALS:
+            for p in phrases:
+                if p in title_lower:
+                    return area
+
+    # Stage 2 — length-weighted keyword scoring over title + body
+    scores: dict[str, float] = {}
     for area, keywords in SUBJECT_AREA_KEYWORDS.items():
-        # Score by distinct keyword hits, not raw match count (which would
-        # over-favor categories that repeat the same word).
-        scores[area] = sum(1 for kw in keywords if kw.lower() in text_lower)
+        total = 0.0
+        for kw in keywords:
+            kw_lower = kw.lower()
+            if kw_lower in haystack:
+                # Weight by word count of the keyword phrase. A 3-word
+                # phrase like "Bharatiya Nyaya Sanhita" scores 3; a
+                # 1-word like "FIR" scores 1.
+                total += float(len(kw_lower.split()))
+        scores[area] = total
+
     best_area, best_score = max(scores.items(), key=lambda kv: kv[1])
-    return best_area if best_score >= 1 else None
+    # Min-confidence floor: 2 weighted points = either one strong 2-word
+    # phrase or two 1-word matches. Below that, we can't tell.
+    return best_area if best_score >= 2.0 else None
 
 
 def is_slice_subject(area: str | None) -> bool:

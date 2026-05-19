@@ -160,16 +160,19 @@ class SCRahul1872Adapter:
                 except Exception:
                     continue
 
+                # Pull metadata row first so the subject classifier has access
+                # to the title (it's the strongest single signal — see
+                # adapters/base.py infer_subject_area).
+                key = Path(member.name).stem
+                meta = metadata_by_key.get(key) or metadata_by_key.get(member.name) or {}
+
                 # Subject-area filter (PLAN §1, §2.4 — slice covers common-public
                 # acts only). Skip docs that don't match any subject area unless
                 # the caller explicitly asked for everything.
-                subject = infer_subject_area(text)
+                title_hint = (meta.get("title") or meta.get("case_name") or "")
+                subject = infer_subject_area(text, title=title_hint)
                 if query.subject_areas and subject not in (query.subject_areas or []):
                     continue
-
-                # Pull metadata row if available
-                key = Path(member.name).stem
-                meta = metadata_by_key.get(key) or metadata_by_key.get(member.name) or {}
 
                 # Synthesize canonical URL — this dataset doesn't always carry
                 # an eSCR judgment_url, so we mint a stable one from year + filename.
