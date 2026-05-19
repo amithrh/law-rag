@@ -178,6 +178,203 @@ P0: list[dict[str, Any]] = [
      "handle_id": "12883", "subject_area": "civil_general"},
     {"slug": "mediation-2023", "title": "Mediation Act 2023",
      "handle_id": "19637", "subject_area": "civil_general"},
+
+    # --- P1 add-ons: user-reported gaps from UI testing 2026-05-19 -----
+    # "school not admitting my child" → RTE Act 2009. h=19908 (CENT 2505)
+    # has the right title but serves no PDF; h=13682 (col 2493) hosts the
+    # clean `rte_act_2009.pdf` bitstream.
+    {"slug": "rte-2009",
+     "title": "Right of Children to Free and Compulsory Education Act 2009",
+     "handle_id": "13682", "subject_area": "education"},
+
+    # "landlord won't return my deposit" → State Rent Acts (the user's
+    # operative law for security-deposit-on-tenancy disputes). Five
+    # largest states by tenancy-dispute volume.
+    {"slug": "mh-rent-control-1999",
+     "title": "Maharashtra Rent Control Act 1999",
+     "handle_id": "15817", "subject_area": "property"},
+    {"slug": "up-urban-tenancy-2021",
+     "title": "Uttar Pradesh Urban Buildings (Regulation of Letting, Rent and Eviction) Act 2021",
+     "handle_id": "19204", "subject_area": "property"},
+    {"slug": "tn-tenancy-2017",
+     "title": "Tamil Nadu Regulation of Rights and Responsibilities of Landlords and Tenants Act 2017",
+     "handle_id": "20507", "subject_area": "property"},
+    {"slug": "ka-rent-1999", "title": "Karnataka Rent Act 1999",
+     "handle_id": "7810", "subject_area": "property"},
+    {"slug": "wb-premises-tenancy-1997",
+     "title": "West Bengal Premises Tenancy Act 1997",
+     "handle_id": "14542", "subject_area": "property"},
+
+    # --- P1 expansion round 2: lay-user query coverage (2026-05-19) ---
+    # ITPA: user-flagged via "i am prostitute can police catch me" — Act
+    # criminalises soliciting / brothel-keeping but not sex work per se;
+    # the bare-act text is needed to give a non-misleading answer.
+    {"slug": "itpa-1956",
+     "title": "Immoral Traffic (Prevention) Act 1956",
+     "handle_id": "20019", "subject_area": "criminal"},
+
+    # Drug law — high pro-bono query volume
+    {"slug": "ndps-1985",
+     "title": "Narcotic Drugs and Psychotropic Substances Act 1985",
+     "handle_id": "21511", "subject_area": "criminal"},
+
+    # Dowry — top family-criminal query
+    {"slug": "dowry-prohibition-1961",
+     "title": "Dowry Prohibition Act 1961",
+     "handle_id": "1679", "subject_area": "criminal"},
+
+    # Money laundering — ED proceedings; politically prominent
+    {"slug": "pmla-2002",
+     "title": "Prevention of Money Laundering Act 2002",
+     "handle_id": "2036", "subject_area": "criminal"},
+
+    # IBC — corporate / personal insolvency
+    {"slug": "ibc-2016",
+     "title": "Insolvency and Bankruptcy Code 2016",
+     "handle_id": "2154", "subject_area": "company_securities"},
+
+    # SARFAESI — bank repossession; MSME/home-loan disputes
+    {"slug": "sarfaesi-2002",
+     "title": "Securitisation and Reconstruction of Financial Assets and Enforcement of Security Interest Act 2002",
+     "handle_id": "2006", "subject_area": "property"},
+
+    # Arbitration — alternate dispute resolution
+    {"slug": "arbitration-1996",
+     "title": "Arbitration and Conciliation Act 1996",
+     "handle_id": "21922", "subject_area": "civil_general"},
+
+    # Mental Healthcare — advance directives, decriminalisation of suicide
+    {"slug": "mental-healthcare-2017",
+     "title": "Mental Healthcare Act 2017",
+     "handle_id": "2249", "subject_area": "constitutional"},
+
+    # Rights of PwD — disability rights
+    {"slug": "rpwd-2016",
+     "title": "Rights of Persons with Disabilities Act 2016",
+     "handle_id": "2155", "subject_area": "constitutional"},
+
+    # Transgender Rights — self-identification, anti-discrimination
+    {"slug": "transgender-2019",
+     "title": "Transgender Persons (Protection of Rights) Act 2019",
+     "handle_id": "13091", "subject_area": "constitutional"},
+
+    # Customs — imports/duty/smuggling
+    {"slug": "customs-1962",
+     "title": "Customs Act 1962",
+     "handle_id": "2475", "subject_area": "tax"},
+
+    # FEMA — NRI/FX queries
+    {"slug": "fema-1999",
+     "title": "Foreign Exchange Management Act 1999",
+     "handle_id": "1988", "subject_area": "tax"},
+
+    # Indian Stamp Act — stamp duty
+    {"slug": "indian-stamp-1899",
+     "title": "Indian Stamp Act 1899",
+     "handle_id": "15510", "subject_area": "property"},
+
+    # Citizenship Act — citizenship queries (CAA-adjacent)
+    {"slug": "citizenship-1955",
+     "title": "Citizenship Act 1955",
+     "handle_id": "1522", "subject_area": "constitutional"},
+
+    # MTP Act — abortion law
+    {"slug": "mtp-1971",
+     "title": "Medical Termination of Pregnancy Act 1971",
+     "handle_id": "1593", "subject_area": "family"},
+
+    # POCSO/JJ/PCMA already in corpus; add Prevention of Corruption (1988)
+    {"slug": "prevention-of-corruption-1988",
+     "title": "Prevention of Corruption Act 1988",
+     "handle_id": "1558", "subject_area": "criminal"},
+
+    # --- P1 expansion round 3 (2026-05-19): labour predecessors + IDs ---
+    # The four labour-code predecessor Acts are still in partial force
+    # until section-wise commencement of SS Code 2020 / IR Code 2020 /
+    # OSH Code 2020 completes. Heavily queried standalone.
+    {"slug": "industrial-disputes-1947",
+     "title": "Industrial Disputes Act 1947",
+     "handle_id": "20952", "subject_area": "service_employment"},
+    {"slug": "factories-1948",
+     "title": "Factories Act 1948",
+     "handle_id": "20951", "subject_area": "service_employment"},
+    {"slug": "epf-1952",
+     "title": "Employees' Provident Funds and Miscellaneous Provisions Act 1952",
+     "handle_id": "2152", "subject_area": "service_employment"},
+    {"slug": "esi-1948",
+     "title": "Employees' State Insurance Act 1948",
+     "handle_id": "20349", "subject_area": "service_employment"},
+    {"slug": "gratuity-1972",
+     "title": "Payment of Gratuity Act 1972",
+     "handle_id": "22091", "subject_area": "service_employment"},
+    {"slug": "maternity-benefit-1961",
+     "title": "Maternity Benefit Act 1961",
+     "handle_id": "20954", "subject_area": "service_employment"},
+    {"slug": "trade-unions-1926",
+     "title": "Trade Unions Act 1926",
+     "handle_id": "20965", "subject_area": "service_employment"},
+    {"slug": "equal-remuneration-1976",
+     "title": "Equal Remuneration Act 1976",
+     "handle_id": "20950", "subject_area": "service_employment"},
+
+    # ID / cyber
+    {"slug": "aadhaar-2016",
+     "title": "Aadhaar (Targeted Delivery of Financial and Other Subsidies, Benefits and Services) Act 2016",
+     "handle_id": "2160", "subject_area": "constitutional"},
+    {"slug": "telecommunications-2023",
+     "title": "Telecommunications Act 2023",
+     "handle_id": "20101", "subject_area": "civil_general"},
+
+    # Commercial
+    {"slug": "llp-2008",
+     "title": "Limited Liability Partnership Act 2008",
+     "handle_id": "2023", "subject_area": "company_securities"},
+    {"slug": "partnership-1932",
+     "title": "Indian Partnership Act 1932",
+     "handle_id": "2394", "subject_area": "company_securities"},
+    {"slug": "igst-2017",
+     "title": "Integrated Goods and Services Tax Act 2017",
+     "handle_id": "2251", "subject_area": "tax"},
+
+    # Family / personal law expansion
+    {"slug": "family-courts-1984",
+     "title": "Family Courts Act 1984",
+     "handle_id": "12869", "subject_area": "family"},
+    {"slug": "muslim-women-2019",
+     "title": "Muslim Women (Protection of Rights on Marriage) Act 2019",
+     "handle_id": "11564", "subject_area": "family"},
+    {"slug": "indian-divorce-1869",
+     "title": "Divorce Act 1869 (Indian Divorce Act — Christian marriages)",
+     "handle_id": "2280", "subject_area": "family"},
+
+    # SC/ST Prevention of Atrocities
+    {"slug": "sc-st-poa-1989",
+     "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989",
+     "handle_id": "1920", "subject_area": "criminal"},
+
+    # Immigration (replaces Foreigners Act 1946 + 3 others; effective 1 Sep 2025)
+    {"slug": "immigration-foreigners-2025",
+     "title": "Immigration and Foreigners Act 2025",
+     "handle_id": "21918", "subject_area": "constitutional"},
+
+    # --- P1 round 4: final stragglers (2026-05-19) -----------------
+    # Indian Succession 1925 — wills/probate for Christians, Parsis,
+    # Jews; default rules for non-Hindus and non-Muslims.
+    {"slug": "indian-succession-1925",
+     "title": "Indian Succession Act 1925",
+     "handle_id": "2385", "subject_area": "family"},
+
+    # RFCTLARR — Land Acquisition (replaces 1894 Act); compensation
+    # framework heavily queried in tribal / farmer / displaced-person
+    # cases.
+    {"slug": "rfctlarr-2013",
+     "title": "Right to Fair Compensation and Transparency in Land Acquisition, Rehabilitation and Resettlement Act 2013",
+     "handle_id": "12916", "subject_area": "property"},
+
+    # Copyright — music/film/software/journalism queries
+    {"slug": "copyright-1957",
+     "title": "Copyright Act 1957",
+     "handle_id": "1367", "subject_area": "civil_general"},
 ]
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
