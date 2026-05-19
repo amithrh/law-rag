@@ -23,6 +23,7 @@ from apps.api import config as cfg
 from apps.api import metrics
 from apps.api.db import close_pool, get_pool
 from apps.api.llm import build_messages, load_answer_prompt, stream_chat
+from apps.api.relevance import compute_relevance
 from apps.api.retrieval import RetrievedChunk, hybrid_retrieve
 from apps.api.verifier import (
     AnswerVerification,
@@ -64,7 +65,9 @@ class SearchResponseItem(BaseModel):
     subject_area: str | None
     dense_score: float
     bm25_score: float
+    sparse_score: float = 0.0
     combined_score: float
+    rrf_score: float | None = None
     rerank_score: float | None
     as_at: str | None
     citation: str | None
@@ -98,7 +101,9 @@ async def search(
                 chunk_id=h.chunk_id, anchor=h.anchor, text=h.text, title=h.title,
                 source_type=h.source_type, subject_area=h.subject_area,
                 dense_score=h.dense_score, bm25_score=h.bm25_score,
+                sparse_score=h.sparse_score,
                 combined_score=h.combined_score,
+                rrf_score=h.rrf_score,
                 rerank_score=h.rerank_score,
                 as_at=h.as_at.isoformat() if h.as_at else None,
                 citation=h.citation, court=h.court,
@@ -322,6 +327,15 @@ async def answer(req: AnswerRequest):
             # verifier passes each one individually but the UX is broken.
             # Drop verbatim repeats.
             "seen_sentences": set(),
+            # Task #10: accumulator for the user-visible answer body —
+            # OK + WEAK_SUPPORT sentence texts only. After the stream
+            # closes, this concatenation is embedded and compared with
+            # the query to compute the relevance verdict.
+            # META lines (headers, refusal text, disclaimers) and
+            # SUPPRESSED sentences (unsupported, unconfirmed auto-cite)
+            # are EXCLUDED — the relevance signal must reflect what the
+            # user actually reads.
+            "answer_body_sentences": [],
         }
 
         def _stop_event() -> dict:
@@ -428,6 +442,15 @@ async def answer(req: AnswerRequest):
                 # _suppressed_marker docstring. We return it as the event
                 # so the caller can yield it; counters still tick above.
                 return _suppressed_marker(), triggered
+            # Task #10: accumulate user-visible cited prose (OK or
+            # WEAK_SUPPORT, never META) for the relevance check. We
+            # store the sentence text WITHOUT the [N] citation tags so
+            # the cosine reflects the claim itself, not the citation
+            # numerals.
+            if v.status in (SentenceStatus.OK, SentenceStatus.WEAK_SUPPORT):
+                state["answer_body_sentences"].append(
+                    _CITATION_TAG_RE.sub("", v.text).strip()
+                )
             return _sentence_event(v), triggered
 
         buf = ""
@@ -507,6 +530,30 @@ async def answer(req: AnswerRequest):
                 for p in passages
             ])}
 
+            # Task #10: answer-vs-query relevance check. Embed the
+            # original query and the concatenated answer body, compare
+            # by cosine, classify by calibrated threshold. ADDITIVE — the
+            # event is informational; the UI may render a notice but the
+            # answer itself is not affected.
+            #
+            # Emit ONLY on the normal end path (after `sources`, before
+            # `disclaimer`). NOT emitted on refused / stopped / empty-
+            # body paths because there's nothing meaningful to score.
+            if settings.answer_relevance_enabled and state["answer_body_sentences"]:
+                body = " ".join(state["answer_body_sentences"]).strip()
+                rel = compute_relevance(
+                    req.q, body,
+                    threshold=settings.answer_relevance_threshold,
+                    band=settings.answer_relevance_band,
+                )
+                if rel is not None:
+                    yield {"event": "relevance", "data": json.dumps({
+                        "score": round(rel.score, 4),
+                        "verdict": rel.verdict.value,
+                        "threshold": round(rel.threshold, 4),
+                        "band": round(rel.band, 4),
+                    })}
+
             # Final disclaimer event — always
             yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
             _record_final_metrics(state, llm_t0)
@@ -531,6 +578,11 @@ _DISCLAIMER_HEADER_RE = re.compile(
 _MAJOR_HEADER_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?\*\*\s*[A-Za-z][^*]+?\*\*\s*:?\s*$"
 )
+
+# Strip [N] / [1,2] / [1][2] citation tags from a sentence before
+# embedding it for the relevance check (Task #10). bge-m3 doesn't know
+# what "[1]" means — leaving the tag in just adds noise to the cosine.
+_CITATION_TAG_RE = re.compile(r"\[\d+(?:\s*,\s*\d+)*\]")
 
 
 def _normalize_for_dedupe(text: str) -> str:

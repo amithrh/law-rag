@@ -70,6 +70,16 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-m3"
     embedding_max_seq_len: int = 512
     embedding_dim: int = 1024
+    # Embedding runtime — which Python wrapper around BGE-M3 we load.
+    #   * 'flag': FlagEmbedding's BGEM3FlagModel, which emits dense AND
+    #     learned-sparse from a single forward pass. Required for
+    #     multi-head retrieval (architecture-research Task #3).
+    #   * 'st'  : sentence-transformers, dense head only. Faster cold start,
+    #     but no sparse output. Use for ablation or environments where
+    #     FlagEmbedding's transitive deps aren't installable.
+    # Both load the same BAAI/bge-m3 weights; the swap is purely about
+    # which output heads we get back.
+    embedding_runtime: Literal["flag", "st"] = "flag"
 
     # LLM (Ollama)
     ollama_host_port: int = 11434
@@ -85,12 +95,30 @@ class Settings(BaseSettings):
     # Retrieval
     bm25_top_k: int = 100
     dense_top_k: int = 100
+    # Sparse top-K — number of candidates from the BGE-M3 learned-sparse
+    # head before fusion. Sized to match the other heads so RRF treats the
+    # three sources symmetrically.
+    sparse_top_k: int = 100
     rerank_input_k: int = 50          # how many candidates the cross-encoder scores
     rerank_top_k: int = 20            # how many we return after rerank
     prompt_top_k: int = 8
     hnsw_ef_search: int = 40
     rerank_enabled: bool = True       # disable for ablation / when model unavailable
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    # Hybrid retrieval fusion config (architecture-research Task #3).
+    #   * 'dense_bm25'        — legacy 70% dense / 30% bm25 weighted-sum.
+    #     Kept for A/B comparison and as a fallback when the sparse column
+    #     hasn't been backfilled.
+    #   * 'dense_sparse_bm25' — RRF fusion of all three sources. This is
+    #     the design from the audit recommendation (recall@20 = 53% →
+    #     target ≥80%).
+    # Override via env var: HYBRID_MODE=dense_bm25.
+    hybrid_mode: Literal["dense_bm25", "dense_sparse_bm25"] = "dense_sparse_bm25"
+    # RRF constant from the original Cormack et al. paper (k=60).
+    # Standard across the IR community; well-behaved for top-K fusion
+    # because the contribution of rank R is 1/(k+R) — rank 1 ≈ 0.0164,
+    # rank 100 ≈ 0.00625, so deep matches still contribute non-trivially.
+    rrf_k: int = 60
 
     # Verifier (PLAN §4.3)
     # Per Codex adversarial review #1: unsupported sentences are SUPPRESSED
@@ -213,6 +241,43 @@ class Settings(BaseSettings):
     # conservatively: in-slice top combined_score is typically > 0.5; the
     # original online-refund tangent ran at ~0.15-0.25 combined.
     refuse_below_combined: float = 0.35
+
+    # Answer-relevance check (Task #10).
+    #
+    # After the answer stream closes, embed (query, assembled_answer_body)
+    # with bge-m3 and compute cosine. The verdict (ok / partial /
+    # off_topic) is emitted as an SSE event so the UI can warn when the
+    # answer cites real law correctly but doesn't address the user's
+    # actual question. ADDITIVE — never refuses; only signals.
+    #
+    # Calibrated against data/processed/answer_relevance_calibration.json
+    # on battery_v3_20260519-010820 + 4 synthetic off-topic anchors
+    # (the deposit-return failure case, anticipatory-vs-regular bail,
+    # and two consumer-protection misalignments). Balanced accuracy
+    # 1.0 on the labelled set of 18 (14 on-topic / 4 off-topic).
+    # On-topic cosines: 0.713 - 0.817. Off-topic cosines: 0.507 - 0.670.
+    # Threshold sits in the gap.
+    # Recalibrate when the embedder, prompt, or answer style changes
+    # materially — the gap is small (~0.04) so a shift of either
+    # distribution will close it.
+    answer_relevance_threshold: float = 0.6916
+    # +/- band/2 around the threshold defines the PARTIAL band. Outside
+    # the band → verdict is OK or OFF_TOPIC.
+    #
+    # The task brief suggested band ≈ 0.1 but the data argues for tighter:
+    # on the 18-item calibration set the gap between off-topic-max (0.670)
+    # and on-topic-min (0.713) is only ~0.04. A 0.1 band would mark
+    # ~36% of on-topic answers as "partial" (their cosines cluster
+    # at 0.71-0.74). With band=0.05 the partial range is roughly
+    # [0.667, 0.716] — captures the noisy borderline without over-
+    # flagging legitimate answers.
+    # If a future calibration with more on-topic samples shows the
+    # distribution shifting, recalibrate. See docs/ANSWER_RELEVANCE.md.
+    answer_relevance_band: float = 0.05
+    # When True, the server emits a relevance SSE event on every answer
+    # that produced any user-visible cited prose. When False, NO
+    # relevance event is emitted (useful for ablation / A/B testing).
+    answer_relevance_enabled: bool = True
 
     # Provenance gate (PLAN §10.1 + provenance system).
     # In production, retrieval must only return chunks from documents whose

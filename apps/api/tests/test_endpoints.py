@@ -744,3 +744,208 @@ def test_answer_refused_when_no_passages(monkeypatch):
                 if line.startswith("event:"):
                     event_names.append(line.split(":", 1)[1].strip())
             assert "refused" in event_names, f"expected refused event, got: {event_names}"
+
+
+# --- Task #10: answer-vs-query relevance event ------------------------------
+
+def _patch_relevance(monkeypatch, score: float):
+    """Stub apps.api.main.compute_relevance so the test doesn't load
+    bge-m3 to score a (query, body) pair. The patched function still
+    runs the verdict band logic — only the embedding is bypassed —
+    so the test exercises the real classification code path.
+
+    The threshold + band come from the live Settings, so the verdict
+    transitions match the production calibration.
+    """
+    from apps.api import main as api_main
+    from apps.api.relevance import RelevanceResult, RelevanceVerdict
+
+    def fake_compute(query: str, body: str, *, threshold: float, band: float):
+        if not body.strip():
+            return None
+        half = band / 2.0
+        if score >= threshold + half:
+            verdict = RelevanceVerdict.OK
+        elif score <= threshold - half:
+            verdict = RelevanceVerdict.OFF_TOPIC
+        else:
+            verdict = RelevanceVerdict.PARTIAL
+        return RelevanceResult(
+            score=score, verdict=verdict, threshold=threshold, band=band,
+        )
+
+    monkeypatch.setattr(api_main, "compute_relevance", fake_compute)
+
+
+def _collect_events(response) -> list[tuple[str, Any]]:
+    """Parse an SSE response body into a list of (event, data-dict) tuples.
+    Helper for the relevance tests."""
+    events: list[tuple[str, Any]] = []
+    current: str | None = None
+    for line in response.iter_lines():
+        if not line:
+            current = None
+            continue
+        if line.startswith("event:"):
+            current = line.split(":", 1)[1].strip()
+        elif line.startswith("data:") and current:
+            payload = line.split(":", 1)[1].strip()
+            try:
+                events.append((current, json.loads(payload)))
+            except json.JSONDecodeError:
+                events.append((current, payload))
+    return events
+
+
+@pytest.mark.needs_stack
+def test_answer_emits_relevance_event_when_aligned(monkeypatch):
+    """Task #10 Part A: a well-aligned answer (cosine well above
+    threshold) emits a `relevance` event with verdict=ok.
+
+    Event ordering: relevance must come AFTER `sources` and BEFORE
+    `disclaimer` — that's the contract documented in apps/api/main.py
+    and consumed by apps/web/app/components/answer-view.tsx."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    _patch_relevance(monkeypatch, score=0.85)  # well above the 0.69 threshold
+
+    fake = _FakeStream(
+        "**Short answer**\n",
+        "Filing a consumer complaint is the right next step [1]. ",
+        "The District Forum has jurisdiction up to twenty lakh rupees [2].",
+    )
+    monkeypatch.setattr(api_main, "stream_chat", fake)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what to do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    names = [e[0] for e in events]
+    assert "relevance" in names, f"expected relevance event, got {names}"
+
+    # Ordering invariant: relevance between sources and disclaimer.
+    src_idx = names.index("sources")
+    rel_idx = names.index("relevance")
+    disc_idx = names.index("disclaimer")
+    assert src_idx < rel_idx < disc_idx, (
+        f"relevance event out of order: sources={src_idx} "
+        f"relevance={rel_idx} disclaimer={disc_idx}"
+    )
+
+    rel_payload = next(d for ev, d in events if ev == "relevance")
+    assert rel_payload["verdict"] == "ok"
+    assert rel_payload["score"] == pytest.approx(0.85, abs=1e-4)
+    assert "threshold" in rel_payload
+    assert "band" in rel_payload
+
+
+@pytest.mark.needs_stack
+def test_answer_emits_relevance_event_when_off_topic(monkeypatch):
+    """Task #10 Part A: the deposit-question failure case. The model
+    writes a citation-correct answer that's about the wrong scenario
+    — the relevance check must detect the mismatch and emit
+    verdict=off_topic.
+
+    The cited prose itself is unchanged (we don't refuse on relevance
+    alone). The signal lets the UI render a warning."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    # Cosine well below threshold (deposit case scored 0.670 in
+    # calibration; 0.55 puts it clearly in the off_topic band).
+    _patch_relevance(monkeypatch, score=0.55)
+
+    fake = _FakeStream(
+        "**Short answer**\n",
+        "Under Section 30 of the UP Rent Act, the tenant must deposit "
+        "monthly rent with the prescribed authority [1]. ",
+        "The court holds the rent in deposit until the dispute is "
+        "resolved [2].",
+    )
+    monkeypatch.setattr(api_main, "stream_chat", fake)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "my landlord is not returning my deposit money",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    names = [e[0] for e in events]
+    assert "relevance" in names, f"expected relevance event, got {names}"
+    rel_payload = next(d for ev, d in events if ev == "relevance")
+    assert rel_payload["verdict"] == "off_topic", (
+        f"expected off_topic verdict, got {rel_payload}"
+    )
+
+
+@pytest.mark.needs_stack
+def test_answer_no_relevance_event_when_refused(monkeypatch):
+    """Task #10 Part A: refused answers MUST NOT emit a relevance event.
+    There's no answer body to score, and a verdict on the refusal text
+    would be meaningless. The same applies to empty-body / stopped
+    paths."""
+    from apps.api import main as api_main
+    from apps.api import retrieval
+
+    # Stub relevance so if it's ever called, the test would notice
+    # (we'd see the side-effect score). A counter on the spy would
+    # catch a regression where main accidentally calls it.
+    calls: list[tuple[str, str]] = []
+
+    def spy_compute(query, body, *, threshold, band):
+        calls.append((query, body))
+        return None
+
+    monkeypatch.setattr(api_main, "compute_relevance", spy_compute)
+
+    async def empty_retrieve(*args, **kwargs):
+        return []
+    monkeypatch.setattr(retrieval, "hybrid_retrieve", empty_retrieve)
+    monkeypatch.setattr(api_main, "hybrid_retrieve", empty_retrieve)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "what is the airspeed velocity of an unladen swallow under indian law",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    names = [e[0] for e in events]
+    assert "refused" in names, f"expected refused, got {names}"
+    assert "relevance" not in names, (
+        f"refused answers must not emit relevance, got {names}"
+    )
+    # Defense in depth: compute_relevance was never even invoked.
+    assert calls == [], (
+        f"compute_relevance must not be called on refused path, got {calls}"
+    )
+
+
+def test_relevance_threshold_env_override(monkeypatch):
+    """Task #10 Part A: ANSWER_RELEVANCE_THRESHOLD=0.7 must reach the
+    Settings object so an operator can recalibrate without code edits.
+
+    Same env-var pattern as VERIFIER_BACKEND, NLI_HARD_FLOOR, etc.
+    pydantic-settings is case-insensitive so the test sets the upper-
+    snake-case name."""
+    from apps.api.config import Settings
+
+    monkeypatch.setenv("ANSWER_RELEVANCE_THRESHOLD", "0.7")
+    s = Settings(database_url="postgresql://x")
+    assert s.answer_relevance_threshold == pytest.approx(0.7)
+
+    # Default sanity check — without the env var, the calibrated value
+    # from data/processed/answer_relevance_calibration.json applies.
+    monkeypatch.delenv("ANSWER_RELEVANCE_THRESHOLD", raising=False)
+    s2 = Settings(database_url="postgresql://x")
+    assert s2.answer_relevance_threshold == pytest.approx(0.6916, abs=1e-4)

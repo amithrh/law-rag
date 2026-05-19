@@ -63,6 +63,27 @@ export interface SuppressedEvent {
   // Currently empty; reserved for future fields (e.g. count, reason).
 }
 
+// Task #10: answer-vs-query relevance check. Emitted after `sources` and
+// before `disclaimer` on the normal end-of-stream path. NOT emitted on
+// refused / stopped / empty-body paths. ADDITIVE signal — the UI may
+// render a notice for "partial" / "off_topic" verdicts, but the answer
+// itself is unaffected (citations still ground the prose).
+export type RelevanceVerdict = "ok" | "partial" | "off_topic";
+
+export interface RelevanceEvent {
+  // bge-m3 cosine between the original user query and the assembled
+  // user-visible answer body (OK + WEAK_SUPPORT sentence texts).
+  score: number;
+  verdict: RelevanceVerdict;
+  // Calibrated threshold used by the server to classify this score.
+  // Sent so the UI / debug tooling can render the distance to the
+  // boundary without hardcoding the value.
+  threshold: number;
+  // PARTIAL band width — verdicts inside [threshold-band/2,
+  // threshold+band/2] are "partial".
+  band: number;
+}
+
 export interface DisclaimerEvent {
   text: string;
 }

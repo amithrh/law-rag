@@ -8,6 +8,7 @@ import type {
   ErrorEvent as ApiErrorEvent,
   PassageEvent,
   RefusedEvent,
+  RelevanceEvent,
   SentenceEvent,
   SourcesEvent,
   StopEvent,
@@ -39,6 +40,11 @@ interface AnswerState {
   sentences: SentenceEvent[];
   stop: StopEvent | null;
   refused: RefusedEvent | null;
+  // Task #10: answer-vs-query relevance verdict. null until the server
+  // emits the `relevance` event (only on the normal end path with a
+  // non-empty answer body). When `verdict !== "ok"`, the UI renders a
+  // notice — see the "off_topic" / "partial" Notice block below.
+  relevance: RelevanceEvent | null;
   disclaimer: string | null;
   error: string | null;
   startedAt: number | null;
@@ -54,6 +60,7 @@ const INITIAL: AnswerState = {
   sentences: [],
   stop: null,
   refused: null,
+  relevance: null,
   disclaimer: null,
   error: null,
   startedAt: null,
@@ -206,6 +213,26 @@ export function AnswerView() {
         )}
 
         {state.coverage && <CoverageChip coverage={state.coverage} />}
+
+        {/* Task #10: relevance verdict notice. The answer text itself
+            is still grounded by citations (NLI / bge gates verified each
+            sentence). This notice is ADDITIVE — it warns when the
+            cosine between query and answer-body falls below the
+            calibrated threshold (the deposit-question failure mode). */}
+        {state.relevance && state.relevance.verdict !== "ok" && (
+          <Notice
+            tone={state.relevance.verdict === "off_topic" ? "red" : "amber"}
+            title={
+              state.relevance.verdict === "off_topic"
+                ? "This answer may not match your question"
+                : "This answer may only partly match your question"
+            }
+          >
+            {state.relevance.verdict === "off_topic"
+              ? "This answer cites real law correctly, but the cited passages may not match your specific situation. If your question is different from what the answer addresses, please consult a lawyer or rephrase your question more specifically."
+              : "Parts of this answer may not directly address your question. Read it carefully and, if anything seems off, consult a lawyer or rephrase your question more specifically."}
+          </Notice>
+        )}
 
         {(() => {
           // Round-4 UX: a 1-2 sentence stub after suppression is worse
@@ -382,6 +409,12 @@ function applyEvent(s: AnswerState, event: string, data: unknown): AnswerState {
       // Server-authored authoritative source list — overrides the
       // earlier `passages` snapshot for the final Sources block.
       return { ...s, sources: data as SourcesEvent };
+    case "relevance":
+      // Task #10: answer-vs-query relevance verdict. The UI renders a
+      // notice for "partial" / "off_topic" (see the Notice block in
+      // the JSX). Stored as-is so the verdict, score, and threshold
+      // are all available for the notice text.
+      return { ...s, relevance: data as RelevanceEvent };
     case "disclaimer":
       return { ...s, disclaimer: (data as DisclaimerEvent).text };
     case "error":
