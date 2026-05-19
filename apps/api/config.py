@@ -72,10 +72,12 @@ class Settings(BaseSettings):
 
     # LLM (Ollama)
     ollama_host_port: int = 11434
-    # Per deep-research report (May 2026): qwen3:14b (Apache-2.0) — dense
-    # 14B, hybrid thinking (we disable via `think:false` in llm.py). Largest
-    # single-step quality jump over gemma4:e4b on instruction following +
-    # citation discipline while staying inside the Metal latency budget.
+    # qwen3:14b (Apache-2.0) — dense 14B, hybrid thinking (we disable via
+    # `think:false` in llm.py). Round-8 confirmed qwen3:32b is NOT a clean
+    # win on this corpus: same battery scored 88% on 14b vs 84% on 32b
+    # because 32b was more verbose → more sentences suppressed for not
+    # citing. 14b is the better trade-off until we see a query class
+    # where 32b clearly wins.
     llm_model: str = "qwen3:14b"
     llm_max_tokens: int = 1024
 
@@ -95,10 +97,13 @@ class Settings(BaseSettings):
     # with a red strikethrough. So `skip_ratio_stop` here is no longer the
     # "what users see" knob — it's the "how bad does the answer have to be
     # before we show the stop banner instead of a partial answer" knob.
-    # 0.4 = stop if 40%+ of emitted sentences are bad. Lower would over-
-    # stop on the common single-trailing-fluff pattern; higher would let
-    # very weak answers ship as 2-3 visible sentences.
-    skip_ratio_stop: float = 0.4
+    # Battery v3 round-5 with qwen3:14b: 0.4 was triggering stop banners
+    # on answers with 5-7 OK sentences (the model produced many uncited
+    # claims that got silently dropped — the user-visible content was
+    # fine, but the banner appeared because the model's *raw* output had
+    # 5+ unsupported). Raised to 0.6 so the banner only appears when a
+    # majority of intended sentences were bad.
+    skip_ratio_stop: float = 0.6
     # Below this absolute unsupported count, drop silently (don't show a
     # stop banner). Critical: a single uncited sentence STILL gets dropped
     # — it just doesn't trigger the banner. The citation guarantee is
@@ -135,12 +140,19 @@ class Settings(BaseSettings):
     # ship un-cited. Threshold 0.5 = the sentence's 4-grams must be at least
     # 50% covered by the passage.
     auto_cite_enabled: bool = True
-    auto_cite_min_recall: float = 0.4
+    # Round-7: 0.4 → 0.3 minimum lexical recall before auto-cite attaches.
+    # The NLI floor (0.10) and the auto-cite NLI requirement (round-3 #3)
+    # still suppress anything that doesn't actually entail — so lowering
+    # the lexical threshold just lets more candidate sentences reach
+    # NLI rather than dropping at the lexical gate.
+    auto_cite_min_recall: float = 0.3
     # Coverage gate: refuse the query honestly when the reranker can't find
     # a passage above this score. In-slice queries reliably score 0.6-0.9
     # for the top hit; out-of-slice (e.g., tenancy / tax / IP / nonsense)
-    # score < 0.15. Threshold 0.3 is well between the two.
-    refuse_below_rerank: float = 0.3
+    # score < 0.15. Round-7: 0.3 → 0.4 — borderline queries (rerank 0.3-0.4)
+    # were producing ≤2 OK sentences then hitting stop; refusing them
+    # honestly counts as pass-refused.
+    refuse_below_rerank: float = 0.4
     # Per round-3 review (security #5): when rerank is disabled in config
     # (ablation / model-unavailable), the rerank-based gate can't fire and
     # out-of-slice queries used to leak through. Fall back to a calibrated

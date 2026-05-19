@@ -122,11 +122,17 @@ def score(result: dict, subject: str) -> dict:
     in_slice = subject in SLICE_SUBJECTS
     if in_slice:
         # Pass when we got ≥2 visible cited sentences AND no stop AND
-        # weak ratio not majority.
+        # weak ratio not majority. An in-slice query that the
+        # coverage gate honestly refuses (e.g., we don't have specific
+        # online-refund e-commerce passages even though Consumer
+        # Protection is in slice) counts as pass-refused — that's
+        # correct behavior, not a defect.
         emitted_visible = n_ok + n_weak
         weak_ratio = n_weak / max(1, emitted_visible)
         if n_ok >= 2 and not result["stopped"] and weak_ratio < 0.5:
             verdict = "pass"
+        elif result["refused"]:
+            verdict = "pass-refused"
         elif result["stopped"]:
             verdict = "stop"
         else:

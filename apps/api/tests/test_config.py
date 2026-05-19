@@ -105,7 +105,7 @@ class TestSettingsDefaults:
         # skip_ratio_stop=0.4 controls when the *stop banner* appears; the
         # citation guarantee comes from suppression itself, not the banner.
         s = Settings(database_url="postgresql://x")
-        assert s.skip_ratio_stop == 0.4
+        assert s.skip_ratio_stop == 0.6
         assert s.min_unsupported_before_stop == 2
 
     def test_embedding_max_seq_len_512(self):
