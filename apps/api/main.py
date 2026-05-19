@@ -24,7 +24,7 @@ from apps.api import metrics
 from apps.api.db import close_pool, get_pool
 from apps.api.llm import build_messages, load_answer_prompt, stream_chat
 from apps.api.relevance import compute_relevance
-from apps.api.retrieval import RetrievedChunk, hybrid_retrieve
+from apps.api.retrieval import RetrievedChunk, hybrid_retrieve, multi_query_hybrid_retrieve
 from apps.api.verifier import (
     AnswerVerification,
     SentenceStatus,
@@ -179,11 +179,17 @@ async def answer(req: AnswerRequest):
     # AnswerRequest comment + round-3 review #4.
     skip_nli = req.skip_nli and settings.answer_fast_enabled
 
-    # Retrieve
+    # Retrieve. Task #13: if query_expansion_enabled (default True), use
+    # the multi-query path that asks the LLM to translate the lay query
+    # into 2-3 legal-vocabulary variants and reranks the union. On the
+    # 15 worst-failing queries from the 102-query e2e eval (2026-05-19,
+    # scripts/eval_query_expand.py), this lifted the bare-act top-5
+    # surface rate from 13% → 53% with 0 WORSE outcomes. Falls back to
+    # plain hybrid_retrieve automatically on any expander error.
     src_types = req.sources
     subj = req.subjects
     t_retr = time.perf_counter()
-    retrieved = await hybrid_retrieve(
+    retrieved, expansion_variants = await multi_query_hybrid_retrieve(
         pool, req.q, source_types=src_types, subject_areas=subj,
         top_k=max(req.top_k, settings.rerank_top_k),
     )

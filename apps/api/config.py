@@ -279,6 +279,16 @@ class Settings(BaseSettings):
     # relevance event is emitted (useful for ablation / A/B testing).
     answer_relevance_enabled: bool = True
 
+    # Task #13: lay-phrase → legal-vocabulary query expansion.
+    # Calls the local LLM once before retrieval to translate the lay
+    # query into 2-3 legal-keyword-rich variants, retrieves candidates
+    # from each, and reranks the union against the ORIGINAL query.
+    # Adds ~1.4s latency to /answer (qwen3:14b expansion) but lifted
+    # bare-act top-5 surface rate from 13% → 53% on the worst-failing
+    # queries in the 102-query e2e eval (scripts/eval_query_expand.py).
+    # Kill switch — flip to False to bypass and use plain hybrid_retrieve.
+    query_expansion_enabled: bool = True
+
     # Provenance gate (PLAN §10.1 + provenance system).
     # In production, retrieval must only return chunks from documents whose
     # source has been verified against the canonical Govt of India source.
