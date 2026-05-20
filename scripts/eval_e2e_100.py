@@ -175,6 +175,7 @@ def stream_answer(query: str, timeout_s: int = 90) -> dict:
         "sentences": 0,
         "ok_sentences": 0,
         "weak_sentences": 0,
+        "unsupported_sentences": 0,
         "suppressed": 0,
         "refused": False,
         "refused_reason": None,
@@ -187,6 +188,10 @@ def stream_answer(query: str, timeout_s: int = 90) -> dict:
         "top_titles": [],
         "took_s": None,
         "error": None,
+        # Strict verdict (computed post-stream below) — agent #1 wanted
+        # an "OK only if grounded in actual bare-act when one was needed"
+        # metric to separate cosmetic-OK from honest-OK.
+        "verdict_strict": None,
     }
     t0 = time.time()
     try:
@@ -206,11 +211,26 @@ def stream_answer(query: str, timeout_s: int = 90) -> dict:
                     result["events"][event_name or "unknown"] += 1
                     if event_name == "sentence":
                         result["sentences"] += 1
-                        v = d.get("verdict", "")
-                        if v == "OK":
+                        # 2026-05-20 multi-agent review: this used to read
+                        # `d.get("verdict")` and check for "OK"/"WEAK_SUPPORT",
+                        # but the API emits `"status"` with lowercase values
+                        # (apps/api/main.py::_sentence_event → SentenceStatus.OK
+                        # → "ok"). So per-sentence ok/weak counts had been 0
+                        # across every eval (v2/v3/v4/v5) — meaning the OK
+                        # rate was driven entirely by the relevance-cosine
+                        # gate, not by citation grounding. Honest read of the
+                        # post-fix numbers requires this to actually count.
+                        status = d.get("status", "")
+                        if status == "ok":
                             result["ok_sentences"] += 1
-                        elif v == "WEAK_SUPPORT":
+                        elif status == "weak_support":
                             result["weak_sentences"] += 1
+                        elif status in ("unsupported", "unknown_citation"):
+                            # Should already be suppressed pre-emit, but
+                            # count for visibility if any slips through.
+                            result["unsupported_sentences"] = (
+                                result.get("unsupported_sentences", 0) + 1
+                            )
                     elif event_name == "suppressed":
                         result["suppressed"] += 1
                     elif event_name == "refused":
@@ -251,7 +271,54 @@ def stream_answer(query: str, timeout_s: int = 90) -> dict:
     except Exception as e:
         result["error"] = f"{type(e).__name__}: {e}"
     result["took_s"] = round(time.time() - t0, 1)
+
+    # Strict verdict — added 2026-05-20 after agent #1's review showed
+    # the cosine-relevance gate was passing "topically-similar SC-only"
+    # answers as OK for queries that obviously needed a bare Act.
+    # Rule: if the cosine gate says "ok" AND the query is in a category
+    # that ALWAYS needs operative-Act citation (or names an Act explicitly),
+    # demote to "partial" when no bare-act was cited.
+    result["verdict_strict"] = _strict_verdict(result)
     return result
+
+
+# Categories where the answer is incomplete without citing the operative Act.
+# "constitutional"/"procedure" CAN sometimes be answered from SC interpretation
+# alone; "criminal" sometimes too (judicial principles), so they're excluded.
+# But for tax/property/consumer/employment etc. an SC-only answer is suspicious.
+_ACT_REQUIRED_CATEGORIES = frozenset({
+    "tax", "finance", "property", "consumer", "employment", "family",
+    "senior", "women", "motor", "wages", "education", "cyber",
+})
+
+# Rough Act-name regex — if the query literally names an Act, the answer
+# should cite at least one chunk from that Act.
+_ACT_NAME_HINTS = (
+    "act ", "section ", "article ", "rule ", "code ", "rti", "ipc",
+    "crpc", "bns", "bnss", "bsa", "tpa", "cgst", "igst", "rera", "ndps",
+    "pmla", "sarfaesi", "fema", "ibc", "posh", "pocso", "epf", "esi",
+    "dpdp", "itpa", "rte", "hsa", "pwdva",
+)
+
+
+def _strict_verdict(r: dict) -> str | None:
+    """Demote cosine-relevance OK to partial when retrieval clearly missed
+    the operative Act for queries that need one. Leaves refused/error rows
+    alone. Never promotes — only demotes."""
+    if r.get("refused") or r.get("error"):
+        return None
+    base = r.get("relevance_verdict")
+    if base != "ok":
+        return base  # PARTIAL / OFF_TOPIC stay
+    cat = r.get("category", "")
+    q = (r.get("query") or "").lower()
+    needs_act = (
+        cat in _ACT_REQUIRED_CATEGORIES
+        or any(h in q for h in _ACT_NAME_HINTS)
+    )
+    if needs_act and r.get("bare_act_count", 0) == 0:
+        return "partial_strict"  # was cosmetic-OK; honest read is PARTIAL
+    return "ok"
 
 
 def fmt_line(idx: int, total: int, category: str, q: str, r: dict) -> str:
@@ -358,6 +425,42 @@ def main() -> None:
           f"{overall['act_used']:>4}/{overall['n']:<4}  "
           f"{overall['sc_used']:>4}/{overall['n']:<4}  "
           f"{overall['both_used']:>3}")
+
+    # ---- Strict verdict aggregate ----
+    # Distinguishes "honest OK" (cosine OK + actually cited the operative
+    # Act when the category needs one) from "cosmetic OK" (cosine OK but
+    # answer cites only SC caselaw for a query that obviously needed a
+    # statute). The honest number is the one to track session-over-session.
+    strict_counts: dict[str, int] = {}
+    sent_groundedness: dict[str, list] = {"ok": [], "partial_strict": [],
+                                          "partial": [], "off_topic": []}
+    for r in rows:
+        v = r.get("verdict_strict")
+        if v is None:
+            continue
+        strict_counts[v] = strict_counts.get(v, 0) + 1
+        sent_groundedness.setdefault(v, []).append(
+            r.get("ok_sentences", 0) + r.get("weak_sentences", 0)
+        )
+    print(f"\n=== STRICT verdict (honest read — see _strict_verdict docstring) ===")
+    n_scored = sum(strict_counts.values())
+    if n_scored:
+        ok_honest = strict_counts.get("ok", 0)
+        ok_cosmetic = strict_counts.get("partial_strict", 0)
+        partial = strict_counts.get("partial", 0)
+        off = strict_counts.get("off_topic", 0)
+        print(f"  OK (honest)        : {ok_honest:>3}  ({100*ok_honest/n_scored:.0f}%)")
+        print(f"  OK (was cosmetic, now demoted): {ok_cosmetic:>3}  ({100*ok_cosmetic/n_scored:.0f}%)")
+        print(f"  PARTIAL            : {partial:>3}  ({100*partial/n_scored:.0f}%)")
+        print(f"  OFF_TOPIC          : {off:>3}  ({100*off/n_scored:.0f}%)")
+        # Sentence-grounding median per verdict
+        print(f"\n  Sentence groundedness (ok + weak sentences cited) by verdict:")
+        for v in ("ok", "partial_strict", "partial", "off_topic"):
+            counts = sent_groundedness.get(v) or []
+            if counts:
+                med = sorted(counts)[len(counts)//2]
+                mean = sum(counts) / len(counts)
+                print(f"    {v:<18}: n={len(counts):>3}  median={med:>3}  mean={mean:.1f}")
 
     # Concerning failures: high-confidence off-topic or low-coverage
     # answers that weren't refused

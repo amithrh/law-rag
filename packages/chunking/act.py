@@ -324,6 +324,75 @@ def find_body_start(text: str) -> BodyStart:
 
 # --- Chunker ----------------------------------------------------------------
 
+def _looks_like_toc(body: str, claimed_sec_no: str) -> bool:
+    """Detect a chunk that is actually a table-of-contents page, not the
+    substantive section it's anchored to.
+
+    Why this exists — agent #4 citation-correctness audit (2026-05-20):
+    `income-tax-1961/sec-80B` chunk text contained:
+        80B. Definitions.
+        B.—Deductions in respect of certain payments
+        80C. Deduction in respect of life insurance premia...
+        80D. Deduction in respect of health insurance premia...
+    A user asks "home loan interest deduction"; the LLM finds this chunk,
+    reads "80EE. Deduction in respect of interest on loan...", emits
+    'Section 80EE [3]'. NLI clears it because the TOC line entails the
+    claim. The citation chip links to sec-80B (Definitions), not the
+    substantive 80EE section. Citation-form-correct, statute-wrong.
+
+    Heuristic: a real TOC chunk is SHORT (just a list of section titles,
+    typically <3000 chars) AND has many section-heading lines clustered
+    at the START. We:
+      1. Bail early if the chunk is too big to plausibly be a TOC — long
+         sections that cross-reference other sections (e.g. CGST sec-2
+         Definitions, which references 90+ other sections in its body)
+         would otherwise be falsely flagged. The real misanchored TOC
+         from the IT Act 1961 sec-80B case was ~300 chars.
+      2. Count REAL section-heading lines that name OTHER sections
+         (different from claimed_sec_no), excluding amendment footnotes
+         ("1. Ins. by Act 23 of 2012, s. 23 (w.e.f. 1-4-2013)") which
+         appear at the end of every substantive section's body.
+      3. Require 3+ DIFFERENT real other-section heads AND the body
+         being short.
+    """
+    # Bail early for long chunks — real misanchored TOC entries are
+    # always short. The misanchored sec-80B TOC in IT Act 1961 was
+    # ~300 chars; CGST sec-2 (which is a real Definitions section
+    # with cross-refs) is 200K chars.
+    if len(body) > 5000:
+        return False
+
+    lines = body.split("\n")
+    if len(lines) < 3:
+        return False
+    different_section_heads: set[str] = set()
+    for ln in lines[1:]:
+        stripped = ln.strip()
+        # Match a section-heading line: "<num>[A-Z]*. <Title>"
+        m = re.match(r"^(\d{1,4}[A-Z]{0,2})\.\s+(.{0,80}?)(?:$|\s)", stripped)
+        if not m:
+            continue
+        found_sec = m.group(1)
+        if found_sec == claimed_sec_no:
+            continue
+        # Skip footnote-style lines — amendment markers at section
+        # end ("1. Ins. by Act 23 of 2012, s. 23 (w.e.f. 1-4-2013).")
+        # whose text after the number matches a footnote-body marker.
+        rest = stripped[m.end():].strip() if m.end() < len(stripped) else ""
+        # check the matched title-tail (group 2) AND the rest of the line
+        line_tail = (m.group(2) or "") + " " + rest
+        if any(marker in line_tail for marker in _FOOTNOTE_BODY_MARKERS):
+            continue
+        different_section_heads.add(found_sec)
+        # 5 distinct other-section heads: empirically separates real TOC
+        # chunks (IT Act sec-80B TOC had 9 different sections) from real
+        # short articles that cross-reference 2-3 others (Constitution
+        # Article 2 references Articles 1, 3, 4 in a 2887-char body).
+        if len(different_section_heads) >= 5:
+            return True
+    return False
+
+
 def _metadata_prefix(act_title: str | None, sec_no: str | None) -> str:
     """Build the legal-context prefix that travels with every section chunk.
 
@@ -423,6 +492,15 @@ def chunk_act(
         body_text_end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
         section_body = body[body_text_start:body_text_end].strip()
         if not section_body:
+            continue
+
+        # TOC quarantine — if the body looks like a table-of-contents
+        # (≥3 distinct section headings naming OTHER sections), skip
+        # emitting it as a real section chunk. The substantive body
+        # for sec-<N> will arrive in a subsequent match where the
+        # body actually contains sec-<N>'s text. See `_looks_like_toc`
+        # docstring for the motivating bug.
+        if _looks_like_toc(section_body, sec_no):
             continue
 
         # Disambiguate duplicates

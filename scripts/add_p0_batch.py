@@ -375,6 +375,20 @@ P0: list[dict[str, Any]] = [
     {"slug": "copyright-1957",
      "title": "Copyright Act 1957",
      "handle_id": "1367", "subject_area": "civil_general"},
+
+    # --- Re-ingest of orphan documents (2026-05-20 agent #2 review) ---
+    # Both `consumer-protection-2019` and `domestic-violence-2005` had
+    # document rows in `documents` but ZERO chunks — the original ingest
+    # (back in the pre-P0 batch days) emitted nothing usable. CPA 2019's
+    # cached PDF is fine but was never re-chunked; PWDVA's cached PDF
+    # is garbled OCR (`data/raw/acts/domestic-violence-2005__3.pdf`),
+    # so we fetch fresh from h=12904.
+    {"slug": "consumer-protection-2019",
+     "title": "Consumer Protection Act 2019",
+     "handle_id": "15256", "subject_area": "consumer"},
+    {"slug": "domestic-violence-2005",
+     "title": "Protection of Women from Domestic Violence Act 2005",
+     "handle_id": "12904", "subject_area": "family"},
 ]
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
