@@ -260,7 +260,16 @@ class Settings(BaseSettings):
     # Recalibrate when the embedder, prompt, or answer style changes
     # materially — the gap is small (~0.04) so a shift of either
     # distribution will close it.
-    answer_relevance_threshold: float = 0.6916
+    # Recalibrated 2026-05-19 from 0.6916 → 0.62 after eval v3/v4 showed
+    # the original threshold was tuned pre-query-expansion. Agent #3's
+    # analysis of the e2e_eval_20260519_134948.jsonl run found 8/10 of
+    # the worst OFF_TOPIC verdicts were actually on-topic — flagged
+    # because lay-phrase queries vs legal-vocab answers have inherently
+    # lower cosine. At T=0.62 the eval reclassifies to 77 OK / 18 partial
+    # / 2 off_topic. Caveat: no labeled positives in 0.60-0.71 range yet;
+    # this is eyeball-validated against ~10 worst cases. Re-calibrate on a
+    # held-out set once we have one.
+    answer_relevance_threshold: float = 0.62
     # +/- band/2 around the threshold defines the PARTIAL band. Outside
     # the band → verdict is OK or OFF_TOPIC.
     #

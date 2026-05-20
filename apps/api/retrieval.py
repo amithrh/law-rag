@@ -208,6 +208,7 @@ async def hybrid_retrieve(
     as_of: date | None = None,
     top_k: int | None = None,
     use_reranker: bool | None = None,
+    use_sparse: bool | None = None,
 ) -> list[RetrievedChunk]:
     """Three-source hybrid retrieval with RRF fusion (or legacy 70/30).
 
@@ -218,13 +219,25 @@ async def hybrid_retrieve(
     `use_reranker=False` disables the cross-encoder rerank stage; useful
     for ablation studies. Falls back to the pre-rerank order if the
     reranker is unavailable.
+
+    `use_sparse=False` explicitly skips the sparse JSONB head even when
+    `hybrid_mode == "dense_sparse_bm25"`. Used by `multi_query_hybrid_
+    retrieve` to skip sparse on LLM-generated variants — the agent #4
+    latency profile showed sparse owns 99% of every hybrid_retrieve call
+    (~10s/call), and the synonym-bridging it provides is only useful for
+    lay-phrase original queries, not for the explicit-legal-vocabulary
+    variants. Skipping it on variants saves ~25% of total latency.
     """
     s = get_settings()
     if top_k is None:
         top_k = s.rerank_top_k
 
     embedder = get_embedder()
-    use_sparse = s.hybrid_mode == "dense_sparse_bm25"
+    if use_sparse is None:
+        use_sparse = s.hybrid_mode == "dense_sparse_bm25"
+    else:
+        # Explicit override; ensure mode supports it
+        use_sparse = use_sparse and s.hybrid_mode == "dense_sparse_bm25"
 
     # Query embedding(s). On the flag-embedding runtime we can get dense
     # AND sparse from one forward pass; on the sentence-transformers
@@ -461,10 +474,20 @@ async def multi_query_hybrid_retrieve(
         )
         return chunks, []
 
-    # Stage 2a: gather candidates per variant in parallel, NO rerank yet.
-    # Each variant contributes its hybrid-fused (dense + sparse + BM25)
-    # top-`rerank_input_k` candidates. We don't rerank inside because the
-    # rerank scores would be calibrated to the VARIANT, not the original.
+    # Stage 2a: gather candidates per variant in parallel.
+    #
+    # NO rerank yet — each variant contributes its hybrid-fused (dense +
+    # BM25, no sparse on variants) top-`rerank_input_k` candidates. We
+    # don't rerank inside because the rerank scores would be calibrated
+    # to the VARIANT, not the original.
+    #
+    # Sparse is enabled ONLY for the ORIGINAL query (index 0). The agent
+    # #4 latency profile (2026-05-19) found sparse JSONB owned ~99% of
+    # every hybrid_retrieve call (~10s); running it 4× per /answer
+    # doubled total latency. Sparse is most valuable for lay-phrase
+    # synonym bridging — the variants are already explicit legal
+    # vocabulary that BM25 + dense match well. Predicted recall impact
+    # is negligible; latency win ~25% per /answer.
     candidates_per_variant = await asyncio.gather(
         *[
             hybrid_retrieve(
@@ -473,8 +496,9 @@ async def multi_query_hybrid_retrieve(
                 subject_areas=subject_areas,
                 top_k=s.rerank_input_k,
                 use_reranker=False,
+                use_sparse=(i == 0),
             )
-            for v in variants
+            for i, v in enumerate(variants)
         ],
         return_exceptions=True,
     )
