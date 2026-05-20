@@ -396,7 +396,12 @@ def main() -> None:
         elif r.get("refused"):
             st["refused"] += 1
         else:
-            v = r.get("relevance_verdict") or "ok"
+            # 2026-05-21 multi-agent review: the previous `or "ok"` default
+            # silently counted rows with no `relevance` event (LLM emitted 0
+            # cited sentences) as OK. That inflated the cosine-OK count by
+            # ~9 across v2-v6. Use "no_relevance" so these surface in the
+            # report instead of being hidden in OK.
+            v = r.get("relevance_verdict") or "no_relevance"
             st[v] = st.get(v, 0) + 1
         if r.get("bare_act_count", 0) > 0:
             st["act_used"] += 1
@@ -407,13 +412,16 @@ def main() -> None:
 
     print(f"\n=== Aggregate ({elapsed/60:.1f} min for {total} queries) ===")
     print(f"  {'category':<14} {'n':>3} {'ok':>3} {'prt':>3} {'off':>3} "
-          f"{'ref':>3} {'err':>3}  bare-act-used  sc-used  both")
+          f"{'nor':>3} {'ref':>3} {'err':>3}  bare-act-used  sc-used  both")
+    print(f"  {'(nor=no_relevance-event — answer with 0 cited sentences)':<60}")
     overall = {"n": 0, "ok": 0, "partial": 0, "off_topic": 0, "refused": 0,
-               "err": 0, "act_used": 0, "sc_used": 0, "both_used": 0}
+               "no_relevance": 0, "err": 0, "act_used": 0, "sc_used": 0,
+               "both_used": 0}
     for cat in sorted(by_cat):
         st = by_cat[cat]
         print(f"  {cat:<14} {st['n']:>3} {st.get('ok',0):>3} "
               f"{st.get('partial',0):>3} {st.get('off_topic',0):>3} "
+              f"{st.get('no_relevance',0):>3} "
               f"{st['refused']:>3} {st['err']:>3}  "
               f"{st['act_used']:>4}/{st['n']:<4}  {st['sc_used']:>4}/{st['n']:<4}  "
               f"{st['both_used']:>3}")
@@ -421,6 +429,7 @@ def main() -> None:
             overall[k] += st.get(k, 0)
     print(f"  {'TOTAL':<14} {overall['n']:>3} {overall['ok']:>3} "
           f"{overall['partial']:>3} {overall['off_topic']:>3} "
+          f"{overall['no_relevance']:>3} "
           f"{overall['refused']:>3} {overall['err']:>3}  "
           f"{overall['act_used']:>4}/{overall['n']:<4}  "
           f"{overall['sc_used']:>4}/{overall['n']:<4}  "

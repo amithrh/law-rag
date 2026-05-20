@@ -552,9 +552,46 @@ async def multi_query_hybrid_retrieve(
         # Write the per-chunk max back and re-sort. -1.0 default means
         # rerank returned None (degraded state) → keep negative so the
         # downstream `top_rerank = max(...)` check fails closed.
+        #
+        # 2026-05-21 additions (Codex/agent findings):
+        # A) section-N boost: when the ORIGINAL query contains an
+        #    explicit "section N" / "Article N" reference, multiply
+        #    the rerank score by 1.5× for any chunk whose anchor
+        #    matches `<slug>/sec-N`. Targets the canonical
+        #    "section 138 NI Act" failure where the bare-Act chunk
+        #    was retrieved but the rerank still preferred SC caselaw
+        #    that discusses s.138 more verbosely.
+        # B) bare-act source boost: +0.05 to rerank score for chunks
+        #    whose anchor doesn't match SC's "<year>-insc-..." pattern.
+        #    Mild preference for operative law over caselaw when both
+        #    score similarly. Inspired by TurboVec's source_quality
+        #    weight feature.
+        import re as _re
+        _sec_ref = _re.compile(r"section\s+(\d{1,4}[A-Z]?)|article\s+(\d{1,4}[A-Z]?)", _re.IGNORECASE)
+        _sc_anchor = _re.compile(r"^\d{4}-(insc|\d+-\d+)")
+        sec_matches = _sec_ref.findall(query)
+        target_secs: set[str] = set()
+        for m in sec_matches:
+            target_secs.add(m[0] or m[1])
+
         for c in candidate_list:
             score = max_scores[c.chunk_id]
-            c.rerank_score = score if score >= 0.0 else None
+            if score < 0.0:
+                c.rerank_score = None
+                continue
+            # A) section-N boost
+            if target_secs and c.anchor:
+                anchor_lower = c.anchor.lower()
+                for tsec in target_secs:
+                    if f"/sec-{tsec.lower()}" in anchor_lower:
+                        # Boost: 50% of headroom toward 1.0
+                        score = min(1.0, score + 0.5 * (1.0 - score))
+                        break
+            # B) bare-act source boost (mild preference for operative law)
+            if c.anchor and not _sc_anchor.match(c.anchor):
+                # 5% headroom-bonus toward 1.0
+                score = min(1.0, score + 0.05 * (1.0 - score))
+            c.rerank_score = score
         candidate_list.sort(
             key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,
             reverse=True,

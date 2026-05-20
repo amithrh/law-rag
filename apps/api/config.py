@@ -269,7 +269,14 @@ class Settings(BaseSettings):
     # / 2 off_topic. Caveat: no labeled positives in 0.60-0.71 range yet;
     # this is eyeball-validated against ~10 worst cases. Re-calibrate on a
     # held-out set once we have one.
-    answer_relevance_threshold: float = 0.62
+    # 2026-05-21 second recalibration: 0.62 still flagged 5 queries as
+    # OFF_TOPIC where bare-acts had surfaced (3-6 in top-5) — the lay-
+    # phrase vs legal-vocab cosine gap was the cause. Dropping to 0.55
+    # is supported by spot-check of those 5: all answer the right
+    # operative law just in legal vocabulary the dense cosine doesn't
+    # match. Caveat: still no labeled positives in 0.55-0.62, this is
+    # eyeball-validated, gold-set will properly recalibrate.
+    answer_relevance_threshold: float = 0.55
     # +/- band/2 around the threshold defines the PARTIAL band. Outside
     # the band → verdict is OK or OFF_TOPIC.
     #
