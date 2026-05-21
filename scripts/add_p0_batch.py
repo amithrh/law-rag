@@ -389,6 +389,28 @@ P0: list[dict[str, Any]] = [
     {"slug": "domestic-violence-2005",
      "title": "Protection of Women from Domestic Violence Act 2005",
      "handle_id": "12904", "subject_area": "family"},
+
+    # --- Minor-property + Specific-Relief gap (2026-05-21 user screenshot)
+    # Query: "land registered in my name, brother was minor at purchase,
+    # can I sell?" — operative Acts are HMGA 1956 s.8 (court permission
+    # to sell minor's immovable property) + Indian Majority Act 1875
+    # (when does the minor attain majority for this purpose) +
+    # Specific Relief Act 1963 (partition / declaratory relief). All
+    # three either missing or orphan.
+    {"slug": "hindu-minority-guardianship-1956",
+     "title": "Hindu Minority and Guardianship Act 1956",
+     "handle_id": "1649", "subject_area": "family"},
+    {"slug": "indian-majority-1875",
+     "title": "Indian Majority Act 1875",
+     "handle_id": "15299", "subject_area": "family"},
+    # Specific Relief orphan (doc id=3043 in DB, 0 chunks, PDF cached
+    # at data/raw/acts/specific-relief-1963__A1963-47.pdf). Same pattern
+    # as PWDVA/CPA 2019 orphans we fixed earlier — the script will reuse
+    # the existing doc row via orphan-handling path.
+    {"slug": "specific-relief-1963",
+     "title": "Specific Relief Act 1963",
+     "cached_pdf": "data/raw/acts/specific-relief-1963__A1963-47.pdf",
+     "subject_area": "civil_general"},
 ]
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
