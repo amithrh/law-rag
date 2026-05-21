@@ -95,7 +95,12 @@ export function AnswerView() {
       setState({ ...INITIAL, pending: true, startedAt: performance.now() });
 
       try {
-        const res = await fetch("/api/answer", {
+        // 2026-05-21: Next.js dev proxy times out at 30s but /answer needs
+        // ~40-50s. Hit the API directly. The FastAPI side has CORS
+        // configured for http://localhost:3000.
+        const apiBase =
+          process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+        const res = await fetch(`${apiBase}/answer`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

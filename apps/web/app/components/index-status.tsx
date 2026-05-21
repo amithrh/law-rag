@@ -17,7 +17,8 @@ export function IndexStatus() {
 
   useEffect(() => {
     const ac = new AbortController();
-    fetch("/api/healthz", { signal: ac.signal })
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+    fetch(`${apiBase}/healthz`, { signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((j: Health) => setH(j))
       .catch((e) => {

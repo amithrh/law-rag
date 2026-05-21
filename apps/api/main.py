@@ -45,6 +45,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="law-rag", lifespan=lifespan)
 
+# CORS — added 2026-05-21 after frontend SSE proxy timed out at Next.js's
+# 30s default. Bypassing the proxy means the browser calls :8000 directly,
+# which avoids the timeout entirely. Dev-only allowlist; prod should restrict.
+from fastapi.middleware.cors import CORSMiddleware as _CORSMiddleware
+
+app.add_middleware(
+    _CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://192.168.1.5:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
+
 # Standard disclaimer rendered server-side on every answer (PLAN §4.4)
 DISCLAIMER_FOOTER = (
     "**Disclaimer**\n"
