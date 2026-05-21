@@ -1,0 +1,50 @@
+{"query": "police refused to register FIR for theft of my bike where do I go next", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 154 CrPC / BNSS 173"}
+{"query": "how to file zero FIR if incident happened in another state", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 154 CrPC / BNSS 173"}
+{"query": "process to file online FIR in Delhi for lost phone", "persona": "procedural", "expected_category": "procedure"}
+{"query": "my brother got arrested yesterday how do I apply for regular bail", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 437 / 439 CrPC, BNSS 480 / 483"}
+{"query": "what documents needed for anticipatory bail application in sessions court", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 438 CrPC / BNSS 482"}
+{"query": "how much surety amount typically required for bail in cheque bounce case", "persona": "procedural", "expected_category": "procedure"}
+{"query": "what should I wear to court as litigant in person appearing first time", "persona": "procedural", "expected_category": "procedure"}
+{"query": "how do I address the judge in district court your honour or my lord", "persona": "procedural", "expected_category": "procedure"}
+{"query": "what is an affidavit and how do I get one notarised for court", "persona": "procedural", "expected_category": "procedure"}
+{"query": "how to approach Lok Adalat for pending traffic challan settlement", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Legal Services Authorities Act 1987"}
+{"query": "which disputes can be referred to Lok Adalat compoundable offences", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Legal Services Authorities Act 1987"}
+{"query": "is pre-litigation mediation mandatory before filing commercial suit", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 12A Commercial Courts Act / Mediation Act 2023"}
+{"query": "how to initiate mediation under Mediation Act 2023 without going to court", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Mediation Act 2023"}
+{"query": "difference between Article 32 Supreme Court and Article 226 High Court writ", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Article 32 / 226 Constitution"}
+{"query": "how to file habeas corpus petition husband detained illegally by police", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Article 226 Constitution"}
+{"query": "what is mandamus writ and when can I file against government officer", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Article 226 Constitution"}
+{"query": "how to file PIL in high court regarding pollution from factory nearby", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Article 226 Constitution"}
+{"query": "got divorce notice from family court yesterday how do I respond", "persona": "procedural", "expected_category": "procedure"}
+{"query": "family court summons received what is the next step before lawyer", "persona": "procedural", "expected_category": "procedure"}
+{"query": "is mediation compulsory in mutual consent divorce family court", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Family Courts Act 1984"}
+{"query": "how to file custody petition for minor child in family court", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Guardians and Wards Act 1890"}
+{"query": "how do I file consumer complaint in district consumer forum online", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Consumer Protection Act 2019"}
+{"query": "consumer complaint value 50 lakh which forum district state or national", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Consumer Protection Act 2019"}
+{"query": "e-Daakhil portal consumer complaint filing step by step process", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Consumer Protection Act 2019"}
+{"query": "how to refer industrial dispute to labour court under section 10", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 10 Industrial Disputes Act 1947"}
+{"query": "wrongfully terminated from job how to approach labour court", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Industrial Disputes Act 1947"}
+{"query": "time limit and Form 35 for filing appeal to CIT Appeals income tax", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 246A / 249 Income Tax Act 1961"}
+{"query": "how to file appeal before ITAT against CIT Appeals order time limit", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 253 Income Tax Act 1961"}
+{"query": "procedure to file insolvency petition against company in NCLT", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 7 / 9 IBC 2016"}
+{"query": "appeal against NCLT order to NCLAT how many days limit", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 61 IBC 2016"}
+{"query": "how to file complaint before NGT for illegal construction near wetland", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "National Green Tribunal Act 2010"}
+{"query": "builder not giving possession how to file complaint with RERA authority", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 31 RERA 2016"}
+{"query": "summons not served through registered post what is next step", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Order V CPC"}
+{"query": "ex-parte order passed against me how to set aside not served summons", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Order IX Rule 13 CPC"}
+{"query": "how is court fee calculated for civil suit valuation 25 lakh recovery", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Court Fees Act 1870"}
+{"query": "court fee for filing writ petition in high court fixed or ad valorem", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Court Fees Act 1870"}
+{"query": "BPL card holder eligibility for free legal aid from DLSA SLSA", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 12 Legal Services Authorities Act 1987"}
+{"query": "process to file 482 CrPC quashing petition in high court", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 482 CrPC / BNSS 528"}
+{"query": "time limit to file first appeal against district court decree civil", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 96 CPC / Limitation Act"}
+{"query": "second appeal high court substantial question of law procedure", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 100 CPC"}
+{"query": "decree holder how to file execution petition Order 21 CPC", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Order XXI CPC"}
+{"query": "judgment debtor not paying money decree how to attach property", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Order XXI CPC"}
+{"query": "condonation of delay application section 5 limitation what grounds work", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 5 Limitation Act 1963"}
+{"query": "how to file vakalatnama change of advocate during pending suit", "persona": "procedural", "expected_category": "procedure"}
+{"query": "how to apply for transfer of case from one district court to another", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 24 CPC"}
+{"query": "how to withdraw criminal complaint under section 320 compounding", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 320 CrPC / BNSS 359"}
+{"query": "interim bail when can I apply between regular bail hearings", "persona": "procedural", "expected_category": "procedure"}
+{"query": "magistrate refused to take cognizance complaint how to challenge", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 156(3) / 200 CrPC"}
+{"query": "how to file private complaint before magistrate when police inaction", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 200 CrPC / BNSS 223"}
+{"query": "tribunal order against me how to appeal NCLAT format and fees", "persona": "procedural", "expected_category": "procedure"}
