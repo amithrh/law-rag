@@ -105,6 +105,14 @@ class Settings(BaseSettings):
     hnsw_ef_search: int = 40
     rerank_enabled: bool = True       # disable for ablation / when model unavailable
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    # Local fine-tune path. When non-empty, get_reranker() loads from this
+    # directory (via from_pretrained), letting us A/B between the upstream
+    # BAAI baseline and our Stage-3 fine-tune via env only:
+    #
+    #   RERANK_MODEL_PATH=models/bge-reranker-v2-m3-finetuned uvicorn ...
+    #
+    # Empty string = fall through to `rerank_model` (the HF name above).
+    rerank_model_path: str = ""
     # Hybrid retrieval fusion config (architecture-research Task #3).
     #   * 'dense_bm25'        — legacy 70% dense / 30% bm25 weighted-sum.
     #     Kept for A/B comparison and as a fallback when the sparse column

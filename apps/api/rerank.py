@@ -94,13 +94,26 @@ class _RerankerWorker:
 
 @lru_cache
 def get_reranker() -> _RerankerWorker:
+    """Lazy singleton. Resolves model from settings in this order:
+
+    1. settings.rerank_model_path — a LOCAL directory (e.g. a fine-tuned
+       Stage-3 checkpoint at models/bge-reranker-v2-m3-finetuned/). When
+       set and non-empty, this wins — letting us A/B between the
+       upstream BAAI model and our fine-tune via env-only change
+       (LAWRAG__RERANK_MODEL_PATH=…) without touching code.
+    2. settings.rerank_model — an HF model name like
+       "BAAI/bge-reranker-v2-m3" (default).
+    3. DEFAULT_RERANKER_MODEL — the hardcoded last resort.
+
+    The CrossEncoder constructor accepts either an HF name or a local
+    directory transparently (it dispatches via `from_pretrained`), so
+    the same code path serves both.
+    """
     settings = get_settings()
-    return _RerankerWorker(
-        model_name=settings.embedding_model.replace("/bge-m3", "/bge-reranker-v2-m3")
-        if "bge-m3" in settings.embedding_model
-        else DEFAULT_RERANKER_MODEL,
-        device="mps",
-    )
+    local = (getattr(settings, "rerank_model_path", None) or "").strip()
+    name = local or settings.rerank_model or DEFAULT_RERANKER_MODEL
+    logger.info("reranker resolved to %r (local=%s)", name, bool(local))
+    return _RerankerWorker(model_name=name, device="mps")
 
 
 def rerank(

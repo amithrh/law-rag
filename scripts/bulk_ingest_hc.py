@@ -50,6 +50,7 @@ import gc
 import hashlib
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -184,6 +185,21 @@ async def write_dry_run_jsonl(rows: list[dict], year: int) -> Path:
     with out.open("a") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return out
+
+
+def append_dry_run_row(row: dict, year: int) -> Path:
+    """Crash-safe per-doc append: write+fsync one row to year file.
+
+    Prevents the 3,298-doc loss we saw when an httpx.ConnectError mid-stream
+    killed the job before the end-of-loop bulk write fired.
+    """
+    out = HC_DIR / f"year={year}.jsonl"
+    HC_DIR.mkdir(parents=True, exist_ok=True)
+    with out.open("a") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
     return out
 
 
@@ -361,6 +377,12 @@ async def main():
                     f"({pages}p, {row['text_chars']:,} chars, "
                     f"subject={row['subject_area']})")
 
+                # Crash-safe: append each dry-run row to disk immediately,
+                # so a mid-stream network/system failure doesn't lose the
+                # whole run. The end-of-loop bulk write becomes a no-op.
+                if is_dry:
+                    append_dry_run_row(row, year)
+
                 if not is_dry:
                     from chunking.judgment import chunk_judgment
 
@@ -379,11 +401,13 @@ async def main():
                             log(f"    flushed {inserted} chunks "
                                 f"(running total: {grand_total_chunks:,})")
 
-            # Final dry-run / final flush
+            # Final flush
             if is_dry:
+                # Per-doc append_dry_run_row already wrote each row safely
+                # mid-stream. Just print the summary tally per year.
                 for year, rows in year_buckets.items():
-                    out = await write_dry_run_jsonl(rows, year)
-                    log(f"  wrote {len(rows)} dry-run rows to {out}")
+                    log(f"  total dry-run rows for year={year}: {len(rows)} "
+                        f"(already persisted incrementally)")
             else:
                 if buffer:
                     grand_total_chunks += await flush_buffer(conn, model, buffer)

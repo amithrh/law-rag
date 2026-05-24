@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent that runs auto_recover_on_boot.sh at login.
+  This survives Mac reboots / sleeps and re-arms caffeinate, restarts the
+  API, and resumes the synthetic-triple miner if it was interrupted.
+
+  Install (one-time):
+    cp scripts/com.lawrag.autorecover.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.lawrag.autorecover.plist
+
+  Disable:
+    launchctl unload ~/Library/LaunchAgents/com.lawrag.autorecover.plist
+
+  Logs land in <repo>/logs/autorecover_<ts>.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lawrag.autorecover</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/amitmishra/worksppace-central/law-rag/.claude/worktrees/nervous-hodgkin-c617cc/scripts/auto_recover_on_boot.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/lawrag-autorecover.err</string>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/lawrag-autorecover.out</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/amitmishra/worksppace-central/law-rag/.claude/worktrees/nervous-hodgkin-c617cc</string>
+</dict>
+</plist>

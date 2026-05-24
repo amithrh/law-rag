@@ -41,11 +41,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
-# Map common Act-year mistakes to flag
+# Map common Act-year mistakes to flag.
+# Each pattern uses negative lookbehind to avoid false positives where the
+# correct full Act name is being cited. PWDVA was the most-bitten case last
+# eval (23/23 WRONG_REF false positives matched body text that read
+# 'Protection of Women from Domestic Violence Act, 2005' — which is the
+# correct citation — because the bare 'Domestic Violence Act' substring
+# leaked through.
 WRONG_YEAR_PATTERNS = [
-    (r"\bConsumer Protection Act,?\s*1986\b", "CPA 1986 (repealed); current is 2019"),
-    (r"\bDomestic Violence Act,?\s*\b", "missing 'Protection of Women from'"),
+    # CPA 1986 was repealed by CPA 2019. Match only when 1986 is the year cited.
+    (r"\bConsumer Protection Act,?\s*1986\b",
+     "CPA 1986 (repealed); current is 2019"),
+    # 'Domestic Violence Act' alone (NOT preceded by 'Protection of Women from ')
+    (r"(?<!Protection of Women from )\bDomestic Violence Act\b",
+     "missing 'Protection of Women from'"),
+    # Section 66A IT Act struck down by Shreya Singhal v UoI (2015)
     (r"\bSection 66A\b.*IT Act", "Section 66A struck down by Shreya Singhal 2015"),
+    # Section 377 IPC partially read down by Navtej Singh Johar (2018).
+    # NOTE: this is context-dependent; flag for review, not auto-fail.
     (r"\bSection 377\b", "after Navtej Singh Johar 2018 — context check needed"),
 ]
 

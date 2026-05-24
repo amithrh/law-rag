@@ -411,6 +411,67 @@ P0: list[dict[str, Any]] = [
      "title": "Specific Relief Act 1963",
      "cached_pdf": "data/raw/acts/specific-relief-1963__A1963-47.pdf",
      "subject_area": "civil_general"},
+
+    # =================================================================
+    # WAVE 2 (May 23, 2026) — surfaced by 500-query eval audit. These
+    # have cached PDFs already on disk but were never inserted to DB
+    # (tasks #14/#15 marked complete prematurely). pymupdf-verified
+    # full Acts (not amendment stubs) before adding.
+    # =================================================================
+
+    # --- New criminal codes (BNS replaces IPC, BNSS replaces CrPC, BSA
+    # replaces IEA — all effective from 1 Jul 2024). Mandatory for the
+    # prisoner_undertrial persona which had 40/50 retrieval_miss
+    # in the baseline eval.
+    {"slug": "bns-2023",
+     "title": "Bharatiya Nyaya Sanhita 2023",
+     "cached_pdf": "data/raw/acts/bns-2023__a202345.pdf",
+     "subject_area": "criminal",
+     "as_at": "2024-07-01"},
+    {"slug": "bnss-2023",
+     "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+     "cached_pdf": "data/raw/acts/bnss-2023__eng.pdf",
+     "subject_area": "criminal",
+     "as_at": "2024-07-01"},
+    {"slug": "bsa-2023",
+     "title": "Bharatiya Sakshya Adhiniyam 2023",
+     "cached_pdf": "data/raw/acts/sakshya-adhiniyam-2023__aa202347.pdf",
+     "subject_area": "criminal",
+     "as_at": "2024-07-01"},
+
+    # --- Maintenance and Welfare of Parents and Senior Citizens Act
+    # 2007. Filename is `senior-citizens-2007__200756.pdf` but the
+    # canonical short title is "Maintenance and Welfare of Parents..."
+    # — using `mwp-2007` slug for retrieval to match the colloquial
+    # name the system already prompts the LLM with.
+    {"slug": "mwp-2007",
+     "title": "Maintenance and Welfare of Parents and Senior Citizens "
+              "Act 2007",
+     "cached_pdf": "data/raw/acts/senior-citizens-2007__200756.pdf",
+     "subject_area": "family"},
+
+    # --- Wage / labour code consolidation: Code on Wages 2019 unified
+    # the Payment of Wages 1936 + Minimum Wages 1948 + Payment of Bonus
+    # 1965 + Equal Remuneration 1976. Effective dates vary by state.
+    {"slug": "code-on-wages-2019",
+     "title": "Code on Wages 2019",
+     "cached_pdf": "data/raw/acts/code-on-wages-2019__aA2019-29.pdf",
+     "subject_area": "service_employment",
+     "as_at": "2019-08-08"},
+
+    # --- Motor Vehicles 1988 (175 pages) — gig-economy queries,
+    # accident-compensation, third-party insurance.
+    {"slug": "motor-vehicles-1988",
+     "title": "Motor Vehicles Act 1988",
+     "cached_pdf": "data/raw/acts/motor-vehicles-1988__aA1988-59.pdf",
+     "subject_area": "civil_general"},
+
+    # --- Payment of Gratuity 1972 — retirement/separation benefit;
+    # surfaced by elderly persona queries about gratuity delays.
+    {"slug": "gratuity-1972",
+     "title": "Payment of Gratuity Act 1972",
+     "cached_pdf": "data/raw/acts/gratuity-1972__a1972-39.pdf",
+     "subject_area": "service_employment"},
 ]
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "

@@ -173,8 +173,18 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--queries-dir", default=str(ROOT / "data/eval_200"))
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--prefix", default="eval_200",
+                   help="output filename prefix (default: eval_200). "
+                        "Use 'eval_500_baseline', 'eval_500_postrerank', "
+                        "'eval_500_postdistill', 'eval_500_finalhc' for "
+                        "the 4-run sweep.")
     p.add_argument("--out", default=None,
-                   help="output JSONL (default: data/processed/eval_200_<ts>.jsonl)")
+                   help="explicit output JSONL path (overrides --prefix)")
+    p.add_argument("--resume-from", default=None,
+                   help="existing JSONL — queries present here are skipped "
+                        "(matched by lowercased query text). New rows are "
+                        "APPENDED to --out (or to --resume-from itself if "
+                        "--out is omitted).")
     args = p.parse_args()
 
     queries = load_queries(Path(args.queries_dir))
@@ -182,18 +192,46 @@ def main() -> None:
         queries = queries[:args.limit]
     print(f"loaded {len(queries)} queries", flush=True)
 
-    out_path = Path(args.out) if args.out else (
-        ROOT / "data/processed" /
-        f"eval_200_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
-    )
+    # Resume logic: read --resume-from, build skip set, append new rows.
+    done_keys: set[str] = set()
+    if args.resume_from:
+        rf = Path(args.resume_from)
+        if rf.exists():
+            with rf.open() as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        done_keys.add(json.loads(line)["query"].strip().lower())
+                    except Exception:
+                        continue
+        print(f"resume: {len(done_keys)} queries already done", flush=True)
+
+    before = len(queries)
+    queries = [q for q in queries if q["query"].strip().lower() not in done_keys]
+    print(f"after dedup vs resume-from: {len(queries)}/{before} queries remain",
+          flush=True)
+
+    # If --out not given but --resume-from is, append to resume-from
+    if args.out:
+        out_path = Path(args.out)
+    elif args.resume_from:
+        out_path = Path(args.resume_from)
+    else:
+        out_path = (ROOT / "data/processed" /
+                    f"{args.prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl")
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_mode = "a" if done_keys else "w"
+    print(f"writing to {out_path} (mode={file_mode!r})", flush=True)
 
     t_overall = time.time()
     n_ok_cosine = 0
     n_refused = 0
     n_error = 0
     n_act_hit = 0
-    with out_path.open("w") as f:
+    with out_path.open(file_mode) as f:
         for i, qrow in enumerate(queries, 1):
             q = qrow["query"]
             r = stream_answer(q)
