@@ -45,6 +45,8 @@ import asyncpg
 
 from apps.api.config import get_settings
 from apps.api.embeddings import embedding_to_halfvec_literal, get_embedder
+from apps.api.matter_router import route_matter
+from apps.api.source_packs import SourcePack, source_packs_for_route
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +197,72 @@ async def sparse_retrieve(
     return await pool_or_conn.fetch(sql, *params)
 
 
+def _hydrate_row(r) -> RetrievedChunk:
+    metadata = r["metadata"] if isinstance(r["metadata"], dict) else {}
+    return RetrievedChunk(
+        chunk_id=r["id"],
+        document_id=r["document_id"],
+        anchor=r["anchor"],
+        text=r["text"],
+        source_type=r["source_type"],
+        subject_area=r["subject_area"],
+        as_at=r["as_at"],
+        paragraph_no=r["paragraph_no"],
+        title=r["title"],
+        citation=r["citation"],
+        court=r["court"],
+        statute_short=r["statute_short"],
+        metadata=dict(metadata),
+    )
+
+
+async def _fetch_source_pack_candidates(
+    pool: asyncpg.Pool,
+    query: str,
+    *,
+    packs: list[SourcePack],
+    limit_per_pack: int,
+) -> list[RetrievedChunk]:
+    """Fetch exact-title candidates for route-required authoritative sources."""
+    if not packs or limit_per_pack <= 0:
+        return []
+
+    out: list[RetrievedChunk] = []
+    async with pool.acquire() as conn:
+        for pack in packs:
+            title_patterns = [f"%{pattern}%" for pattern in pack.title_patterns]
+            rows = await conn.fetch(
+                """
+                SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
+                       c.subject_area, c.as_at, c.paragraph_no, c.metadata,
+                       d.title, d.citation, d.court, d.statute_short,
+                       ts_rank(c.text_tsv, plainto_tsquery('english', $3)) AS bm25_score
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                WHERE NOT c.quarantined
+                  AND c.source_type = ANY($2::text[])
+                  AND (
+                    d.title ILIKE ANY($1::text[])
+                    OR COALESCE(d.statute_short, '') ILIKE ANY($1::text[])
+                  )
+                ORDER BY bm25_score DESC, c.paragraph_no NULLS LAST, c.id
+                LIMIT $4
+                """,
+                title_patterns,
+                list(pack.source_types),
+                pack.search_query,
+                limit_per_pack,
+            )
+            for row in rows:
+                chunk = _hydrate_row(row)
+                chunk.bm25_score = float(row["bm25_score"] or 0.0)
+                chunk.metadata["_required_source_pack"] = pack.id
+                chunk.metadata["_required_source_priority"] = pack.priority
+                chunk.metadata["_required_source_query"] = pack.search_query
+                out.append(chunk)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Hybrid retrieval — orchestrator
 # ---------------------------------------------------------------------------
@@ -341,27 +409,17 @@ async def hybrid_retrieve(
     # ---- Union + dedupe by chunk.id ----
     merged: dict[int, RetrievedChunk] = {}
 
-    def _hydrate(r) -> RetrievedChunk:
-        return RetrievedChunk(
-            chunk_id=r["id"], document_id=r["document_id"], anchor=r["anchor"],
-            text=r["text"], source_type=r["source_type"], subject_area=r["subject_area"],
-            as_at=r["as_at"], paragraph_no=r["paragraph_no"],
-            title=r["title"], citation=r["citation"], court=r["court"],
-            statute_short=r["statute_short"],
-            metadata=r["metadata"] if isinstance(r["metadata"], dict) else {},
-        )
-
     for r in dense_rows:
         if r["id"] not in merged:
-            merged[r["id"]] = _hydrate(r)
+            merged[r["id"]] = _hydrate_row(r)
         merged[r["id"]].dense_score = float(r["dense_score"])
     for r in bm25_rows:
         if r["id"] not in merged:
-            merged[r["id"]] = _hydrate(r)
+            merged[r["id"]] = _hydrate_row(r)
         merged[r["id"]].bm25_score = float(r["bm25_score"])
     for r in sparse_rows:
         if r["id"] not in merged:
-            merged[r["id"]] = _hydrate(r)
+            merged[r["id"]] = _hydrate_row(r)
         merged[r["id"]].sparse_score = float(r["sparse_score"])
 
     # ---- Stage 1.5 — fuse (RRF when multi-head, weighted-sum otherwise) ----
@@ -549,6 +607,31 @@ async def multi_query_hybrid_retrieve(
     if not union:
         return [], variants[1:]
 
+    route = route_matter(query)
+    packs = source_packs_for_route(route, query)
+    if getattr(s, "required_source_pack_enabled", True) and packs:
+        t_source_pack = time.perf_counter()
+        try:
+            source_candidates = await _fetch_source_pack_candidates(
+                pool,
+                query,
+                packs=packs,
+                limit_per_pack=getattr(s, "required_source_pack_limit_per_pack", 4),
+            )
+        except Exception as e:
+            logger.warning("required-source pack retrieval failed: %s", e)
+            source_candidates = []
+        if timings is not None:
+            timings["required_source_pack"] = time.perf_counter() - t_source_pack
+
+        for c in source_candidates:
+            existing = union.get(c.chunk_id)
+            if existing is None:
+                union[c.chunk_id] = c
+                continue
+            existing.metadata.update(c.metadata)
+            existing.bm25_score = max(existing.bm25_score, c.bm25_score)
+
     candidate_list = list(union.values())
 
     # Stage 3: rerank against original + each variant, take the MAX score
@@ -566,7 +649,13 @@ async def multi_query_hybrid_retrieve(
     if do_rerank:
         from apps.api.rerank import rerank as _rerank
         # Cap candidates at rerank_input_k to bound cost.
-        candidate_list.sort(key=lambda c: c.combined_score, reverse=True)
+        candidate_list.sort(
+            key=lambda c: (
+                1 if c.metadata.get("_required_source_pack") else 0,
+                c.combined_score,
+            ),
+            reverse=True,
+        )
         candidate_list = candidate_list[: s.rerank_input_k]
 
         # rerank() mutates each chunk's rerank_score in place. To take
@@ -626,6 +715,14 @@ async def multi_query_hybrid_retrieve(
             if c.anchor and not _sc_anchor.match(c.anchor):
                 # 5% headroom-bonus toward 1.0
                 score = min(1.0, score + 0.05 * (1.0 - score))
+            # C) required-source pack boost. The route picked the matter
+            # and the pack fetched an exact indexed Act title. Keep that
+            # authority above the coverage gate even when the cross-encoder
+            # prefers a factually similar judgment.
+            if c.metadata.get("_required_source_pack"):
+                score = max(score, getattr(s, "required_source_pack_min_score", 0.42))
+                boost = getattr(s, "required_source_pack_boost", 0.10)
+                score = min(1.0, score + boost * (1.0 - score))
             c.rerank_score = score
         candidate_list.sort(
             key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,

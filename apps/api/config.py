@@ -337,6 +337,18 @@ class Settings(BaseSettings):
     # variant. Score against original + first legal variant by default;
     # the union still benefits from all retrieved variants.
     rerank_variant_query_limit: int = 2
+    # Route-aware source packs fetch exact indexed Act titles for categories
+    # where the router already knows the required authority. This is not a
+    # corpus substitute: missing Acts still return no pack candidates and
+    # the coverage gate can refuse.
+    required_source_pack_enabled: bool = True
+    required_source_pack_limit_per_pack: int = 4
+    # If the exact Act title is indexed but the cross-encoder gives it a
+    # low lay-query score, lift it above the coverage gate. Keep this just
+    # over refuse_below_rerank so exact-source packs help without drowning
+    # out highly relevant facts.
+    required_source_pack_min_score: float = 0.42
+    required_source_pack_boost: float = 0.10
 
     # Provenance gate (PLAN §10.1 + provenance system).
     # In production, retrieval must only return chunks from documents whose
