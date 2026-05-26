@@ -20,6 +20,7 @@ from apps.api.config import Settings
 from apps.api.retrieval import (
     RetrievedChunk,
     _apply_authority_rerank_boosts,
+    _bm25_retrieve_sql,
     _preserve_required_source_packs,
     _source_cluster_scores,
     _source_quality_score,
@@ -316,6 +317,45 @@ def test_sparse_retrieve_builds_jsonb_dot_product_sql():
     assert params[0] == ["criminal"], f"where_params lost position: {params}"
 
 
+def test_fielded_bm25_sql_scores_legal_structure_fields():
+    sql = _bm25_retrieve_sql(
+        where_clause="NOT c.quarantined AND c.subject_area = ANY($1)",
+        where_param_count=1,
+        fielded=True,
+    )
+
+    assert "WITH q AS" in sql
+    assert "ts_rank_cd" in sql
+    assert "full_tsq" in sql
+    assert "any_tsq" in sql
+    assert "target_secs" in sql
+    assert "websearch_to_tsquery" in sql
+    assert "regexp_matches" in sql
+    assert "setweight(to_tsvector('english', coalesce(d.title" in sql
+    assert "setweight(to_tsvector('english', coalesce(d.statute_short" in sql
+    assert "setweight(to_tsvector('english', coalesce(d.doc_id" in sql
+    assert "setweight(to_tsvector('english', c.anchor" in sql
+    assert "setweight(coalesce(c.text_tsv" in sql
+    assert "to_tsvector('english', coalesce(d.title" in sql
+    assert "to_tsvector('english', c.anchor) @@ q.any_tsq" in sql
+    assert "lower(c.anchor) LIKE '%/sec-'" in sql
+    assert "c.anchor NOT ILIKE '%#header%'" in sql
+    assert "LIMIT $3" in sql
+
+
+def test_legacy_bm25_sql_keeps_text_tsv_only_path():
+    sql = _bm25_retrieve_sql(
+        where_clause="NOT c.quarantined",
+        where_param_count=0,
+        fielded=False,
+    )
+
+    assert "ts_rank(c.text_tsv" in sql
+    assert "c.text_tsv @@ plainto_tsquery" in sql
+    assert "title_tsv" not in sql
+    assert "LIMIT $2" in sql
+
+
 # ---------------------------------------------------------------------------
 # Config knobs
 # ---------------------------------------------------------------------------
@@ -347,6 +387,11 @@ class TestHybridModeConfig:
         EMBEDDING_RUNTIME=st."""
         s = Settings(database_url="postgresql://x")
         assert s.embedding_runtime == "flag"
+
+    def test_fielded_bm25_defaults_on(self):
+        s = Settings(database_url="postgresql://x")
+        assert s.fielded_bm25_enabled is True
+        assert s.fielded_bm25_top_k == 50
 
 
 # ---------------------------------------------------------------------------

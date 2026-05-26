@@ -56,6 +56,17 @@ CREATE INDEX IF NOT EXISTS idx_documents_subject_area  ON documents(subject_area
 CREATE INDEX IF NOT EXISTS idx_documents_as_at         ON documents(as_at);
 CREATE INDEX IF NOT EXISTS idx_documents_date_decided  ON documents(date_decided);
 
+-- Fielded full-text expression indexes for legal retrieval. Title/statute/
+-- doc-id hits should carry more signal than a random paragraph body hit when
+-- users ask for exact Acts, forms, forums, deadlines, or section numbers.
+-- Expression indexes avoid rewriting the large chunks table on existing DBs.
+CREATE INDEX IF NOT EXISTS idx_documents_title_tsv
+    ON documents USING GIN (to_tsvector('english', coalesce(title, '')));
+CREATE INDEX IF NOT EXISTS idx_documents_statute_tsv
+    ON documents USING GIN (to_tsvector('english', coalesce(statute_short, '')));
+CREATE INDEX IF NOT EXISTS idx_documents_doc_id_tsv
+    ON documents USING GIN (to_tsvector('english', coalesce(doc_id, '')));
+
 -- Chunks: the unit of retrieval. Single un-partitioned table per §5.4 default.
 CREATE TABLE IF NOT EXISTS chunks (
     id                  BIGSERIAL PRIMARY KEY,
@@ -113,6 +124,8 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
 ALTER TABLE chunks ADD COLUMN IF NOT EXISTS text_tsv tsvector
     GENERATED ALWAYS AS (to_tsvector('english', text)) STORED;
 CREATE INDEX IF NOT EXISTS idx_chunks_text_tsv ON chunks USING GIN (text_tsv);
+CREATE INDEX IF NOT EXISTS idx_chunks_anchor_tsv
+    ON chunks USING GIN (to_tsvector('english', anchor));
 
 -- Trigram index for fuzzy match (party-name lookup etc.)
 CREATE INDEX IF NOT EXISTS idx_documents_parties_trgm ON documents USING GIN (parties gin_trgm_ops);

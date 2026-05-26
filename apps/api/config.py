@@ -127,6 +127,13 @@ class Settings(BaseSettings):
     # because the contribution of rank R is 1/(k+R) — rank 1 ≈ 0.0164,
     # rank 100 ≈ 0.00625, so deep matches still contribute non-trivially.
     rrf_k: int = 60
+    # Search legal structure, not only paragraph body text. When enabled,
+    # retrieval adds a fast bare-Act-only fielded BM25 head that scores
+    # document title, statute short name, document id, chunk anchor, and body.
+    # Set false only to run against a database that has not applied
+    # 004_fielded_fts.sql yet.
+    fielded_bm25_enabled: bool = True
+    fielded_bm25_top_k: int = 50
 
     # Verifier (PLAN §4.3)
     # Per Codex adversarial review #1: unsupported sentences are SUPPRESSED

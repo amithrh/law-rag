@@ -17,6 +17,8 @@ Pipeline (`hybrid_mode='dense_sparse_bm25'`):
     1b. Sparse   (JSONB dot product on
                   `embedding_sparse`,           top `sparse_top_k`)
     1c. BM25     (tsvector match on `text_tsv`, top `bm25_top_k`)
+    1d. Fielded BM25 over bare Acts only (title/statute/doc-id/anchor/body),
+        top `fielded_bm25_top_k`
 
   Stage 2 — RRF fusion (Cormack et al., k=60):
     For each chunk, its fused score is
@@ -195,6 +197,76 @@ async def sparse_retrieve(
         LIMIT ${base+3}
     """
     return await pool_or_conn.fetch(sql, *params)
+
+
+def _bm25_retrieve_sql(
+    *,
+    where_clause: str,
+    where_param_count: int,
+    fielded: bool,
+) -> str:
+    query_param = where_param_count + 1
+    limit_param = where_param_count + 2
+    common_select = """
+               c.id, c.document_id, c.anchor, c.text, c.source_type,
+               c.subject_area, c.as_at, c.paragraph_no, c.metadata,
+               d.title, d.citation, d.court, d.statute_short,
+    """
+
+    if not fielded:
+        return f"""SELECT {common_select}
+                       ts_rank(c.text_tsv, plainto_tsquery('english', ${query_param})) AS bm25_score
+                FROM chunks c JOIN documents d ON d.id = c.document_id
+                WHERE {where_clause}
+                  AND c.text_tsv @@ plainto_tsquery('english', ${query_param})
+                ORDER BY bm25_score DESC
+                LIMIT ${limit_param}"""
+
+    weighted_vector = """
+                   setweight(to_tsvector('english', coalesce(d.title, '')), 'A') ||
+                   setweight(to_tsvector('english', coalesce(d.statute_short, '')), 'A') ||
+                   setweight(to_tsvector('english', coalesce(d.doc_id, '')), 'B') ||
+                   setweight(to_tsvector('english', c.anchor), 'A') ||
+                   setweight(coalesce(c.text_tsv, ''::tsvector), 'D')
+    """
+    section_regex = r"(?:section|sec\.?|s\.?)\s*(\d{1,4}[a-z]?)"
+    return f"""WITH q AS (
+                    SELECT
+                        plainto_tsquery('english', ${query_param}) AS full_tsq,
+                        websearch_to_tsquery(
+                            'english',
+                            regexp_replace(trim(${query_param}), '\\s+', ' OR ', 'g')
+                        ) AS any_tsq,
+                        ARRAY(
+                            SELECT lower(m[1])
+                            FROM regexp_matches(${query_param}, '{section_regex}', 'gi') AS m
+                        ) AS target_secs
+                )
+                SELECT {common_select}
+                       (
+                           ts_rank_cd(({weighted_vector}), q.full_tsq)
+                           + 0.20 * ts_rank_cd(({weighted_vector}), q.any_tsq)
+                           + CASE WHEN EXISTS (
+                               SELECT 1
+                               FROM unnest(q.target_secs) AS sec(sec_no)
+                               WHERE lower(c.anchor) LIKE '%/sec-' || sec.sec_no || '%'
+                           ) THEN 4.0 ELSE 0.0 END
+                       ) AS bm25_score
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                CROSS JOIN q
+                WHERE {where_clause}
+                  AND c.anchor NOT ILIKE '%#header%'
+                  AND (
+                    ({weighted_vector}) @@ q.full_tsq
+                    OR c.text_tsv @@ q.any_tsq
+                    OR to_tsvector('english', c.anchor) @@ q.any_tsq
+                    OR to_tsvector('english', coalesce(d.title, '')) @@ q.any_tsq
+                    OR to_tsvector('english', coalesce(d.statute_short, '')) @@ q.any_tsq
+                    OR to_tsvector('english', coalesce(d.doc_id, '')) @@ q.any_tsq
+                  )
+                ORDER BY bm25_score DESC
+                LIMIT ${limit_param}"""
 
 
 def _hydrate_row(r) -> RetrievedChunk:
@@ -528,8 +600,9 @@ async def hybrid_retrieve(
     """Three-source hybrid retrieval with RRF fusion (or legacy 70/30).
 
     The mode is set by `settings.hybrid_mode`. `dense_sparse_bm25` (default)
-    runs all three heads and fuses via RRF. `dense_bm25` runs only dense +
-    BM25 and uses the legacy weighted-sum order.
+    runs dense + sparse + BM25, plus the optional bare-Act fielded BM25
+    head, and fuses via RRF. `dense_bm25` runs dense + BM25 plus optional
+    fielded BM25 and uses the legacy weighted-sum order.
 
     `use_reranker=False` disables the cross-encoder rerank stage; useful
     for ablation studies. Falls back to the pre-rerank order if the
@@ -629,17 +702,36 @@ async def hybrid_retrieve(
         bm25_n = s.bm25_top_k
         params_bm25 = params + [query, bm25_n]
         bm25_rows = await conn.fetch(
-            f"""SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
-                       c.subject_area, c.as_at, c.paragraph_no, c.metadata,
-                       d.title, d.citation, d.court, d.statute_short,
-                       ts_rank(c.text_tsv, plainto_tsquery('english', ${len(params)+1})) AS bm25_score
-                FROM chunks c JOIN documents d ON d.id = c.document_id
-                WHERE {where_clause}
-                  AND c.text_tsv @@ plainto_tsquery('english', ${len(params)+1})
-                ORDER BY bm25_score DESC
-                LIMIT ${len(params)+2}""",
+            _bm25_retrieve_sql(
+                where_clause=where_clause,
+                where_param_count=len(params),
+                fielded=False,
+            ),
             *params_bm25,
         )
+
+        # --- Fielded BM25 top N (bare Acts only) ---
+        #
+        # Running fielded title/statute/anchor search across every SC/HC
+        # judgment is both noisy and slow: judgment headers contain many Act
+        # names and section references. Keep the all-corpus BM25 body-text
+        # head above, and add this narrow legal-structure head for the place
+        # it matters most: getting operative bare Acts into the candidate set.
+        fielded_bm25_rows: list = []
+        fielded_enabled = getattr(s, "fielded_bm25_enabled", True)
+        fielded_allowed = not source_types or "bare_act" in source_types
+        if fielded_enabled and fielded_allowed:
+            fielded_where_clause = f"{where_clause} AND c.source_type = 'bare_act'"
+            fielded_bm25_n = getattr(s, "fielded_bm25_top_k", 50)
+            params_fielded_bm25 = params + [query, fielded_bm25_n]
+            fielded_bm25_rows = await conn.fetch(
+                _bm25_retrieve_sql(
+                    where_clause=fielded_where_clause,
+                    where_param_count=len(params),
+                    fielded=True,
+                ),
+                *params_fielded_bm25,
+            )
 
         # --- Sparse top N (when enabled) ---
         sparse_rows: list = []
@@ -663,6 +755,13 @@ async def hybrid_retrieve(
         if r["id"] not in merged:
             merged[r["id"]] = _hydrate_row(r)
         merged[r["id"]].bm25_score = float(r["bm25_score"])
+    for r in fielded_bm25_rows:
+        if r["id"] not in merged:
+            merged[r["id"]] = _hydrate_row(r)
+        merged[r["id"]].bm25_score = max(
+            merged[r["id"]].bm25_score,
+            float(r["bm25_score"]),
+        )
     for r in sparse_rows:
         if r["id"] not in merged:
             merged[r["id"]] = _hydrate_row(r)
@@ -674,7 +773,8 @@ async def hybrid_retrieve(
         dense_ids = [r["id"] for r in dense_rows]
         bm25_ids = [r["id"] for r in bm25_rows]
         sparse_ids = [r["id"] for r in sparse_rows]
-        fused = rrf_fuse([dense_ids, sparse_ids, bm25_ids], k=s.rrf_k)
+        fielded_bm25_ids = [r["id"] for r in fielded_bm25_rows]
+        fused = rrf_fuse([dense_ids, sparse_ids, bm25_ids, fielded_bm25_ids], k=s.rrf_k)
         for cid, score in fused.items():
             if cid in merged:
                 merged[cid].rrf_score = score
@@ -698,19 +798,19 @@ async def hybrid_retrieve(
         candidates = out[: s.rerank_input_k]
         reranked = _rerank(query, candidates, keep=top_k)
         logger.info(
-            "hybrid_retrieve[%s]: %d dense + %d bm25 + %d sparse → %d merged → "
-            "rerank(%d) → top %d",
+            "hybrid_retrieve[%s]: %d dense + %d bm25 + %d sparse + %d fielded "
+            "→ %d merged → rerank(%d) → top %d",
             s.hybrid_mode,
-            len(dense_rows), len(bm25_rows), len(sparse_rows),
+            len(dense_rows), len(bm25_rows), len(sparse_rows), len(fielded_bm25_rows),
             len(merged), len(candidates), len(reranked),
         )
         return reranked
 
     logger.info(
-        "hybrid_retrieve[%s]: %d dense + %d bm25 + %d sparse → %d merged → "
+        "hybrid_retrieve[%s]: %d dense + %d bm25 + %d sparse + %d fielded → %d merged → "
         "top %d (no rerank)",
         s.hybrid_mode,
-        len(dense_rows), len(bm25_rows), len(sparse_rows),
+        len(dense_rows), len(bm25_rows), len(sparse_rows), len(fielded_bm25_rows),
         len(merged), min(top_k, len(out)),
     )
     return out[:top_k]
