@@ -1,0 +1,100 @@
+{"query":"my father gifted flat to my brother in 2022 but now brother stopped giving food can gift be cancelled","persona":"elderly","expected_category":"senior_citizen","expected_act_hint":"Senior Citizens Act 2007 s.23"}
+{"query":"i am 74 widow son changed house lock and says go to old age home what legal step now","persona":"elderly","expected_category":"senior_citizen","expected_act_hint":"Senior Citizens Act"}
+{"query":"grandmother made will but not registered bank says it is invalid is registration compulsory","persona":"elderly","expected_category":"succession_inheritance","expected_act_hint":"Indian Succession Act 1925"}
+{"query":"christian father died in kochi without will wife and two daughters how share calculate","persona":"elderly","expected_category":"succession_inheritance","expected_act_hint":"Indian Succession Act"}
+{"query":"daughter wants share in ancestral house father died in 2010 brothers saying only sons get coparcenary","persona":"elderly","expected_category":"succession_inheritance","expected_act_hint":"Hindu Succession Act"}
+{"query":"son gave maintenance cheque to mother but cheque bounced what case can she file","persona":"elderly","expected_category":"cheque_bounce","expected_act_hint":"NI Act s.138"}
+{"query":"pension stopped because aadhaar biometric failed ration shop also refusing grain","persona":"elderly","expected_category":"social_welfare_identity","expected_act_hint":"Aadhaar Act"}
+{"query":"my dad signed property transfer in hospital ICU under pressure can we challenge it","persona":"elderly","expected_category":"property_tenancy","expected_act_hint":"Transfer of Property Act Indian Contract Act"}
+{"query":"senior citizen tribunal ordered son to pay maintenance but he stopped after 3 months enforcement?","persona":"elderly","expected_category":"senior_citizen","expected_act_hint":"Senior Citizens Act"}
+{"query":"contractor kept my aadhaar and labour card and says cannot leave site until advance repaid","persona":"migrant_labour","expected_category":"labour_exploitation_discrimination","expected_act_hint":"Payment of Wages Act"}
+{"query":"worked 42 days under nrega but job card mate says payment rejected what complaint","persona":"migrant_labour","expected_category":"labour_exploitation_discrimination","expected_act_hint":"MGNREGA wages RTI Act"}
+{"query":"construction site fall broke spine no bocw card contractor says you are daily wage no compensation","persona":"migrant_labour","expected_category":"workplace_injury_compensation","expected_act_hint":"Motor Vehicles Act Payment of Wages"}
+{"query":"factory deducts pf but epfo passbook zero for one year what to do","persona":"migrant_labour","expected_category":"employment_wages","expected_act_hint":"EPF Act"}
+{"query":"minimum wage in hotel paid 250 per day in gurgaon 12 hours shift no overtime","persona":"migrant_labour","expected_category":"employment_wages","expected_act_hint":"Payment of Wages"}
+{"query":"thekedar ran away without paying 3 months wages principal company says not our workers","persona":"migrant_labour","expected_category":"employment_wages","expected_act_hint":"Payment of Wages"}
+{"query":"vegetable cart seized by municipality without receipt can they throw my stock","persona":"migrant_labour","expected_category":"street_vendor_municipal","expected_act_hint":"Street Vendors Act"}
+{"query":"domestic worker salary not paid for 5 months madam took phone also","persona":"migrant_labour","expected_category":"employment_wages","expected_act_hint":"Payment of Wages"}
+{"query":"migrant worker injured in road accident while going to work can family claim mact","persona":"migrant_labour","expected_category":"workplace_injury_compensation","expected_act_hint":"Motor Vehicles Act"}
+{"query":"brother in jail 75 days theft case no chargesheet can we ask default bail","persona":"prisoner_undertrial","expected_category":"criminal_defence_bail","expected_act_hint":"BNSS section 187 CrPC section 167 default bail"}
+{"query":"uapa case 92 days over no chargesheet nia asked extension what is default bail rule","persona":"prisoner_undertrial","expected_category":"criminal_defence_bail","expected_act_hint":"CrPC BNSS Article 21"}
+{"query":"ndps commercial quantity husband in jail 170 days no chargesheet when statutory bail","persona":"prisoner_undertrial","expected_category":"criminal_defence_bail","expected_act_hint":"NDPS Act default bail CrPC BNSS"}
+{"query":"police beat my brother in lockup and did not show arrest memo what can family do","persona":"prisoner_undertrial","expected_category":"custody_compensation","expected_act_hint":"Article 21 BNSS"}
+{"query":"undertrial spent 3 years in jail then acquitted can he get compensation","persona":"prisoner_undertrial","expected_category":"custody_compensation","expected_act_hint":"Article 21"}
+{"query":"17 year old boy kept in adult jail in pocso case school certificate shows minor","persona":"prisoner_undertrial","expected_category":"sexual_offence_survivor","expected_act_hint":"POCSO BNSS"}
+{"query":"anticipatory bail granted in 498a does it expire after few weeks","persona":"prisoner_undertrial","expected_category":"criminal_defence_bail","expected_act_hint":"BNSS CrPC"}
+{"query":"wife wants mulaqat with husband in prison jail staff refusing without reason","persona":"prisoner_undertrial","expected_category":"prison_parole_furlough","expected_act_hint":"Article 21"}
+{"query":"ed arrested my sister pmla but grounds of arrest not given in writing","persona":"prisoner_undertrial","expected_category":"pmla_ed","expected_act_hint":"PMLA BNSS Article 21"}
+{"query":"police refused fir for bike theft saying come tomorrow what exact complaint process","persona":"procedural","expected_category":"police_fir","expected_act_hint":"BNSS"}
+{"query":"rti reply not received in 30 days what is first appeal time limit","persona":"procedural","expected_category":"rti","expected_act_hint":"RTI Act"}
+{"query":"how to file consumer complaint in district commission for fridge warranty refusal","persona":"procedural","expected_category":"consumer","expected_act_hint":"Consumer Protection Act"}
+{"query":"cheque bounce notice sent after 45 days is complaint still maintainable","persona":"procedural","expected_category":"cheque_bounce","expected_act_hint":"NI Act"}
+{"query":"free legal aid for woman domestic violence case how to apply in dlsa","persona":"procedural","expected_category":"legal_aid","expected_act_hint":"Legal Services Authorities Act"}
+{"query":"limitation for recovery suit on friendly loan given 5 years ago","persona":"procedural","expected_category":"court_procedure","expected_act_hint":"Limitation Act"}
+{"query":"which court to file appeal after district consumer commission order","persona":"procedural","expected_category":"consumer","expected_act_hint":"Consumer Protection Act"}
+{"query":"how to respond to gst show cause notice alleging wrong input tax credit","persona":"procedural","expected_category":"tax_gst_compliance","expected_act_hint":"CGST Act"}
+{"query":"can lok adalat award be challenged later if party forced me to settle","persona":"procedural","expected_category":"court_procedure","expected_act_hint":"Legal Services Authorities Act"}
+{"query":"patwari asking money to correct land record name after father death","persona":"rural_dlsa","expected_category":"land_revenue_records","expected_act_hint":"RTI Act"}
+{"query":"ration card cancelled due aadhaar mismatch children not getting grains","persona":"rural_dlsa","expected_category":"social_welfare_identity","expected_act_hint":"Aadhaar Act"}
+{"query":"school refusing admission under ews quota saying seats full in private school","persona":"rural_dlsa","expected_category":"education_rights","expected_act_hint":"RTE Act"}
+{"query":"husband drinks beats me and in laws demand bike what law protects me","persona":"rural_dlsa","expected_category":"family_domestic","expected_act_hint":"PWDVA BNS"}
+{"query":"neighbour blocked village pathway to my field can i file civil case","persona":"rural_dlsa","expected_category":"property_tenancy","expected_act_hint":"Transfer of Property Act"}
+{"query":"caste people stopped us from drawing water from common well","persona":"rural_dlsa","expected_category":"tribal_caste_atrocity","expected_act_hint":"SC/ST POA Act"}
+{"query":"panchayat gave common land to sarpanch brother without gram sabha","persona":"rural_dlsa","expected_category":"land_revenue_records","expected_act_hint":"RTI Act"}
+{"query":"hospital refused treatment because no aadhaar card emergency case","persona":"rural_dlsa","expected_category":"social_welfare_identity","expected_act_hint":"Aadhaar Act Article 21"}
+{"query":"widow pension pending two years officer says file lost what remedy","persona":"rural_dlsa","expected_category":"social_welfare_identity","expected_act_hint":"RTI Act"}
+{"query":"buyer company not paying msme invoice 18 lakh for 90 days","persona":"small_business","expected_category":"business_contract_partnership","expected_act_hint":"IBC"}
+{"query":"client cheque bounced but drawer is private limited company whom to make accused","persona":"small_business","expected_category":"cheque_bounce","expected_act_hint":"NI Act"}
+{"query":"former employee using customer list after leaving and joined competitor","persona":"small_business","expected_category":"business_contract_partnership","expected_act_hint":"Indian Contract Act"}
+{"query":"gst officer blocked my input tax credit in portal without hearing","persona":"small_business","expected_category":"tax_gst_compliance","expected_act_hint":"CGST Act"}
+{"query":"bank sent sarfaesi 13(2) notice for shop loan default what can i do","persona":"small_business","expected_category":"banking_credit_dispute","expected_act_hint":"SARFAESI"}
+{"query":"supplier delivered wrong grade steel can i claim damages under contract","persona":"small_business","expected_category":"business_contract_partnership","expected_act_hint":"Indian Contract Act"}
+{"query":"tenant in my commercial shop not vacating after lease expired","persona":"small_business","expected_category":"property_tenancy","expected_act_hint":"Transfer of Property Act"}
+{"query":"nclt operational creditor demand notice format and time before section 9","persona":"small_business","expected_category":"ibc_nclt","expected_act_hint":"IBC"}
+{"query":"someone registered my restaurant brand name after i used it 8 years","persona":"small_business","expected_category":"trademark_ip","expected_act_hint":"Trade Marks Act"}
+{"query":"software audit notice says unlicensed copies installed by employee what risk","persona":"small_business","expected_category":"trademark_ip","expected_act_hint":"Copyright Act"}
+{"query":"called by caste name in market and beaten when we complained about land","persona":"tribal_marginalized","expected_category":"tribal_caste_atrocity","expected_act_hint":"SC/ST POA Act BNS"}
+{"query":"forest officer stopped us collecting tendu leaves in community forest","persona":"tribal_marginalized","expected_category":"tribal_caste_atrocity","expected_act_hint":"Forest Rights Act SC/ST POA Act"}
+{"query":"mining company started blasting without gram sabha consent in scheduled area","persona":"tribal_marginalized","expected_category":"tribal_caste_atrocity","expected_act_hint":"SC/ST POA Act"}
+{"query":"police refused atrocity fir saying caste abuse happened in private place","persona":"tribal_marginalized","expected_category":"tribal_caste_atrocity","expected_act_hint":"SC/ST POA Act BNSS"}
+{"query":"tribal woman forest right title only in husband name can she get joint title","persona":"tribal_marginalized","expected_category":"tribal_caste_atrocity","expected_act_hint":"Forest Rights Act"}
+{"query":"village labelled my mother witch and cut her hair what criminal sections","persona":"tribal_marginalized","expected_category":"criminal_general","expected_act_hint":"BNS SC/ST POA Act"}
+{"query":"hostel denied scheduled tribe scholarship saying certificate old format","persona":"tribal_marginalized","expected_category":"education_rights","expected_act_hint":"RTI Act"}
+{"query":"upper caste landlord evicted dalit tenant after inter caste marriage","persona":"tribal_marginalized","expected_category":"tribal_caste_atrocity","expected_act_hint":"SC/ST POA Act Transfer of Property Act"}
+{"query":"caste panchayat fined us for marrying outside tribe and threatened social boycott","persona":"tribal_marginalized","expected_category":"tribal_caste_atrocity","expected_act_hint":"BNS SC/ST POA Act"}
+{"query":"contractor paid adivasi workers less than others for same road work","persona":"tribal_marginalized","expected_category":"employment_wages","expected_act_hint":"Payment of Wages SC/ST POA Act"}
+{"query":"manager put me on pip after i complained to icc about sexual comments","persona":"urban_pro","expected_category":"workplace_sexual_harassment","expected_act_hint":"POSH Act"}
+{"query":"company fired me on email without notice and salary for last month unpaid","persona":"urban_pro","expected_category":"employment_wages","expected_act_hint":"Payment of Wages"}
+{"query":"health insurance rejected surgery claim saying hypertension pre existing","persona":"urban_pro","expected_category":"consumer","expected_act_hint":"Consumer Protection Act"}
+{"query":"builder asking extra maintenance before giving possession rera registered project","persona":"urban_pro","expected_category":"consumer","expected_act_hint":"RERA Consumer Protection Act"}
+{"query":"my employer deducted tds but form 26as does not show it","persona":"urban_pro","expected_category":"tax_gst_compliance","expected_act_hint":"Income Tax Act"}
+{"query":"flat landlord refuses deposit return saying normal wear and tear paint cost","persona":"urban_pro","expected_category":"property_tenancy","expected_act_hint":"Transfer of Property Act"}
+{"query":"bank recovery agents calling my office and relatives for credit card dues","persona":"urban_pro","expected_category":"banking_credit_dispute","expected_act_hint":"BNS Consumer Protection Act"}
+{"query":"non compete says i cannot join competitor for 2 years after resignation","persona":"urban_pro","expected_category":"employment_wages","expected_act_hint":"Indian Contract Act"}
+{"query":"doctor gave wrong injection and patient in icu medical negligence compensation","persona":"urban_pro","expected_category":"consumer","expected_act_hint":"Consumer Protection Act"}
+{"query":"passport renewal stuck because old criminal case was closed but police verification adverse","persona":"urban_pro","expected_category":"criminal_general","expected_act_hint":"BNSS"}
+{"query":"husband and in laws force me to bring 5 lakh after marriage and threaten divorce","persona":"women_vulnerable","expected_category":"family_domestic","expected_act_hint":"PWDVA BNS"}
+{"query":"live in partner promised marriage then took money and left can i file case","persona":"women_vulnerable","expected_category":"family_domestic","expected_act_hint":"PWDVA BNS"}
+{"query":"ex boyfriend has private photos and says he will send to my parents","persona":"women_vulnerable","expected_category":"cyber_fraud_or_harassment","expected_act_hint":"Information Technology Act BNS"}
+{"query":"workplace icc has only men members is posh committee valid","persona":"women_vulnerable","expected_category":"workplace_sexual_harassment","expected_act_hint":"POSH Act"}
+{"query":"doctor refusing abortion after rape saying 23 weeks too late","persona":"women_vulnerable","expected_category":"reproductive_rights_mtp","expected_act_hint":"MTP Act"}
+{"query":"minor daughter touched by tuition teacher how to file pocso complaint","persona":"women_vulnerable","expected_category":"sexual_offence_survivor","expected_act_hint":"POCSO BNS"}
+{"query":"husband took my streedhan jewellery and mother in law hiding it","persona":"women_vulnerable","expected_category":"family_domestic","expected_act_hint":"PWDVA BNS"}
+{"query":"police asking rape survivor to compromise with accused family","persona":"women_vulnerable","expected_category":"sexual_offence_survivor","expected_act_hint":"BNS BNSS"}
+{"query":"married at 16 now 19 and husband violent can i annul child marriage","persona":"women_vulnerable","expected_category":"family_domestic","expected_act_hint":"BNS PWDVA"}
+{"query":"husband installed tracking app on my phone without permission","persona":"women_vulnerable","expected_category":"cyber_fraud_or_harassment","expected_act_hint":"Information Technology Act BNS"}
+{"query":"someone made fake instagram account using my photos and asking money","persona":"youth_digital","expected_category":"cyber_fraud_or_harassment","expected_act_hint":"Information Technology Act BNS"}
+{"query":"upi fraud 98000 after otp shared cyber helpline says complaint closed","persona":"youth_digital","expected_category":"cyber_fraud_or_harassment","expected_act_hint":"Information Technology Act"}
+{"query":"deepfake nude video of school girls circulating on telegram group","persona":"youth_digital","expected_category":"cyber_fraud_or_harassment","expected_act_hint":"POCSO Information Technology Act"}
+{"query":"company leaked my phone number and medical data to marketing vendor","persona":"youth_digital","expected_category":"digital_platform_account","expected_act_hint":"Information Technology Act"}
+{"query":"freelance client in dubai not paying invoice can indian court help","persona":"youth_digital","expected_category":"business_contract_partnership","expected_act_hint":"Indian Contract Act"}
+{"query":"instagram page with 300k followers disabled no appeal response","persona":"youth_digital","expected_category":"digital_platform_account","expected_act_hint":"Information Technology Act Consumer Protection Act"}
+{"query":"crypto telegram group promised double money now admin disappeared","persona":"youth_digital","expected_category":"cyber_fraud_or_harassment","expected_act_hint":"Information Technology Act BNS"}
+{"query":"police sent section 91 notice asking my phone for investigation do i comply","persona":"youth_digital","expected_category":"criminal_general","expected_act_hint":"BNSS"}
+{"query":"youtube channel copied my song beat and lyrics what copyright remedy","persona":"youth_digital","expected_category":"trademark_ip","expected_act_hint":"Copyright Act"}
+{"query":"digital arrest scam caller said parcel has drugs and made me transfer money","persona":"youth_digital","expected_category":"cyber_fraud_or_harassment","expected_act_hint":"Information Technology Act BNS"}
+{"query":"what is the weather in bangalore tomorrow","persona":"off_topic","expected_category":"off_topic","expected_act_hint":""}
+{"query":"write python code for quicksort in javascript style","persona":"off_topic","expected_category":"off_topic","expected_act_hint":""}
+{"query":"best biryani recipe for weekend party","persona":"off_topic","expected_category":"off_topic","expected_act_hint":""}
+{"query":"who won yesterday cricket match india pakistan","persona":"off_topic","expected_category":"off_topic","expected_act_hint":""}
+{"query":"recommend a laptop under 60000 for gaming","persona":"off_topic","expected_category":"off_topic","expected_act_hint":""}
