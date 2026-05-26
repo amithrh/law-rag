@@ -19,7 +19,10 @@ import pytest
 from apps.api.config import Settings
 from apps.api.retrieval import (
     RetrievedChunk,
+    _apply_authority_rerank_boosts,
     _preserve_required_source_packs,
+    _source_cluster_scores,
+    _source_quality_score,
     rrf_fuse,
     sparse_retrieve,
 )
@@ -111,22 +114,116 @@ def test_preserve_required_source_pack_keeps_exact_act_in_top_k():
     assert all(c.chunk_id != 7 for c in out)
 
 
+def test_preserve_required_source_pack_can_promote_exact_act_to_visible_window():
+    candidates = [
+        _retrieved_chunk(i, rerank=0.99 - i * 0.05)
+        for i in range(8)
+    ]
+    required = _retrieved_chunk(
+        99,
+        rerank=0.48,
+        metadata={"_required_source_pack": "bnss_2023"},
+    )
+
+    out = _preserve_required_source_packs(
+        [*candidates, required],
+        ["bnss_2023"],
+        limit=8,
+        preferred_top_n=4,
+    )
+
+    assert [c.chunk_id for c in out[:3]] == [0, 1, 2]
+    assert out[3].chunk_id == 99
+
+
+def test_source_quality_prefers_bare_act_for_statute_first_routes():
+    act = _retrieved_chunk(
+        1,
+        rerank=0.5,
+        source_type="bare_act",
+        title="Right to Information Act 2005",
+    )
+    sc = _retrieved_chunk(
+        2,
+        rerank=0.5,
+        source_type="sc_judgment",
+        title="RTI judgment",
+    )
+    hc = _retrieved_chunk(
+        3,
+        rerank=0.5,
+        source_type="hc_judgment",
+        title="RTI writ",
+    )
+
+    assert _source_quality_score(act, route_category="rti") > _source_quality_score(
+        sc,
+        route_category="rti",
+    )
+    assert _source_quality_score(sc, route_category="rti") > _source_quality_score(
+        hc,
+        route_category="rti",
+    )
+
+
+def test_authority_boost_nudges_bare_act_above_equal_judgment():
+    act = _retrieved_chunk(
+        1,
+        rerank=0.5,
+        source_type="bare_act",
+        title="Bharatiya Nagarik Suraksha Sanhita 2023",
+    )
+    judgment = _retrieved_chunk(
+        2,
+        rerank=0.5,
+        source_type="hc_judgment",
+        title="Bail order",
+    )
+
+    _apply_authority_rerank_boosts(
+        [act, judgment],
+        route_category="criminal_defence_bail",
+        source_quality_boost=0.06,
+        source_cluster_boost=0.0,
+    )
+
+    assert act.rerank_score is not None
+    assert judgment.rerank_score is not None
+    assert act.rerank_score > judgment.rerank_score
+    assert act.metadata["_source_quality_score"] > judgment.metadata["_source_quality_score"]
+
+
+def test_source_cluster_scores_reward_repeated_aligned_document():
+    clustered = [
+        _retrieved_chunk(1, document_id=10, rerank=0.7, source_type="bare_act"),
+        _retrieved_chunk(2, document_id=10, rerank=0.6, source_type="bare_act"),
+        _retrieved_chunk(3, document_id=20, rerank=0.7, source_type="bare_act"),
+    ]
+
+    scores = _source_cluster_scores(clustered, route_category="rti")
+
+    assert scores[10] > scores[20]
+
+
 def _retrieved_chunk(
     idx: int,
     *,
     rerank: float,
+    document_id: int | None = None,
+    source_type: str = "bare_act",
+    title: str | None = None,
     metadata: dict | None = None,
 ) -> RetrievedChunk:
     return RetrievedChunk(
         chunk_id=idx,
-        document_id=idx,
+        document_id=document_id if document_id is not None else idx,
         anchor=f"doc/sec-{idx}",
         text=f"chunk {idx}",
-        source_type="bare_act",
+        source_type=source_type,
         subject_area=None,
         as_at=None,
         paragraph_no=None,
-        title=f"doc {idx}",
+        title=title or f"doc {idx}",
         citation=None,
         court=None,
         statute_short=None,

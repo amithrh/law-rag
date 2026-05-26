@@ -221,13 +221,16 @@ def _preserve_required_source_packs(
     pack_ids: list[str],
     *,
     limit: int,
+    preferred_top_n: int | None = None,
 ) -> list[RetrievedChunk]:
     """Keep at least one exact required-source chunk per fired pack.
 
     Rerankers often prefer fact-heavy judgments over the bare Act section,
     even when the router knows that Act is mandatory authority. This helper
     preserves the highest-scoring exact-source chunk for each fired pack
-    inside the bounded top-K without changing the ordering otherwise.
+    inside the bounded top-K. When configured, it also moves those exact
+    sources into the first few contexts so the answer sees the operative law
+    before factually similar judgments.
     """
     if limit <= 0 or not candidates or not pack_ids:
         return candidates[:limit]
@@ -274,7 +277,179 @@ def _preserve_required_source_packs(
         key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,
         reverse=True,
     )
+    if preferred_top_n is not None and preferred_top_n > 0:
+        _promote_required_source_packs(
+            selected,
+            pack_ids,
+            preferred_top_n=min(preferred_top_n, limit),
+        )
     return selected[:limit]
+
+
+def _promote_required_source_packs(
+    selected: list[RetrievedChunk],
+    pack_ids: list[str],
+    *,
+    preferred_top_n: int,
+) -> None:
+    """Move required source packs into the visible context window.
+
+    This deliberately changes ordering, not score. The score remains useful
+    telemetry from the reranker, while answer generation sees the operative
+    Act before a long run of factually similar case paragraphs.
+    """
+    if preferred_top_n <= 0:
+        return
+
+    present_pack_ids = [
+        pack_id
+        for pack_id in pack_ids
+        if any(c.metadata.get("_required_source_pack") == pack_id for c in selected)
+    ]
+    if not present_pack_ids:
+        return
+
+    window_end = min(preferred_top_n, len(selected))
+    insert_at = max(0, window_end - len(present_pack_ids))
+    for pack_id in present_pack_ids:
+        idx = next(
+            (
+                i
+                for i, c in enumerate(selected)
+                if c.metadata.get("_required_source_pack") == pack_id
+            ),
+            None,
+        )
+        if idx is None:
+            continue
+        if idx < window_end:
+            continue
+        chunk = selected.pop(idx)
+        selected.insert(min(insert_at, len(selected)), chunk)
+        insert_at += 1
+
+
+_STATUTE_FIRST_CATEGORIES = {
+    "cheque_bounce",
+    "consumer",
+    "criminal_defence_bail",
+    "criminal_general",
+    "cyber_fraud_or_harassment",
+    "employment_wages",
+    "family_domestic",
+    "ibc_nclt",
+    "labour_exploitation_discrimination",
+    "police_fir",
+    "reproductive_rights_mtp",
+    "rti",
+    "senior_citizen",
+    "sexual_offence_survivor",
+    "tribal_caste_atrocity",
+    "workplace_injury_compensation",
+    "workplace_sexual_harassment",
+}
+
+_CASE_WEIGHTED_CATEGORIES = {
+    "custody_compensation",
+    "court_procedure",
+    "land_revenue_records",
+    "property_tenancy",
+    "succession_inheritance",
+}
+
+
+def _apply_authority_rerank_boosts(
+    candidates: list[RetrievedChunk],
+    *,
+    route_category: str,
+    source_quality_boost: float,
+    source_cluster_boost: float,
+) -> None:
+    """Apply TurboVec-style source quality and source-level corroboration.
+
+    The cross-encoder scores chunk/query fit. This layer answers a different
+    product question: "given similarly plausible chunks, which legal source
+    should be trusted more?" It is intentionally bounded by headroom toward
+    1.0 so it nudges ranking without manufacturing high confidence.
+    """
+    if not candidates:
+        return
+
+    cluster_scores = _source_cluster_scores(candidates, route_category=route_category)
+    for chunk in candidates:
+        if chunk.rerank_score is None:
+            continue
+        score = chunk.rerank_score
+        quality = _source_quality_score(chunk, route_category=route_category)
+        cluster = cluster_scores.get(chunk.document_id, 0.0)
+        total_boost = max(0.0, source_quality_boost) * quality
+        total_boost += max(0.0, source_cluster_boost) * cluster
+        if total_boost <= 0.0:
+            continue
+        chunk.metadata["_source_quality_score"] = round(quality, 4)
+        chunk.metadata["_source_cluster_score"] = round(cluster, 4)
+        chunk.rerank_score = min(1.0, score + total_boost * (1.0 - score))
+
+
+def _source_quality_score(chunk: RetrievedChunk, *, route_category: str) -> float:
+    if chunk.metadata.get("_required_source_pack"):
+        return 1.0
+
+    source_type = (chunk.source_type or "").lower()
+    base = {
+        "bare_act": 0.92,
+        "sc_judgment": 0.72,
+        "hc_judgment": 0.58,
+        "tribunal_order": 0.50,
+    }.get(source_type, 0.42)
+
+    if route_category in _STATUTE_FIRST_CATEGORIES:
+        if source_type == "bare_act":
+            base += 0.08
+        elif source_type.endswith("judgment"):
+            base -= 0.04
+    elif route_category in _CASE_WEIGHTED_CATEGORIES:
+        if source_type == "sc_judgment":
+            base += 0.06
+        elif source_type == "hc_judgment":
+            base += 0.03
+
+    title_blob = f"{chunk.title} {chunk.statute_short or ''}".lower()
+    if source_type == "bare_act" and any(marker in title_blob for marker in (" act", " code", "sanhita", "adhiniyam")):
+        base += 0.03
+
+    return max(0.0, min(1.0, base))
+
+
+def _source_cluster_scores(
+    candidates: list[RetrievedChunk],
+    *,
+    route_category: str,
+) -> dict[int, float]:
+    by_document: dict[int, list[RetrievedChunk]] = {}
+    for chunk in candidates:
+        if chunk.rerank_score is None:
+            continue
+        by_document.setdefault(chunk.document_id, []).append(chunk)
+
+    out: dict[int, float] = {}
+    for document_id, chunks in by_document.items():
+        ranked_scores = sorted(
+            (max(0.0, c.rerank_score or 0.0) for c in chunks),
+            reverse=True,
+        )
+        if not ranked_scores:
+            continue
+        top = ranked_scores[0]
+        second = ranked_scores[1] if len(ranked_scores) > 1 else 0.0
+        third = ranked_scores[2] if len(ranked_scores) > 2 else 0.0
+        corroboration = min(1.0, max(0, len(chunks) - 1) / 3.0)
+        quality = max(_source_quality_score(c, route_category=route_category) for c in chunks)
+        out[document_id] = min(
+            1.0,
+            0.58 * top + 0.17 * second + 0.08 * third + 0.09 * corroboration + 0.08 * quality,
+        )
+    return out
 
 
 async def _fetch_source_pack_candidates(
@@ -795,6 +970,12 @@ async def multi_query_hybrid_retrieve(
                 boost = getattr(s, "required_source_pack_boost", 0.10)
                 score = min(1.0, score + boost * (1.0 - score))
             c.rerank_score = score
+        _apply_authority_rerank_boosts(
+            candidate_list,
+            route_category=route.category,
+            source_quality_boost=getattr(s, "source_quality_boost", 0.06),
+            source_cluster_boost=getattr(s, "source_cluster_boost", 0.04),
+        )
         candidate_list.sort(
             key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,
             reverse=True,
@@ -803,6 +984,7 @@ async def multi_query_hybrid_retrieve(
             candidate_list,
             [pack.id for pack in packs],
             limit=top_k or s.rerank_top_k,
+            preferred_top_n=getattr(s, "required_source_pack_preferred_top_n", 4),
         )
 
     logger.info(

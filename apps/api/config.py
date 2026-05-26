@@ -349,6 +349,14 @@ class Settings(BaseSettings):
     # out highly relevant facts.
     required_source_pack_min_score: float = 0.42
     required_source_pack_boost: float = 0.10
+    required_source_pack_preferred_top_n: int = 4
+    # TurboVec-style authority scoring. After rerank, apply a small bounded
+    # boost for source quality (bare Acts > SC > HC) and repeated alignment
+    # from the same document. This should help the correct operative source
+    # survive without letting low-quality matches cross the coverage gate by
+    # themselves.
+    source_quality_boost: float = 0.06
+    source_cluster_boost: float = 0.04
 
     # Provenance gate (PLAN §10.1 + provenance system).
     # In production, retrieval must only return chunks from documents whose

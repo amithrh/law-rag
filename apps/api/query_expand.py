@@ -537,8 +537,11 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
 def _route_variants(query: str, route: MatterRoute, max_variants: int) -> list[str]:
     if route.category == "off_topic":
         return []
-    variants = _ROUTE_EXPANSIONS.get(route.category, [])
     q = query.lower()
+    if route.category == "criminal_defence_bail":
+        return _criminal_defence_bail_variants(q, route)[:max_variants]
+
+    variants = _ROUTE_EXPANSIONS.get(route.category, [])
     if route.category == "employment_wages" and re.search(r"\b(epf|pf|provident fund)\b", q):
         variants = [
             "Employees Provident Funds Act 1952 employer contribution default",
@@ -560,6 +563,50 @@ def _route_variants(query: str, route: MatterRoute, max_variants: int) -> list[s
             for v in variants
         ]
     return variants[:max_variants]
+
+
+def _criminal_defence_bail_variants(query: str, route: MatterRoute) -> list[str]:
+    legacy = route.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+    current = route.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident"
+    date_unclear = route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+
+    if _contains_any(query, ("default bail", "no chargesheet", "charge sheet", "60 days", "90 days")):
+        if legacy:
+            return [
+                "CrPC 1973 section 167 default bail no chargesheet 60 days 90 days",
+                "BNSS 2023 section 187 default bail current criminal procedure",
+            ]
+        if current:
+            return [
+                "BNSS 2023 section 187 default bail no chargesheet 60 days 90 days",
+                "CrPC 1973 section 167 default bail pre-1-Jul-2024 comparison",
+            ]
+        if date_unclear:
+            return [
+                "BNSS 2023 section 187 CrPC 1973 section 167 default bail",
+                "default bail 60 days 90 days no chargesheet custody remand",
+            ]
+
+    if _contains_any(query, ("anticipatory", "before arrest", "438", "482")):
+        if legacy:
+            return [
+                "CrPC 1973 section 438 anticipatory bail accused before arrest",
+                "Arnesh Kumar arrest safeguards 498A dowry case",
+            ]
+        return [
+            "BNSS 2023 section 482 CrPC 1973 section 438 anticipatory bail",
+            "Arnesh Kumar arrest safeguards 498A dowry case",
+        ]
+
+    if legacy:
+        return [
+            "CrPC 1973 section 437 section 439 regular bail accused custody",
+            "CrPC 1973 section 167 remand custody chargesheet timeline",
+        ]
+    return [
+        "BNSS 2023 section 480 section 483 regular bail accused custody",
+        "BNSS 2023 section 187 remand custody chargesheet timeline",
+    ]
 
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
