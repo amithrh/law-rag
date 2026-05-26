@@ -13,7 +13,8 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, Query, Response
+from fastapi.middleware.cors import CORSMiddleware as _CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
@@ -22,11 +23,17 @@ from sse_starlette.sse import EventSourceResponse
 from apps.api import config as cfg
 from apps.api import metrics
 from apps.api.db import close_pool, get_pool
-from apps.api.llm import build_messages, load_answer_prompt, stream_chat
+from apps.api.llm import (
+    LLMModelUnavailable,
+    build_messages,
+    check_model_available,
+    load_answer_prompt,
+    stream_chat,
+)
+from apps.api.matter_router import MatterRoute, route_matter
 from apps.api.relevance import compute_relevance
 from apps.api.retrieval import RetrievedChunk, hybrid_retrieve, multi_query_hybrid_retrieve
 from apps.api.verifier import (
-    AnswerVerification,
     SentenceStatus,
     SentenceVerification,
     segment_sentences,
@@ -48,8 +55,6 @@ app = FastAPI(title="law-rag", lifespan=lifespan)
 # CORS — added 2026-05-21 after frontend SSE proxy timed out at Next.js's
 # 30s default. Bypassing the proxy means the browser calls :8000 directly,
 # which avoids the timeout entirely. Dev-only allowlist; prod should restrict.
-from fastapi.middleware.cors import CORSMiddleware as _CORSMiddleware
-
 app.add_middleware(
     _CORSMiddleware,
     allow_origins=[
@@ -167,6 +172,66 @@ def _make_passages(retrieved: list[RetrievedChunk], n: int) -> tuple[list[dict],
     return passages, idx_map
 
 
+def _record_stage(timings: dict[str, float], stage: str, started: float) -> float:
+    """Record a named /answer stage in seconds and Prometheus."""
+    elapsed = time.perf_counter() - started
+    timings[stage] = elapsed
+    metrics.answer_stage_latency.labels(stage=stage).observe(elapsed)
+    return elapsed
+
+
+def _add_stage_elapsed(timings: dict[str, float], stage: str, elapsed: float) -> None:
+    timings[stage] = timings.get(stage, 0.0) + elapsed
+    metrics.answer_stage_latency.labels(stage=stage).observe(elapsed)
+
+
+def _timing_event(
+    timings: dict[str, float],
+    request_started: float,
+    *,
+    llm_model: str,
+    llm_model_available: bool,
+    retrieved_count: int = 0,
+    passages_used: int = 0,
+    expansion_variant_count: int = 0,
+    state: dict | None = None,
+) -> dict:
+    payload: dict[str, object] = {
+        "total_ms": round((time.perf_counter() - request_started) * 1000, 1),
+        "llm_model": llm_model,
+        "llm_model_available": llm_model_available,
+        "retrieved_count": retrieved_count,
+        "passages_used": passages_used,
+        "expansion_variant_count": expansion_variant_count,
+    }
+    for stage, seconds in timings.items():
+        payload[f"{stage}_ms"] = round(seconds * 1000, 1)
+    if state is not None:
+        payload["sentence_count"] = state.get("emitted", 0)
+        payload["unsupported_count"] = state.get("unsupported", 0)
+    return {"event": "timing", "data": json.dumps(payload)}
+
+
+def _llm_unavailable_error(status: dict, settings: cfg.Settings) -> dict:
+    message = status.get("message") or (
+        f"Configured Ollama model '{settings.llm_model}' is not available. "
+        f"Run `ollama pull {settings.llm_model}` or change LLM_MODEL."
+    )
+    return {
+        "event": "error",
+        "data": json.dumps({
+            "message": message,
+            "reason": "llm_model_unavailable",
+            "model": status.get("model", settings.llm_model),
+            "available_models": status.get("available_models", []),
+        }),
+    }
+
+
+def _matter_route_event(route: MatterRoute) -> dict:
+    return {"event": "matter_route", "data": json.dumps(route.to_event())}
+
+
 @app.post("/answer")
 async def answer(req: AnswerRequest):
     """Stream-with-verification per PLAN §4.3 strict topology.
@@ -186,9 +251,60 @@ async def answer(req: AnswerRequest):
     simple and sequential.
     """
     settings = cfg.get_settings()
-    pool = await get_pool()
+    request_started = time.perf_counter()
+    timings: dict[str, float] = {}
+    llm_model_available = True
     src_filter_label = ",".join(sorted(req.sources)) if req.sources else "all"
     metrics.query_total.labels(source_filter=src_filter_label).inc()
+
+    t_route = time.perf_counter()
+    route = route_matter(req.q)
+    _record_stage(timings, "matter_route", t_route)
+
+    if route.category == "off_topic":
+        metrics.refused_total.inc()
+
+        async def off_topic():
+            yield _matter_route_event(route)
+            yield {"event": "refused", "data": json.dumps({
+                "message": "This looks outside the legal-help scope of this system. "
+                           "Ask about an Indian legal problem, notice, complaint, "
+                           "case, benefit, document, deadline, or forum and I can "
+                           "try to route it.",
+                "reason": "off_topic",
+                "disclaimer": DISCLAIMER_FOOTER,
+            })}
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=True,
+            )
+
+        return EventSourceResponse(off_topic())
+
+    # Fail fast on model/runtime misconfiguration. Before this preflight,
+    # a missing Ollama model spent retrieval + rerank time, emitted coverage
+    # and passages, then failed inside the stream. That is slow and confusing.
+    t_preflight = time.perf_counter()
+    llm_status = await check_model_available(settings.llm_model)
+    _record_stage(timings, "llm_preflight", t_preflight)
+    if not llm_status.get("ok"):
+        llm_model_available = False
+
+        async def llm_missing():
+            yield _matter_route_event(route)
+            yield _llm_unavailable_error(llm_status, settings)
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=False,
+            )
+
+        return EventSourceResponse(llm_missing())
+
+    pool = await get_pool()
 
     # NLI policy: the client hint is honoured ONLY when fast-mode is
     # enabled server-side. In production (answer_fast_enabled=False)
@@ -209,16 +325,26 @@ async def answer(req: AnswerRequest):
     retrieved, expansion_variants = await multi_query_hybrid_retrieve(
         pool, req.q, source_types=src_types, subject_areas=subj,
         top_k=max(req.top_k, settings.rerank_top_k),
+        timings=timings,
     )
-    metrics.retrieval_latency.observe(time.perf_counter() - t_retr)
+    retrieval_elapsed = _record_stage(timings, "retrieval", t_retr)
+    metrics.retrieval_latency.observe(retrieval_elapsed)
     if not retrieved:
         metrics.refused_total.inc()
         async def empty():
+            yield _matter_route_event(route)
             yield {"event": "refused", "data": json.dumps({
                 "message": "The sources I have don't cover this clearly. I won't guess. "
                            "You should talk to a lawyer for your specific situation.",
                 "disclaimer": DISCLAIMER_FOOTER,
             })}
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=llm_model_available,
+                expansion_variant_count=len(expansion_variants),
+            )
         return EventSourceResponse(empty())
 
     # Coverage gate: when the reranker can't find anything close to the
@@ -245,6 +371,7 @@ async def answer(req: AnswerRequest):
             req.q[:120],
         )
         async def degraded():
+            yield _matter_route_event(route)
             yield {"event": "refused", "data": json.dumps({
                 "message": "The retrieval service is in a degraded state right "
                            "now (the reranker did not return scores). I won't "
@@ -254,12 +381,21 @@ async def answer(req: AnswerRequest):
                 "reason": "rerank_unavailable",
                 "disclaimer": DISCLAIMER_FOOTER,
             })}
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=llm_model_available,
+                retrieved_count=len(retrieved),
+                expansion_variant_count=len(expansion_variants),
+            )
         return EventSourceResponse(degraded())
     if top_rerank is not None and top_rerank < settings.refuse_below_rerank:
         metrics.refused_total.inc()
         logger.info("coverage-gate refusal: top_rerank=%.3f < %.3f for query %r",
                     top_rerank, settings.refuse_below_rerank, req.q[:120])
         async def low_coverage():
+            yield _matter_route_event(route)
             yield {"event": "refused", "data": json.dumps({
                 "message": "I couldn't find sources in this index that clearly "
                            "cover your question. I won't make something up from "
@@ -271,6 +407,14 @@ async def answer(req: AnswerRequest):
                 "reason": "low_coverage",
                 "disclaimer": DISCLAIMER_FOOTER,
             })}
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=llm_model_available,
+                retrieved_count=len(retrieved),
+                expansion_variant_count=len(expansion_variants),
+            )
         return EventSourceResponse(low_coverage())
 
     # Per round-3 review (security #5): when reranker is disabled in
@@ -287,6 +431,7 @@ async def answer(req: AnswerRequest):
                 top_combined, settings.refuse_below_combined, req.q[:120],
             )
             async def low_dense():
+                yield _matter_route_event(route)
                 yield {"event": "refused", "data": json.dumps({
                     "message": "I couldn't find sources that clearly cover your "
                                "question. Try asking more concretely, or talk to "
@@ -295,13 +440,23 @@ async def answer(req: AnswerRequest):
                     "reason": "low_coverage_dense_fallback",
                     "disclaimer": DISCLAIMER_FOOTER,
                 })}
+                yield _timing_event(
+                    timings,
+                    request_started,
+                    llm_model=settings.llm_model,
+                    llm_model_available=llm_model_available,
+                    retrieved_count=len(retrieved),
+                    expansion_variant_count=len(expansion_variants),
+                )
             return EventSourceResponse(low_dense())
 
+    t_prompt = time.perf_counter()
     passages, idx_map = _make_passages(retrieved, req.top_k)
 
     # Build prompt
     system = load_answer_prompt()
     messages = build_messages(system=system, user_question=req.q, passages=passages)
+    _record_stage(timings, "prompt_build", t_prompt)
 
     # Coverage chip — sent up front so the UI can render bounds immediately
     seen_sources = set()
@@ -312,6 +467,7 @@ async def answer(req: AnswerRequest):
             seen_subjects.add(h.subject_area)
 
     async def event_stream() -> AsyncIterator[dict]:
+        yield _matter_route_event(route)
         # Send the coverage chip first
         yield {"event": "coverage", "data": json.dumps({
             "sources_searched": sorted(seen_sources),
@@ -378,6 +534,17 @@ async def answer(req: AnswerRequest):
             the suppress path is invisible: the model wrote "X. Y (uncited).
             Z." and the user sees "X. Z." as if Y never existed."""
             return {"event": "suppressed", "data": json.dumps({})}
+
+        def _verify_with_timing(sent: str) -> SentenceVerification:
+            t_verify = time.perf_counter()
+            try:
+                return verify_sentence(sent, idx_map, skip_nli=skip_nli)
+            finally:
+                _add_stage_elapsed(
+                    timings,
+                    "verification",
+                    time.perf_counter() - t_verify,
+                )
 
         def _emit_and_check(v: SentenceVerification) -> tuple[dict | None, bool]:
             """Return (sentence-event-or-None, should_stop_now).
@@ -479,6 +646,14 @@ async def answer(req: AnswerRequest):
         buf = ""
         llm_t0 = time.perf_counter()
         first_token_seen = False
+        llm_stream_recorded = False
+
+        def _record_llm_stream_once() -> None:
+            nonlocal llm_stream_recorded
+            if not llm_stream_recorded:
+                _record_stage(timings, "llm_stream", llm_t0)
+                llm_stream_recorded = True
+
         try:
             async for delta in stream_chat(messages):
                 if not first_token_seen and delta.strip():
@@ -508,13 +683,24 @@ async def answer(req: AnswerRequest):
                 buf = buf[tail_start:] if tail_start >= 0 else " ".join(sentences[-2:])
 
                 for sent in ready:
-                    v = verify_sentence(sent, idx_map, skip_nli=skip_nli)
+                    v = _verify_with_timing(sent)
                     sentence_ev, should_stop = _emit_and_check(v)
                     if sentence_ev is not None:
                         yield sentence_ev
                     if should_stop:
                         metrics.stopped_total.inc()
+                        _record_llm_stream_once()
                         yield _stop_event()
+                        yield _timing_event(
+                            timings,
+                            request_started,
+                            llm_model=settings.llm_model,
+                            llm_model_available=llm_model_available,
+                            retrieved_count=len(retrieved),
+                            passages_used=len(passages),
+                            expansion_variant_count=len(expansion_variants),
+                            state=state,
+                        )
                         yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
                         _record_final_metrics(state, llm_t0)
                         return
@@ -525,16 +711,29 @@ async def answer(req: AnswerRequest):
             # correctness defect.
             if buf.strip():
                 for sent in segment_sentences(buf):
-                    v = verify_sentence(sent, idx_map, skip_nli=skip_nli)
+                    v = _verify_with_timing(sent)
                     sentence_ev, should_stop = _emit_and_check(v)
                     if sentence_ev is not None:
                         yield sentence_ev
                     if should_stop:
                         metrics.stopped_total.inc()
+                        _record_llm_stream_once()
                         yield _stop_event()
+                        yield _timing_event(
+                            timings,
+                            request_started,
+                            llm_model=settings.llm_model,
+                            llm_model_available=llm_model_available,
+                            retrieved_count=len(retrieved),
+                            passages_used=len(passages),
+                            expansion_variant_count=len(expansion_variants),
+                            state=state,
+                        )
                         yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
                         _record_final_metrics(state, llm_t0)
                         return
+
+            _record_llm_stream_once()
 
             # Server-authored authoritative Sources event. Per Codex review
             # (round 2) #4, the LLM is no longer allowed to author the
@@ -564,11 +763,13 @@ async def answer(req: AnswerRequest):
             # body paths because there's nothing meaningful to score.
             if settings.answer_relevance_enabled and state["answer_body_sentences"]:
                 body = " ".join(state["answer_body_sentences"]).strip()
+                t_relevance = time.perf_counter()
                 rel = compute_relevance(
                     req.q, body,
                     threshold=settings.answer_relevance_threshold,
                     band=settings.answer_relevance_band,
                 )
+                _record_stage(timings, "relevance", t_relevance)
                 if rel is not None:
                     yield {"event": "relevance", "data": json.dumps({
                         "score": round(rel.score, 4),
@@ -577,12 +778,52 @@ async def answer(req: AnswerRequest):
                         "band": round(rel.band, 4),
                     })}
 
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=llm_model_available,
+                retrieved_count=len(retrieved),
+                passages_used=len(passages),
+                expansion_variant_count=len(expansion_variants),
+                state=state,
+            )
             # Final disclaimer event — always
             yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
             _record_final_metrics(state, llm_t0)
+        except LLMModelUnavailable as e:
+            logger.exception("answer stream llm unavailable: %s", e)
+            _record_llm_stream_once()
+            yield _llm_unavailable_error({
+                "ok": False,
+                "model": settings.llm_model,
+                "available_models": [],
+                "message": str(e),
+            }, settings)
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=False,
+                retrieved_count=len(retrieved),
+                passages_used=len(passages),
+                expansion_variant_count=len(expansion_variants),
+                state=state,
+            )
         except Exception as e:
             logger.exception("answer stream error: %s", e)
             yield {"event": "error", "data": json.dumps({"message": str(e)})}
+            _record_llm_stream_once()
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=llm_model_available,
+                retrieved_count=len(retrieved),
+                passages_used=len(passages),
+                expansion_variant_count=len(expansion_variants),
+                state=state,
+            )
 
     return EventSourceResponse(event_stream())
 
@@ -655,16 +896,24 @@ def _record_final_metrics(state: dict, llm_t0: float) -> None:
 # ----- health ---------------------------------------------------------------
 
 @app.get("/healthz")
-async def healthz():
+async def healthz(
+    deep: bool = Query(False, description="also check local Ollama model availability"),
+):
     pool = await get_pool()
     async with pool.acquire() as conn:
         chunk_count = await conn.fetchval("SELECT COUNT(*) FROM chunks WHERE NOT quarantined")
         doc_count = await conn.fetchval("SELECT COUNT(*) FROM documents")
-    return {
+    body = {
         "status": "ok",
         "chunks": chunk_count,
         "documents": doc_count,
     }
+    if deep:
+        llm = await check_model_available()
+        body["llm"] = llm
+        if not llm.get("ok"):
+            body["status"] = "degraded"
+    return body
 
 
 @app.get("/metrics")

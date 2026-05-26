@@ -23,6 +23,29 @@ export interface PassageEvent {
   citation: string | null;
 }
 
+export interface ActionPack {
+  id: string;
+  title: string;
+  next_steps: string[];
+  documents: string[];
+  portals: string[];
+  escalation: string[];
+  cautions: string[];
+}
+
+export interface MatterRouteEvent {
+  category: string;
+  label: string;
+  confidence: number;
+  urgency: "low" | "medium" | "high" | "emergency";
+  required_sources: string[];
+  forums: string[];
+  missing_facts: string[];
+  red_flags: string[];
+  action_pack: ActionPack | null;
+  legal_regime: string | null;
+}
+
 export interface SentenceEvent {
   text: string;
   status: SentenceStatus;
@@ -84,10 +107,30 @@ export interface RelevanceEvent {
   band: number;
 }
 
+export interface TimingEvent {
+  total_ms: number;
+  llm_model: string;
+  llm_model_available: boolean;
+  retrieved_count: number;
+  passages_used: number;
+  expansion_variant_count: number;
+  llm_preflight_ms?: number;
+  retrieval_ms?: number;
+  prompt_build_ms?: number;
+  llm_stream_ms?: number;
+  verification_ms?: number;
+  relevance_ms?: number;
+  sentence_count?: number;
+  unsupported_count?: number;
+}
+
 export interface DisclaimerEvent {
   text: string;
 }
 
 export interface ErrorEvent {
   message: string;
+  reason?: string;
+  model?: string;
+  available_models?: string[];
 }

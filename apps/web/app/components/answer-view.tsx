@@ -6,12 +6,14 @@ import type {
   CoverageEvent,
   DisclaimerEvent,
   ErrorEvent as ApiErrorEvent,
+  MatterRouteEvent,
   PassageEvent,
   RefusedEvent,
   RelevanceEvent,
   SentenceEvent,
   SourcesEvent,
   StopEvent,
+  TimingEvent,
 } from "../lib/types";
 import { CoverageChip } from "./coverage-chip";
 import { IndexStatus } from "./index-status";
@@ -27,6 +29,7 @@ type TimelineEntry =
 
 interface AnswerState {
   pending: boolean;
+  matterRoute: MatterRouteEvent | null;
   coverage: CoverageEvent | null;
   passages: PassageEvent[];
   // Server-authored authoritative source list (round-3). The UI prefers
@@ -45,6 +48,7 @@ interface AnswerState {
   // non-empty answer body). When `verdict !== "ok"`, the UI renders a
   // notice — see the "off_topic" / "partial" Notice block below.
   relevance: RelevanceEvent | null;
+  timing: TimingEvent | null;
   disclaimer: string | null;
   error: string | null;
   startedAt: number | null;
@@ -53,6 +57,7 @@ interface AnswerState {
 
 const INITIAL: AnswerState = {
   pending: false,
+  matterRoute: null,
   coverage: null,
   passages: [],
   sources: null,
@@ -61,6 +66,7 @@ const INITIAL: AnswerState = {
   stop: null,
   refused: null,
   relevance: null,
+  timing: null,
   disclaimer: null,
   error: null,
   startedAt: null,
@@ -147,6 +153,7 @@ export function AnswerView() {
     state.startedAt && state.finishedAt
       ? Math.round(state.finishedAt - state.startedAt)
       : null;
+  const answerMs = state.timing?.total_ms ?? elapsed;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10">
@@ -215,6 +222,10 @@ export function AnswerView() {
           >
             {state.refused.message}
           </Notice>
+        )}
+
+        {state.matterRoute && state.matterRoute.category !== "off_topic" && (
+          <ActionPlan route={state.matterRoute} />
         )}
 
         {state.coverage && <CoverageChip coverage={state.coverage} />}
@@ -354,13 +365,130 @@ export function AnswerView() {
           </p>
         )}
 
-        {elapsed !== null && (
+        {answerMs !== null && (
           <p className="mt-2 text-right text-[11px] text-stone-400">
-            answered in {(elapsed / 1000).toFixed(1)}s
+            answered in {(answerMs / 1000).toFixed(1)}s
           </p>
+        )}
+        {state.timing && (
+          <details className="mt-1 text-right text-[11px] text-stone-400">
+            <summary className="cursor-pointer">stage timings</summary>
+            <div className="mt-1 space-x-2">
+              <span>preflight {fmtMs(state.timing.llm_preflight_ms)}</span>
+              <span>retrieval {fmtMs(state.timing.retrieval_ms)}</span>
+              <span>prompt {fmtMs(state.timing.prompt_build_ms)}</span>
+              <span>llm {fmtMs(state.timing.llm_stream_ms)}</span>
+              <span>verify {fmtMs(state.timing.verification_ms)}</span>
+              {state.timing.relevance_ms !== undefined && (
+                <span>relevance {fmtMs(state.timing.relevance_ms)}</span>
+              )}
+            </div>
+            <div className="mt-1">
+              {state.timing.llm_model} · {state.timing.retrieved_count} retrieved ·{" "}
+              {state.timing.sentence_count ?? 0} checked
+            </div>
+          </details>
         )}
       </section>
     </div>
+  );
+}
+
+function ActionPlan({ route }: { route: MatterRouteEvent }) {
+  const pack = route.action_pack;
+  const urgencyCls =
+    route.urgency === "emergency" || route.urgency === "high"
+      ? "bg-red-50 text-red-800 ring-red-200"
+      : route.urgency === "medium"
+        ? "bg-amber-50 text-amber-800 ring-amber-200"
+        : "bg-emerald-50 text-emerald-800 ring-emerald-200";
+
+  return (
+    <section className="mb-4 rounded-lg bg-white p-4 text-sm shadow-sm ring-1 ring-stone-200">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="font-medium text-stone-900">{route.label}</p>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] ring-1 ${urgencyCls}`}>
+          {route.urgency}
+        </span>
+        {route.legal_regime && (
+          <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] text-stone-600 ring-1 ring-stone-200">
+            {route.legal_regime.replaceAll("_", " ")}
+          </span>
+        )}
+      </div>
+
+      {route.red_flags.length > 0 && (
+        <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-900">
+          <p className="font-medium">Urgent flags</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">
+            {route.red_flags.map((flag) => (
+              <li key={flag}>{flag}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {pack && (
+        <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <div>
+            <p className="font-medium text-stone-800">{pack.title}</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-stone-700">
+              {pack.next_steps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          </div>
+          <div>
+            <p className="font-medium text-stone-800">Keep ready</p>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-stone-700">
+              {pack.documents.slice(0, 5).map((doc) => (
+                <li key={doc}>{doc}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {route.required_sources.length > 0 && (
+        <div className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-700">
+          <span className="font-medium text-stone-800">Sources to verify: </span>
+          {route.required_sources.slice(0, 4).join(", ")}
+        </div>
+      )}
+
+      <div className="mt-3 grid gap-3 text-xs text-stone-600 md:grid-cols-2">
+        {route.forums.length > 0 && (
+          <p>
+            <span className="font-medium text-stone-700">Forum: </span>
+            {route.forums.slice(0, 3).join(", ")}
+          </p>
+        )}
+        {route.missing_facts.length > 0 && (
+          <p>
+            <span className="font-medium text-stone-700">Need: </span>
+            {route.missing_facts.slice(0, 4).join(", ")}
+          </p>
+        )}
+        {pack?.portals && pack.portals.length > 0 && (
+          <p>
+            <span className="font-medium text-stone-700">Portal: </span>
+            {pack.portals.slice(0, 3).join(", ")}
+          </p>
+        )}
+        {pack?.escalation && pack.escalation.length > 0 && (
+          <p>
+            <span className="font-medium text-stone-700">Escalate to: </span>
+            {pack.escalation.slice(0, 3).join(", ")}
+          </p>
+        )}
+      </div>
+
+      {pack?.cautions && pack.cautions.length > 0 && (
+        <p className="mt-3 text-xs text-stone-500">
+          {pack.cautions[0]}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -389,6 +517,8 @@ function applyEvent(s: AnswerState, event: string, data: unknown): AnswerState {
   switch (event) {
     case "coverage":
       return { ...s, coverage: data as CoverageEvent };
+    case "matter_route":
+      return { ...s, matterRoute: data as MatterRouteEvent };
     case "passages":
       return { ...s, passages: data as PassageEvent[] };
     case "sentence": {
@@ -420,6 +550,8 @@ function applyEvent(s: AnswerState, event: string, data: unknown): AnswerState {
       // the JSX). Stored as-is so the verdict, score, and threshold
       // are all available for the notice text.
       return { ...s, relevance: data as RelevanceEvent };
+    case "timing":
+      return { ...s, timing: data as TimingEvent };
     case "disclaimer":
       return { ...s, disclaimer: (data as DisclaimerEvent).text };
     case "error":
@@ -427,4 +559,10 @@ function applyEvent(s: AnswerState, event: string, data: unknown): AnswerState {
     default:
       return s;
   }
+}
+
+function fmtMs(value: number | undefined): string {
+  if (value === undefined) return "-";
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
+  return `${Math.round(value)}ms`;
 }

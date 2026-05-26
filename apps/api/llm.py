@@ -17,6 +17,79 @@ from apps.api.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+class LLMModelUnavailable(RuntimeError):
+    """Raised when the configured Ollama model is not available locally."""
+
+
+def _model_unavailable_message(
+    *,
+    model: str,
+    available_models: list[str] | None = None,
+    error: str | None = None,
+) -> str:
+    available = available_models or []
+    if available:
+        listed = ", ".join(available[:10])
+        suffix = f" Available models: {listed}."
+    elif error:
+        suffix = f" Ollama error: {error}."
+    else:
+        suffix = " No local Ollama models were reported."
+    return (
+        f"Configured Ollama model '{model}' is not available. "
+        f"Run `ollama pull {model}` or change LLM_MODEL to an installed model."
+        f"{suffix}"
+    )
+
+
+async def list_available_models(timeout_s: float = 2.0) -> list[str]:
+    """Return local Ollama model names from /api/tags."""
+    s = get_settings()
+    url = f"http://localhost:{s.ollama_host_port}/api/tags"
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+    data = resp.json()
+    names: list[str] = []
+    for item in data.get("models", []):
+        name = item.get("name") or item.get("model")
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
+
+
+async def check_model_available(model: str | None = None) -> dict:
+    """Cheap preflight for /answer so model config failures fail early."""
+    s = get_settings()
+    target = model or s.llm_model
+    try:
+        available_models = await list_available_models()
+    except Exception as e:
+        error = str(e)
+        return {
+            "ok": False,
+            "model": target,
+            "available_models": [],
+            "error": error,
+            "message": _model_unavailable_message(model=target, error=error),
+        }
+
+    ok = target in available_models
+    if not ok and ":" not in target:
+        ok = f"{target}:latest" in available_models
+    message = None if ok else _model_unavailable_message(
+        model=target,
+        available_models=available_models,
+    )
+    return {
+        "ok": ok,
+        "model": target,
+        "available_models": available_models,
+        "error": None if ok else "model_not_found",
+        "message": message,
+    }
+
+
 def load_answer_prompt() -> str:
     p = Path(__file__).parent / "prompts" / "answer.md"
     return p.read_text(encoding="utf-8").strip()
@@ -91,22 +164,31 @@ async def stream_chat(
         },
     }
     url = f"http://localhost:{s.ollama_host_port}/api/chat"
-    async with httpx.AsyncClient(timeout=600) as client:
-        async with client.stream("POST", url, json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    logger.warning("non-json line from ollama: %r", line[:200])
-                    continue
-                if obj.get("done"):
-                    return
-                msg = obj.get("message", {}).get("content", "")
-                if msg:
-                    yield msg
+    async with httpx.AsyncClient(timeout=600) as client, client.stream(
+        "POST",
+        url,
+        json=payload,
+    ) as resp:
+        if resp.status_code == 404:
+            raw = await resp.aread()
+            detail = raw.decode("utf-8", errors="replace").strip()
+            raise LLMModelUnavailable(
+                _model_unavailable_message(model=model, error=detail)
+            )
+        resp.raise_for_status()
+        async for line in resp.aiter_lines():
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("non-json line from ollama: %r", line[:200])
+                continue
+            if obj.get("done"):
+                return
+            msg = obj.get("message", {}).get("content", "")
+            if msg:
+                yield msg
 
 
 async def chat_once(
@@ -123,4 +205,12 @@ async def chat_once(
     return "".join(buf)
 
 
-__all__ = ["build_messages", "chat_once", "load_answer_prompt", "stream_chat"]
+__all__ = [
+    "LLMModelUnavailable",
+    "build_messages",
+    "chat_once",
+    "check_model_available",
+    "list_available_models",
+    "load_answer_prompt",
+    "stream_chat",
+]

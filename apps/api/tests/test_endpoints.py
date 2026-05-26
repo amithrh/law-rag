@@ -22,6 +22,25 @@ from fastapi.testclient import TestClient
 from apps.api.main import app
 
 
+@pytest.fixture(autouse=True)
+def _patch_llm_preflight(monkeypatch):
+    """Keep endpoint tests from reaching out to a live Ollama daemon."""
+    from apps.api import main as api_main
+    from apps.api import config as cfg
+
+    async def ok_model(model: str | None = None):
+        target = model or cfg.get_settings().llm_model
+        return {
+            "ok": True,
+            "model": target,
+            "available_models": [target],
+            "error": None,
+            "message": None,
+        }
+
+    monkeypatch.setattr(api_main, "check_model_available", ok_model)
+
+
 # --- /healthz ---------------------------------------------------------------
 
 @pytest.mark.needs_stack
@@ -160,13 +179,13 @@ def _enable_fast_mode(monkeypatch):
 
 
 def _patch_high_score_retrieve(monkeypatch):
-    """Stub hybrid_retrieve to return chunks that score ABOVE the coverage
+    """Stub answer retrieval to return chunks that score ABOVE the coverage
     gate threshold (0.3). Without this, /answer tests refuse before
     reaching the LLM stream we're trying to exercise."""
     from apps.api import main as api_main
     from apps.api import retrieval
 
-    async def fake_retrieve(*args, **kwargs):
+    def chunks():
         return [
             retrieval.RetrievedChunk(
                 chunk_id=1, document_id=1, anchor="cpa-2019#sec-2",
@@ -185,6 +204,14 @@ def _patch_high_score_retrieve(monkeypatch):
                 dense_score=0.78, bm25_score=0.55, rerank_score=0.71,
             ),
         ]
+
+    async def fake_retrieve(*args, **kwargs):
+        return chunks()
+
+    async def fake_multi_query_retrieve(*args, **kwargs):
+        return chunks(), []
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fake_multi_query_retrieve)
     monkeypatch.setattr(api_main, "hybrid_retrieve", fake_retrieve)
 
 
@@ -227,13 +254,57 @@ def test_answer_emits_coverage_passages_and_sentences(monkeypatch):
                         events.append((current_event, data))
 
             event_names = [e[0] for e in events]
-            # Coverage chip and passages always emitted first
+            assert event_names[0] == "matter_route"
+            # Matter route, coverage chip, and passages arrive before prose.
             assert "coverage" in event_names
             assert "passages" in event_names
             # Each sentence verifier verdict streamed
             assert event_names.count("sentence") >= 1
+            assert "timing" in event_names
+            assert event_names.index("timing") < event_names.index("disclaimer")
+            timing = next(d for ev, d in events if ev == "timing")
+            assert timing["llm_model_available"] is True
+            assert timing["retrieval_ms"] >= 0
+            assert timing["llm_stream_ms"] >= 0
             # Disclaimer footer always closes the answer
             assert event_names[-1] == "disclaimer"
+
+
+@pytest.mark.needs_stack
+def test_answer_off_topic_short_circuits_before_model_or_retrieval(monkeypatch):
+    """Off-topic routing should refuse immediately.
+
+    A final live sanity check caught this taking the full retrieval path,
+    which made a non-legal query spend ~36s before refusing.
+    """
+    from apps.api import main as api_main
+
+    async def fail_model(*args, **kwargs):
+        raise AssertionError("off-topic request should not check the LLM")
+
+    async def fail_retrieve(*args, **kwargs):
+        raise AssertionError("off-topic request should not retrieve")
+
+    monkeypatch.setattr(api_main, "check_model_available", fail_model)
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fail_retrieve)
+    monkeypatch.setattr(api_main, "hybrid_retrieve", fail_retrieve)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "recipe for biryani",
+            "top_k": 4,
+        }) as r:
+            events = _collect_events(r)
+
+    names = [e[0] for e in events]
+    assert names == ["matter_route", "refused", "timing"]
+    route_payload = next(d for ev, d in events if ev == "matter_route")
+    assert route_payload["category"] == "off_topic"
+    refused_payload = next(d for ev, d in events if ev == "refused")
+    assert refused_payload["reason"] == "off_topic"
+    timing = next(d for ev, d in events if ev == "timing")
+    assert "llm_preflight_ms" not in timing
+    assert "retrieval_ms" not in timing
 
 
 @pytest.mark.needs_stack
@@ -308,6 +379,11 @@ def test_answer_refuses_when_rerank_scores_absent(monkeypatch):
                 dense_score=0.5, bm25_score=0.1, rerank_score=None,
             ),
         ]
+
+    async def no_rerank_multi_query_retrieve(*args, **kwargs):
+        return await no_rerank_retrieve(*args, **kwargs), []
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", no_rerank_multi_query_retrieve)
     monkeypatch.setattr(api_main, "hybrid_retrieve", no_rerank_retrieve)
 
     with TestClient(app) as c:
@@ -607,6 +683,11 @@ def test_answer_refuses_when_rerank_disabled_and_dense_low(monkeypatch):
                 dense_score=0.2, bm25_score=0.1, rerank_score=None,
             ),
         ]
+
+    async def low_combined_multi_query_retrieve(*args, **kwargs):
+        return await low_combined_retrieve(*args, **kwargs), []
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", low_combined_multi_query_retrieve)
     monkeypatch.setattr(api_main, "hybrid_retrieve", low_combined_retrieve)
 
     with TestClient(app) as c:
@@ -655,6 +736,11 @@ def test_answer_refuses_on_low_coverage(monkeypatch):
                 dense_score=0.5, bm25_score=0.1, rerank_score=0.10,
             ),
         ]
+
+    async def low_score_multi_query_retrieve(*args, **kwargs):
+        return await low_score_retrieve(*args, **kwargs), []
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", low_score_multi_query_retrieve)
     monkeypatch.setattr(api_main, "hybrid_retrieve", low_score_retrieve)
 
     with TestClient(app) as c:
@@ -729,7 +815,11 @@ def test_answer_refused_when_no_passages(monkeypatch):
     async def empty_retrieve(*args, **kwargs):
         return []
 
+    async def empty_multi_query_retrieve(*args, **kwargs):
+        return [], []
+
     monkeypatch.setattr(retrieval, "hybrid_retrieve", empty_retrieve)
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", empty_multi_query_retrieve)
     monkeypatch.setattr(api_main, "hybrid_retrieve", empty_retrieve)
 
     with TestClient(app) as c:
@@ -798,6 +888,48 @@ def _collect_events(response) -> list[tuple[str, Any]]:
 
 
 @pytest.mark.needs_stack
+def test_answer_errors_before_retrieval_when_llm_model_missing(monkeypatch):
+    """A missing configured Ollama model should fail before retrieval work."""
+    from apps.api import main as api_main
+
+    async def missing_model(model: str | None = None):
+        return {
+            "ok": False,
+            "model": model or "missing-model",
+            "available_models": ["qwen3:14b"],
+            "error": "model_not_found",
+            "message": "Configured Ollama model is not available.",
+        }
+
+    retrieval_calls: list[tuple[tuple, dict]] = []
+
+    async def should_not_retrieve(*args, **kwargs):
+        retrieval_calls.append((args, kwargs))
+        return [], []
+
+    monkeypatch.setattr(api_main, "check_model_available", missing_model)
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", should_not_retrieve)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "Police did not file my FIR. What can I do?",
+            "top_k": 4,
+        }) as r:
+            events = _collect_events(r)
+
+    names = [e[0] for e in events]
+    assert names == ["matter_route", "error", "timing"]
+    route_payload = next(d for ev, d in events if ev == "matter_route")
+    assert route_payload["category"] == "police_fir"
+    error_payload = next(d for ev, d in events if ev == "error")
+    assert error_payload["reason"] == "llm_model_unavailable"
+    timing_payload = next(d for ev, d in events if ev == "timing")
+    assert timing_payload["llm_model_available"] is False
+    assert "llm_preflight_ms" in timing_payload
+    assert retrieval_calls == []
+
+
+@pytest.mark.needs_stack
 def test_answer_emits_relevance_event_when_aligned(monkeypatch):
     """Task #10 Part A: a well-aligned answer (cosine well above
     threshold) emits a `relevance` event with verdict=ok.
@@ -858,9 +990,9 @@ def test_answer_emits_relevance_event_when_off_topic(monkeypatch):
 
     _patch_high_score_retrieve(monkeypatch)
     _enable_fast_mode(monkeypatch)
-    # Cosine well below threshold (deposit case scored 0.670 in
-    # calibration; 0.55 puts it clearly in the off_topic band).
-    _patch_relevance(monkeypatch, score=0.55)
+    # Cosine below the current off-topic boundary
+    # (threshold=0.50, band=0.08 -> off_topic <= 0.46).
+    _patch_relevance(monkeypatch, score=0.45)
 
     fake = _FakeStream(
         "**Short answer**\n",
@@ -909,7 +1041,12 @@ def test_answer_no_relevance_event_when_refused(monkeypatch):
 
     async def empty_retrieve(*args, **kwargs):
         return []
+
+    async def empty_multi_query_retrieve(*args, **kwargs):
+        return [], []
+
     monkeypatch.setattr(retrieval, "hybrid_retrieve", empty_retrieve)
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", empty_multi_query_retrieve)
     monkeypatch.setattr(api_main, "hybrid_retrieve", empty_retrieve)
 
     with TestClient(app) as c:
@@ -944,8 +1081,8 @@ def test_relevance_threshold_env_override(monkeypatch):
     s = Settings(database_url="postgresql://x")
     assert s.answer_relevance_threshold == pytest.approx(0.7)
 
-    # Default sanity check — without the env var, the calibrated value
-    # from data/processed/answer_relevance_calibration.json applies.
+    # Default sanity check — without the env var, the current calibrated
+    # value in Settings applies.
     monkeypatch.delenv("ANSWER_RELEVANCE_THRESHOLD", raising=False)
     s2 = Settings(database_url="postgresql://x")
-    assert s2.answer_relevance_threshold == pytest.approx(0.6916, abs=1e-4)
+    assert s2.answer_relevance_threshold == pytest.approx(0.50, abs=1e-4)

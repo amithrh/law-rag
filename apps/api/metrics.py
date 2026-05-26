@@ -42,6 +42,13 @@ llm_total = Histogram(
     buckets=(0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0),
 )
 
+answer_stage_latency = Histogram(
+    "rag_answer_stage_latency_seconds",
+    "Per-stage /answer latency, labelled by stage.",
+    labelnames=("stage",),
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 60.0),
+)
+
 # --- Verifier --------------------------------------------------------------
 
 unsupported_total = Counter(
@@ -83,6 +90,7 @@ stopped_total = Counter(
 
 
 __all__ = [
+    "answer_stage_latency",
     "llm_total",
     "llm_ttft",
     "query_total",

@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     # citing. 14b is the better trade-off until we see a query class
     # where 32b clearly wins.
     llm_model: str = "qwen3:14b"
-    llm_max_tokens: int = 1024
+    llm_max_tokens: int = 768
 
     # Retrieval
     bm25_top_k: int = 100
@@ -284,7 +284,15 @@ class Settings(BaseSettings):
     # operative law just in legal vocabulary the dense cosine doesn't
     # match. Caveat: still no labeled positives in 0.55-0.62, this is
     # eyeball-validated, gold-set will properly recalibrate.
-    answer_relevance_threshold: float = 0.55
+    # 2026-05-25 route-aware intake recalibration: once every query gets
+    # an explicit matter route + action pack, the answer body often uses
+    # legal vocabulary ("deficiency in service", "compensation", "grievance")
+    # while the user query is colloquial. A 25-row smoke falsely marked
+    # dowry harassment, work injury, defective material, and fake-iPhone
+    # refund as OFF_TOPIC at cosines 0.48-0.52. Move the hard off-topic
+    # boundary down and let the UI show these as PARTIAL instead of
+    # wrongly telling users the answer is about a different matter.
+    answer_relevance_threshold: float = 0.50
     # +/- band/2 around the threshold defines the PARTIAL band. Outside
     # the band → verdict is OK or OFF_TOPIC.
     #
@@ -297,7 +305,7 @@ class Settings(BaseSettings):
     # flagging legitimate answers.
     # If a future calibration with more on-topic samples shows the
     # distribution shifting, recalibrate. See docs/ANSWER_RELEVANCE.md.
-    answer_relevance_band: float = 0.05
+    answer_relevance_band: float = 0.08
     # When True, the server emits a relevance SSE event on every answer
     # that produced any user-visible cited prose. When False, NO
     # relevance event is emitted (useful for ablation / A/B testing).
@@ -312,6 +320,23 @@ class Settings(BaseSettings):
     # queries in the 102-query e2e eval (scripts/eval_query_expand.py).
     # Kill switch — flip to False to bypass and use plain hybrid_retrieve.
     query_expansion_enabled: bool = True
+    # Latency hardening: route-aware deterministic expansion handles common
+    # matters without an LLM call. For ambiguous cases, cap variants so
+    # retrieval/rerank cost is bounded. Total variants = original + this.
+    query_expansion_max_variants: int = 1
+    # "multi" runs retrieval for original + every variant. "single" folds
+    # route/LLM variants into one expanded search query and retrieves once.
+    # Single is the default because live timing showed candidate retrieval
+    # dominating latency (>40s) more than generation.
+    query_expansion_strategy: Literal["single", "multi"] = "multi"
+    # When route-aware variants exist, the legal variant handles synonym
+    # bridging. Skip the expensive sparse JSONB head on the original query
+    # during multi-query retrieval to keep latency under control.
+    query_expansion_sparse_original: bool = False
+    # Multi-query reranking used to score every candidate against every
+    # variant. Score against original + first legal variant by default;
+    # the union still benefits from all retrieved variants.
+    rerank_variant_query_limit: int = 2
 
     # Provenance gate (PLAN §10.1 + provenance system).
     # In production, retrieval must only return chunks from documents whose

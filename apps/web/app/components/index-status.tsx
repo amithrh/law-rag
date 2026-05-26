@@ -6,6 +6,12 @@ interface Health {
   status: string;
   chunks: number;
   documents: number;
+  llm?: {
+    ok: boolean;
+    model: string;
+    available_models: string[];
+    message?: string | null;
+  };
 }
 
 // Shows a small "X passages from Y documents indexed" pill so users can see
@@ -18,7 +24,7 @@ export function IndexStatus() {
   useEffect(() => {
     const ac = new AbortController();
     const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
-    fetch(`${apiBase}/healthz`, { signal: ac.signal })
+    fetch(`${apiBase}/healthz?deep=true`, { signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((j: Health) => setH(j))
       .catch((e) => {
@@ -40,6 +46,17 @@ export function IndexStatus() {
       <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-300 bg-white px-2.5 py-0.5 text-[11px] text-stone-500">
         <span className="h-1.5 w-1.5 rounded-full bg-stone-400" />
         checking index…
+      </span>
+    );
+  }
+  if (h.llm && !h.llm.ok) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-[11px] text-amber-800"
+        title={h.llm.message ?? `Missing model ${h.llm.model}`}
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+        LLM unavailable
       </span>
     );
   }

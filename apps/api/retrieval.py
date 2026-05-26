@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -418,6 +419,7 @@ async def multi_query_hybrid_retrieve(
     source_types: list[str] | None = None,
     subject_areas: list[str] | None = None,
     top_k: int | None = None,
+    timings: dict[str, float] | None = None,
 ) -> tuple[list[RetrievedChunk], list[str]]:
     """Retrieve using the original query + LLM-expanded legal-vocabulary variants.
 
@@ -450,29 +452,55 @@ async def multi_query_hybrid_retrieve(
 
     s = get_settings()
     if not getattr(s, "query_expansion_enabled", True):
+        t_plain = time.perf_counter()
         chunks = await hybrid_retrieve(
             pool, query,
             source_types=source_types, subject_areas=subject_areas,
             top_k=top_k,
         )
+        if timings is not None:
+            timings["retrieval_plain"] = time.perf_counter() - t_plain
         return chunks, []
 
     # Stage 1: LLM-expand
+    t_expand = time.perf_counter()
     try:
         from apps.api.query_expand import expand_query
-        variants = await expand_query(query)
+        variants = await expand_query(
+            query,
+            max_variants=getattr(s, "query_expansion_max_variants", 2),
+        )
     except Exception as e:
         logger.warning("multi_query_retrieve: expand_query failed: %s", e)
         variants = [query]
+    if timings is not None:
+        timings["query_expand"] = time.perf_counter() - t_expand
 
     if len(variants) == 1:
         # Either disabled, LLM down, or NOT_LEGAL — just original.
+        t_single = time.perf_counter()
         chunks = await hybrid_retrieve(
             pool, query,
             source_types=source_types, subject_areas=subject_areas,
             top_k=top_k,
         )
+        if timings is not None:
+            timings["retrieval_single_query"] = time.perf_counter() - t_single
         return chunks, []
+
+    if getattr(s, "query_expansion_strategy", "single") == "single":
+        t_single_expanded = time.perf_counter()
+        expanded_query = " ".join(variants)
+        chunks = await hybrid_retrieve(
+            pool,
+            expanded_query,
+            source_types=source_types,
+            subject_areas=subject_areas,
+            top_k=top_k,
+        )
+        if timings is not None:
+            timings["single_expanded_retrieval"] = time.perf_counter() - t_single_expanded
+        return chunks, variants[1:]
 
     # Stage 2a: gather candidates per variant in parallel.
     #
@@ -488,6 +516,7 @@ async def multi_query_hybrid_retrieve(
     # synonym bridging — the variants are already explicit legal
     # vocabulary that BM25 + dense match well. Predicted recall impact
     # is negligible; latency win ~25% per /answer.
+    t_candidates = time.perf_counter()
     candidates_per_variant = await asyncio.gather(
         *[
             hybrid_retrieve(
@@ -496,12 +525,14 @@ async def multi_query_hybrid_retrieve(
                 subject_areas=subject_areas,
                 top_k=s.rerank_input_k,
                 use_reranker=False,
-                use_sparse=(i == 0),
+                use_sparse=(i == 0 and getattr(s, "query_expansion_sparse_original", False)),
             )
             for i, v in enumerate(variants)
         ],
         return_exceptions=True,
     )
+    if timings is not None:
+        timings["variant_candidate_retrieval"] = time.perf_counter() - t_candidates
 
     # Stage 2b: dedupe across variants (chunk_id is the canonical key).
     union: dict[int, RetrievedChunk] = {}
@@ -542,12 +573,16 @@ async def multi_query_hybrid_retrieve(
         # the max across variants we call it once per query and copy
         # the scores into a side dict, then write the max back.
         max_scores: dict[int, float] = {c.chunk_id: -1.0 for c in candidate_list}
-        for q_idx, q in enumerate(variants):
+        rerank_queries = variants[: max(1, getattr(s, "rerank_variant_query_limit", 2))]
+        t_variant_rerank = time.perf_counter()
+        for q_idx, q in enumerate(rerank_queries):
             # `keep=None` returns the full list, sorted by THIS query's score
             reranked = _rerank(q, list(candidate_list), keep=None)
             for c in reranked:
                 if c.rerank_score is not None and c.rerank_score > max_scores[c.chunk_id]:
                     max_scores[c.chunk_id] = c.rerank_score
+        if timings is not None:
+            timings["variant_rerank"] = time.perf_counter() - t_variant_rerank
 
         # Write the per-chunk max back and re-sort. -1.0 default means
         # rerank returned None (degraded state) → keep negative so the

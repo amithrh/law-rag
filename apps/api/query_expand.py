@@ -46,7 +46,9 @@ import logging
 import re
 import time
 
+from .config import get_settings
 from .llm import chat_once
+from .matter_router import MatterRoute, route_matter
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +382,190 @@ _SYSTEM_PROMPT = (
 )
 
 
+_ROUTE_EXPANSIONS: dict[str, list[str]] = {
+    "consumer": [
+        "Consumer Protection Act 2019 deficiency in goods refund complaint",
+        "e-Daakhil District Consumer Disputes Redressal Commission refund",
+    ],
+    "social_welfare_identity": [
+        "Aadhaar Act 2016 identity authentication correction benefit denial",
+        "RTI Act 2005 welfare scheme scholarship pension rejection reasons",
+    ],
+    "digital_platform_account": [
+        "Information Technology Rules platform grievance officer account suspension",
+        "Consumer Protection Act 2019 digital platform account money dispute",
+    ],
+    "police_fir": [
+        "BNSS 2023 section 173 FIR registration police refusal",
+        "CrPC 1973 section 154 police refusal FIR magistrate complaint",
+    ],
+    "cyber_fraud_or_harassment": [
+        "Information Technology Act 2000 section 66C 66D cyber fraud",
+        "BNS 2023 cheating personation cybercrime portal complaint",
+    ],
+    "sexual_offence_survivor": [
+        "BNS 2023 sexual offence FIR survivor medical statement procedure",
+        "CrPC 1973 BNSS 2023 rape FIR statement medical examination",
+    ],
+    "workplace_sexual_harassment": [
+        "POSH Act 2013 Internal Committee sexual harassment workplace",
+        "BNS 2023 assault stalking workplace sexual harassment police complaint",
+    ],
+    "reproductive_rights_mtp": [
+        "Medical Termination of Pregnancy Act 1971 rape survivor termination",
+        "MTP Rules medical board pregnancy termination constitutional rights",
+    ],
+    "senior_citizen": [
+        "Maintenance and Welfare of Parents and Senior Citizens Act 2007 section 4",
+        "Senior Citizens Act 2007 section 23 transfer property cancellation",
+    ],
+    "family_domestic": [
+        "Protection of Women from Domestic Violence Act 2005 section 12",
+        "BNS 2023 section 85 cruelty husband dowry harassment",
+    ],
+    "employment_wages": [
+        "Payment of Wages Act unpaid salary labour commissioner complaint",
+        "Code on Wages 2019 wage theft employer contractor",
+    ],
+    "labour_exploitation_discrimination": [
+        "Bonded Labour System Abolition Act 1976 document retention contractor",
+        "MGNREGA Act 2005 wage delay grievance compensation",
+    ],
+    "workplace_injury_compensation": [
+        "Employees Compensation Act 1923 workplace injury accident compensation",
+        "BOCW Act 1996 construction worker injury welfare board",
+    ],
+    "criminal_defence_bail": [
+        "BNSS 2023 section 482 anticipatory bail criminal defence",
+        "CrPC 1973 section 438 anticipatory bail dowry case",
+    ],
+    "trademark_ip": [
+        "Trade Marks Act 1999 infringement passing off registered mark",
+        "Trade Marks Registry opposition rectification brand name dispute",
+    ],
+    "tax_gst_compliance": [
+        "CGST Act 2017 GST registration threshold service provider",
+        "Income Tax Act 1961 TDS Form 26AS not deposited",
+    ],
+    "ibc_nclt": [
+        "Insolvency and Bankruptcy Code 2016 section 9 operational creditor",
+        "NCLT insolvency application demand notice default debt",
+    ],
+    "business_contract_partnership": [
+        "Indian Contract Act 1872 section 27 non compete restraint trade",
+        "Indian Partnership Act 1932 retirement partner liability notice",
+    ],
+    "business_license_compliance": [
+        "state Shops and Establishments Act shop license renewal penalty",
+        "municipal trade license renewal delay RTI grievance",
+    ],
+    "child_custody_adoption": [
+        "Juvenile Justice Act 2015 adoption procedure missing papers",
+        "child custody habeas corpus international child return writ",
+    ],
+    "education_rights": [
+        "Right to Education Act 2009 admission transfer certificate school",
+        "RTE Act section 12 25 percent quota private school",
+    ],
+    "environment_compensation": [
+        "Environment Protection Act 1986 compensation pollution blasting damage",
+        "National Green Tribunal Act environmental damage compensation",
+    ],
+    "pmla_ed": [
+        "PMLA 2002 section 45 twin conditions bail",
+        "Prevention of Money Laundering Act arrest attachment ED summons",
+    ],
+    "banking_credit_dispute": [
+        "RBI Integrated Ombudsman Scheme bank wrong debit complaint",
+        "Credit Information Companies Act CIBIL correction loan closed NOC",
+    ],
+    "mental_health_care_rights": [
+        "Mental Healthcare Act 2017 supported admission rights safeguards",
+        "Mental Health Review Board unlawful confinement chains treatment",
+    ],
+    "tribal_caste_atrocity": [
+        "SC ST Prevention of Atrocities Act 1989 caste abuse violence",
+        "PESA Act 1996 Forest Rights Act 2006 gram sabha tribal rights",
+    ],
+    "land_revenue_records": [
+        "state land revenue record of rights mutation pattadar passbook",
+        "Right to Information Act 2005 land records revenue office delay",
+    ],
+    "court_procedure": [
+        "district court practice directions court etiquette addressing judge",
+        "Legal Services Authorities Act 1987 court help desk legal aid",
+    ],
+    "cheque_bounce": [
+        "Negotiable Instruments Act 1881 section 138 cheque dishonour",
+        "Negotiable Instruments Act 1881 section 142 limitation complaint",
+    ],
+    "property_tenancy": [
+        "Transfer of Property Act 1882 tenancy lease possession deposit",
+        "state rent control act landlord tenant security deposit eviction",
+    ],
+    "succession_inheritance": [
+        "Indian Succession Act 1925 will intestate succession property share",
+        "Muslim personal law inheritance share wife daughter mother",
+    ],
+    "street_vendor_municipal": [
+        "Street Vendors Act 2014 seizure goods vending certificate",
+        "Town Vending Committee municipal hawker license confiscation",
+    ],
+    "custody_compensation": [
+        "Article 21 compensation wrongful detention speedy trial delay",
+        "CrPC 1973 BNSS 2023 default bail no chargesheet custody delay",
+    ],
+    "prison_parole_furlough": [
+        "state prison rules parole furlough remission prisoner release",
+        "Article 21 prison parole furlough refusal writ jurisdiction",
+    ],
+    "rti": [
+        "Right to Information Act 2005 first appeal public information officer",
+        "RTI Act 2005 information commission second appeal delay reply",
+    ],
+    "legal_aid": [
+        "Legal Services Authorities Act 1987 free legal aid eligibility",
+        "NALSA District Legal Services Authority application procedure",
+    ],
+    "criminal_general": [
+        "BNSS 2023 criminal procedure bail arrest FIR complaint",
+        "BNS 2023 IPC CrPC applicable based on incident date",
+    ],
+}
+
+
+def _route_variants(query: str, route: MatterRoute, max_variants: int) -> list[str]:
+    if route.category == "off_topic":
+        return []
+    variants = _ROUTE_EXPANSIONS.get(route.category, [])
+    q = query.lower()
+    if route.category == "employment_wages" and re.search(r"\b(epf|pf|provident fund)\b", q):
+        variants = [
+            "Employees Provident Funds Act 1952 employer contribution default",
+            "EPFO grievance provident fund deducted not deposited",
+        ] + variants
+    if route.category == "succession_inheritance" and re.search(r"\b(muslim|shariat|islamic)\b", q):
+        variants = [
+            "Muslim Personal Law Shariat Application Act 1937 inheritance",
+            "Muslim law succession property share heirs",
+        ] + variants
+    if route.category == "cyber_fraud_or_harassment" and _contains_any(q, ("sex video", "intimate", "nudes", "upload", "recorded")):
+        variants = [
+            "Information Technology Act 2000 section 66E 67 intimate video",
+            "BNS 2023 voyeurism criminal intimidation intimate image threat",
+        ] + variants
+    if route.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident":
+        variants = [
+            v.replace("BNSS 2023", "CrPC 1973").replace("BNS 2023", "IPC 1860")
+            for v in variants
+        ]
+    return variants[:max_variants]
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in text for needle in needles)
+
+
 async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
     """Return [original_query, ...legal-vocabulary variants].
 
@@ -388,6 +574,17 @@ async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
     """
     if not query or not query.strip():
         return [query]
+
+    settings = get_settings()
+    max_variants = max(1, min(max_variants, settings.query_expansion_max_variants))
+    route = route_matter(query)
+    deterministic = _route_variants(query, route, max_variants)
+    if deterministic and route.confidence >= 0.70:
+        logger.info(
+            "query_expand: route-aware %d variants (category=%s confidence=%.2f)",
+            len(deterministic), route.category, route.confidence,
+        )
+        return [query] + deterministic
 
     t0 = time.time()
     try:
