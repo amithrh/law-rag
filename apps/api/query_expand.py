@@ -495,9 +495,21 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
         "district court practice directions court etiquette addressing judge",
         "Legal Services Authorities Act 1987 court help desk legal aid",
     ],
+    "criminal_procedure_notice": [
+        "BNSS 2023 section 94 and CrPC 1973 section 91 summons to produce document electronic record phone",
+        "CrPC 1973 section 91 summons to produce document or other thing",
+    ],
+    "passport_police_verification": [
+        "passport police verification adverse report Regional Passport Office criminal case remedy",
+        "passport refusal criminal proceedings police verification grievance writ jurisdiction",
+    ],
+    "lok_adalat_award_challenge": [
+        "Legal Services Authorities Act 1987 section 21 Lok Adalat award final binding no appeal",
+        "Lok Adalat award challenge fraud coercion no consent writ jurisdiction",
+    ],
     "cheque_bounce": [
-        "Negotiable Instruments Act 1881 section 138 cheque dishonour",
-        "Negotiable Instruments Act 1881 section 142 limitation complaint",
+        "Negotiable Instruments Act 1881 section 138 cheque dishonour demand notice 15 days",
+        "Negotiable Instruments Act 1881 section 142 limitation complaint one month",
     ],
     "property_tenancy": [
         "Transfer of Property Act 1882 tenancy lease possession deposit",
@@ -571,18 +583,21 @@ def _criminal_defence_bail_variants(query: str, route: MatterRoute) -> list[str]
     date_unclear = route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
 
     if _contains_any(query, ("default bail", "no chargesheet", "charge sheet", "60 days", "90 days")):
+        special = []
+        if _contains_any(query, ("ndps", "narcotic", "ganja", "charas", "mdma", "heroin")):
+            special.append("NDPS Act 1985 section 36A section 37 default bail extended custody")
         if legacy:
-            return [
+            return special + [
                 "CrPC 1973 section 167 default bail no chargesheet 60 days 90 days",
                 "BNSS 2023 section 187 default bail current criminal procedure",
             ]
         if current:
-            return [
+            return special + [
                 "BNSS 2023 section 187 default bail no chargesheet 60 days 90 days",
                 "CrPC 1973 section 167 default bail pre-1-Jul-2024 comparison",
             ]
         if date_unclear:
-            return [
+            return special + [
                 "BNSS 2023 section 187 CrPC 1973 section 167 default bail",
                 "default bail 60 days 90 days no chargesheet custody remand",
             ]
@@ -626,12 +641,21 @@ async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
     max_variants = max(1, min(max_variants, settings.query_expansion_max_variants))
     route = route_matter(query)
     deterministic = _route_variants(query, route, max_variants)
-    if deterministic and route.confidence >= 0.70:
+    if deterministic and route.confidence >= 0.55:
         logger.info(
             "query_expand: route-aware %d variants (category=%s confidence=%.2f)",
             len(deterministic), route.category, route.confidence,
         )
         return [query] + deterministic
+
+    if not getattr(settings, "query_expansion_llm_enabled", False):
+        logger.info(
+            "query_expand: LLM fallback disabled; original only "
+            "(category=%s confidence=%.2f)",
+            route.category,
+            route.confidence,
+        )
+        return [query]
 
     t0 = time.time()
     try:

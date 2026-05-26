@@ -33,10 +33,36 @@ def test_criminal_legacy_regime_for_old_incident_year():
     assert route.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
 
 
+def test_mixed_criminal_dates_require_regime_clarification():
+    for query in (
+        "arrested in 2025 for FIR from 2023 90 days no chargesheet default bail",
+        "FIR from 2023 arrested in 2025 90 days no chargesheet default bail",
+    ):
+        route = route_matter(query)
+        assert route.category == "criminal_defence_bail"
+        assert route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+
+
 def test_routes_off_topic():
     route = route_matter("recipe for biryani")
     assert route.category == "off_topic"
     assert route.action_pack is None
+
+
+def test_routes_obvious_non_legal_recommendations_off_topic():
+    for query in (
+        "recommend a laptop under 60000 for gaming",
+        "who won yesterday cricket match india pakistan",
+        "write python code for quicksort in javascript style",
+    ):
+        route = route_matter(query)
+        assert route.category == "off_topic", query
+        assert route.action_pack is None
+
+
+def test_legal_queries_with_off_topic_words_still_route_legally():
+    assert route_matter("my laptop under warranty stopped working seller refuses refund").category == "consumer"
+    assert route_matter("javascript code copied by competitor what copyright claim can I file").category == "trademark_ip"
 
 
 def test_first_does_not_trigger_fir_and_routes_trademark():
@@ -52,6 +78,52 @@ def test_routes_intimate_recording_threat_as_cyber_emergency():
     assert route.category == "cyber_fraud_or_harassment"
     assert route.urgency == "emergency"
     assert route.action_pack is not None
+
+
+def test_routes_private_photo_parent_threat_as_cyber_emergency():
+    route = route_matter("ex boyfriend has private photos and says he will send to my parents")
+    assert route.category == "cyber_fraud_or_harassment"
+    assert route.urgency == "emergency"
+    assert route.action_pack is not None
+    assert route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+
+
+def test_intimate_image_share_show_forward_variants_route_cyber():
+    for query in (
+        "ex boyfriend says he will send my nudes to my parents",
+        "ex boyfriend says he will share my nudes with my parents",
+        "ex boyfriend says he will show my private photos to my parents",
+        "ex boyfriend will forward my intimate photos in college group",
+        "ex has my nudes what can i do",
+        "stranger has my nude photos and found my instagram",
+    ):
+        route = route_matter(query)
+        assert route.category == "cyber_fraud_or_harassment", query
+        assert route.urgency == "emergency"
+
+
+def test_private_photos_without_abuse_context_do_not_become_cyber_emergency():
+    route = route_matter("wedding photographer lost my private photos and refuses refund")
+    assert route.category == "consumer"
+    assert route.urgency != "emergency"
+
+
+def test_family_photographer_private_photo_refund_stays_consumer():
+    route = route_matter("family photographer lost my private photos and refuses refund")
+    assert route.category == "consumer"
+    assert route.urgency != "emergency"
+
+
+def test_intimate_image_service_disputes_do_not_become_cyber():
+    for query in (
+        "wedding photographer lost my intimate photos and refuses refund",
+        "wedding photographer lost my nude photos and refuses refund",
+        "family photographer lost my intimate video and refuses refund",
+        "graphic designer made morphed photos badly and refuses refund",
+    ):
+        route = route_matter(query)
+        assert route.category == "consumer", query
+        assert route.urgency != "emergency"
 
 
 def test_routes_tribal_caste_targeted_violence():
@@ -102,6 +174,45 @@ def test_routes_mcoca_custody_limit_as_criminal_defence_not_family():
     assert route.action_pack is not None
 
 
+def test_routes_ndps_and_uapa_default_bail_as_bail_procedure():
+    for query in (
+        "brother in NDPS case arrested 110 days no chargesheet default bail possible",
+        "brother arrested in UAPA 100 days no chargesheet default bail possible",
+    ):
+        route = route_matter(query)
+        assert route.category == "criminal_defence_bail", query
+        assert route.urgency == "high"
+        assert route.action_pack is not None
+
+
+def test_routes_section_91_phone_notice_to_criminal_procedure():
+    route = route_matter("police sent section 91 notice asking for my phone and whatsapp chats what to do")
+    assert route.category == "criminal_procedure_notice"
+    assert route.urgency == "high"
+    assert route.action_pack is not None
+    assert "BNSS 2023 section 94" in route.required_sources[1]
+
+
+def test_routes_passport_police_verification_to_passport_procedure():
+    route = route_matter("passport police verification adverse report because old criminal case what remedy")
+    assert route.category == "passport_police_verification"
+    assert route.action_pack is not None
+    assert any("Passports Act" in source for source in route.required_sources)
+
+
+def test_contractor_kept_worker_passports_stays_labour_exploitation():
+    route = route_matter("contractor taking us to other state for work keeping our cards passport")
+    assert route.category == "labour_exploitation_discrimination"
+    assert route.urgency == "high"
+
+
+def test_routes_lok_adalat_award_challenge():
+    route = route_matter("lok adalat award passed without my consent can I challenge it")
+    assert route.category == "lok_adalat_award_challenge"
+    assert route.action_pack is not None
+    assert any("section 21" in source.lower() for source in route.required_sources)
+
+
 def test_routes_migrant_return_ticket_issue_as_labour_exploitation():
     route = route_matter("contractor said go back home pandemic no return ticket money given we walked from delhi")
     assert route.category == "labour_exploitation_discrimination"
@@ -127,6 +238,19 @@ def test_routes_rape_survivor_police_response_as_emergency():
     assert route.urgency == "emergency"
     assert route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
     assert route.action_pack is not None
+
+
+def test_routes_minor_tuition_teacher_pocso_complaint_as_emergency():
+    route = route_matter("minor daughter touched by tuition teacher how to file pocso complaint")
+    assert route.category == "sexual_offence_survivor"
+    assert route.urgency == "emergency"
+    assert route.action_pack is not None
+
+
+def test_tuition_teacher_fee_dispute_is_not_sexual_offence():
+    route = route_matter("tuition teacher took advance fees and stopped classes")
+    assert route.category != "sexual_offence_survivor"
+    assert route.urgency != "emergency"
 
 
 def test_false_rape_bail_stays_criminal_defence():
@@ -162,6 +286,12 @@ def test_routes_numeric_age_elder_eviction():
     route = route_matter("my son and daughter in law threw me out of my own house I am 72 widow")
     assert route.category == "senior_citizen"
     assert route.urgency == "high"
+
+
+def test_routes_parent_gift_transfer_neglect_to_senior_citizen():
+    route = route_matter("my father gifted flat to my brother but now brother stopped giving food can gift be cancelled")
+    assert route.category == "senior_citizen"
+    assert any("Senior Citizens Act" in source for source in route.required_sources)
 
 
 def test_age_alone_does_not_steal_inheritance_route():
@@ -258,3 +388,46 @@ def test_routes_posh_retaliation_after_icc_complaint():
 def test_routes_fra_ifr_title_for_gond_widow():
     route = route_matter("i am gond woman my husband died forest officer not giving me IFR title dindori")
     assert route.category == "tribal_caste_atrocity"
+
+
+def test_routes_forest_minor_produce_to_tribal_rights():
+    route = route_matter("forest officer stopped us collecting tendu leaves in community forest")
+    assert route.category == "tribal_caste_atrocity"
+
+
+def test_generic_forest_vehicle_seizure_does_not_route_to_tribal_rights():
+    route = route_matter("forest officer seized my truck for timber transport")
+    assert route.category != "tribal_caste_atrocity"
+
+
+def test_routes_dlsa_query_to_legal_aid_before_family():
+    route = route_matter("free legal aid for woman domestic violence case how to apply in dlsa")
+    assert route.category == "legal_aid"
+
+
+def test_urgent_domestic_violence_with_dlsa_stays_family_safety():
+    route = route_matter("my husband is beating me need free legal aid in dlsa")
+    assert route.category == "family_domestic"
+    assert route.urgency == "emergency"
+    assert route.red_flags
+
+
+def test_domestic_threats_with_dlsa_stay_family_safety():
+    route = route_matter("my husband threatens me need free legal aid in dlsa")
+    assert route.category == "family_domestic"
+    assert route.urgency == "emergency"
+    assert route.red_flags
+
+
+def test_family_safety_variants_with_dlsa_stay_family_safety():
+    for query in (
+        "my husband locked me in room need free legal aid in dlsa",
+        "my husband hit me need free legal aid in dlsa",
+        "my wife is beating me need free legal aid in dlsa",
+        "my husband is not giving food need free lawyer dlsa",
+        "my husband threw me out need free legal aid in dlsa",
+    ):
+        route = route_matter(query)
+        assert route.category == "family_domestic", query
+        assert route.urgency == "emergency"
+        assert route.red_flags

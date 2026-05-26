@@ -89,7 +89,14 @@ def log(msg: str) -> None:
         f.write(line + "\n")
 
 
-async def fetch_batch(conn, last_id: int, batch_size: int, *, force: bool):
+async def fetch_batch(
+    conn,
+    last_id: int,
+    batch_size: int,
+    *,
+    force: bool,
+    doc_ids: list[str] | None,
+):
     """Return up to `batch_size` chunks past `last_id` that still need
     backfilling. Order by id so we can use the last id of one batch as
     the cursor for the next (cheap monotonic pagination, no OFFSET).
@@ -97,17 +104,33 @@ async def fetch_batch(conn, last_id: int, batch_size: int, *, force: bool):
     if force:
         # `--force` re-embeds even chunks that already have a sparse
         # vector — useful if the model changes.
-        sql = """SELECT id, text FROM chunks
-                 WHERE id > $1 AND NOT quarantined
-                 ORDER BY id ASC
-                 LIMIT $2"""
+        sparse_filter = ""
     else:
-        sql = """SELECT id, text FROM chunks
-                 WHERE id > $1
-                   AND embedding_sparse IS NULL
-                   AND NOT quarantined
-                 ORDER BY id ASC
-                 LIMIT $2"""
+        sparse_filter = "AND c.embedding_sparse IS NULL"
+
+    if doc_ids:
+        sql = f"""
+            SELECT c.id, c.text
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE c.id > $1
+              {sparse_filter}
+              AND NOT c.quarantined
+              AND d.doc_id = ANY($3::text[])
+            ORDER BY c.id ASC
+            LIMIT $2
+        """
+        return await conn.fetch(sql, last_id, batch_size, doc_ids)
+
+    sql = f"""
+        SELECT c.id, c.text
+        FROM chunks c
+        WHERE c.id > $1
+          {sparse_filter}
+          AND NOT c.quarantined
+        ORDER BY c.id ASC
+        LIMIT $2
+    """
     return await conn.fetch(sql, last_id, batch_size)
 
 
@@ -139,6 +162,8 @@ async def main():
     ap.add_argument("--force", action="store_true",
                     help="re-embed even chunks that already have a sparse vector. "
                          "Use for model swaps.")
+    ap.add_argument("--doc-ids", nargs="+", default=None,
+                    help="optional document doc_id filter, e.g. --doc-ids crpc-1973 ndps-1985")
     args = ap.parse_args()
 
     is_dry = not args.commit
@@ -153,6 +178,7 @@ async def main():
     log(f"  limit:      {args.limit}")
     log(f"  batch_size: {args.batch_size}")
     log(f"  force:      {args.force}")
+    log(f"  doc_ids:    {args.doc_ids or 'ALL'}")
 
     env = load_env()
     if not env.get("POSTGRES_HOST_PORT"):
@@ -186,7 +212,13 @@ async def main():
                 this_batch = min(this_batch, remaining)
             if this_batch <= 0:
                 break
-            chunks = await fetch_batch(conn, last_id, this_batch, force=args.force)
+            chunks = await fetch_batch(
+                conn,
+                last_id,
+                this_batch,
+                force=args.force,
+                doc_ids=args.doc_ids,
+            )
             if not chunks:
                 log("  no more chunks to backfill; done")
                 break
@@ -241,9 +273,22 @@ async def main():
         log(f"  elapsed:    {elapsed:.0f}s")
         log(f"  processed:  {grand_total:,}")
         if not is_dry:
-            still_null = await conn.fetchval(
-                "SELECT COUNT(*) FROM chunks WHERE embedding_sparse IS NULL AND NOT quarantined"
-            )
+            if args.doc_ids:
+                still_null = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    WHERE c.embedding_sparse IS NULL
+                      AND NOT c.quarantined
+                      AND d.doc_id = ANY($1::text[])
+                    """,
+                    args.doc_ids,
+                )
+            else:
+                still_null = await conn.fetchval(
+                    "SELECT COUNT(*) FROM chunks WHERE embedding_sparse IS NULL AND NOT quarantined"
+                )
             log(f"  remaining null sparse rows in DB: {still_null:,}")
 
     except KeyboardInterrupt:

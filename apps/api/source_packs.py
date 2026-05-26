@@ -11,6 +11,7 @@ should still fail closed instead of inventing authority.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from .matter_router import MatterRoute
@@ -39,7 +40,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
     packs: list[SourcePack] = []
 
     if category == "tribal_caste_atrocity":
-        if _has_any(q, ("dalit", "caste", "sc ", "st ", "scheduled caste", "scheduled tribe", "atrocity", "thakur", "pahan", "sarna", "adivasi")):
+        if _is_scst_poa_context(q):
             packs.append(SourcePack(
                 id="scst_poa_1989",
                 title_patterns=(
@@ -48,6 +49,24 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 ),
                 search_query="Scheduled Castes Scheduled Tribes Prevention of Atrocities Act 1989 section 3 offence atrocity",
                 doc_ids=("sc-st-poa-1989",),
+            ))
+        if _has_any(q, ("forest", "tendu", "ifr", "cfr", "minor forest produce", "community forest")):
+            packs.append(SourcePack(
+                id="fra_2006",
+                title_patterns=("Scheduled Tribes and Other Traditional Forest Dwellers (Recognition of Forest Rights) Act 2006",),
+                search_query="Forest Rights Act 2006 community forest rights minor forest produce gram sabha title",
+                doc_ids=("fra-2006",),
+                anchor_patterns=("/sec-3", "/sec-4", "/sec-6"),
+                priority=1.05,
+            ))
+        if _has_any(q, ("gram sabha", "scheduled area", "pesa")):
+            packs.append(SourcePack(
+                id="pesa_1996",
+                title_patterns=("Panchayats (Extension to the Scheduled Areas) Act 1996",),
+                search_query="PESA Act 1996 Scheduled Areas Gram Sabha consultation land acquisition minor minerals",
+                doc_ids=("pesa-1996",),
+                anchor_patterns=("/sec-4",),
+                priority=1.04,
             ))
 
     elif category == "family_domestic":
@@ -59,11 +78,13 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
         ))
 
     elif category == "senior_citizen":
+        senior_anchor_patterns = ("/sec-23",) if _has_any(q, ("gift", "gifted", "transfer", "transferred")) else ("/sec-4", "/sec-23")
         packs.append(SourcePack(
             id="senior_citizens_2007",
             title_patterns=("Maintenance and Welfare of Parents and Senior Citizens Act 2007",),
             search_query="Maintenance and Welfare of Parents and Senior Citizens Act 2007 section 4 section 23 maintenance tribunal transfer property",
             doc_ids=("mwp-2007", "senior-citizens-2007"),
+            anchor_patterns=senior_anchor_patterns,
         ))
 
     elif category == "cyber_fraud_or_harassment":
@@ -104,6 +125,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             title_patterns=("Negotiable Instruments Act 1881",),
             search_query="Negotiable Instruments Act 1881 section 138 section 142 cheque dishonour complaint limitation",
             doc_ids=("negotiable-instruments-1881",),
+            anchor_patterns=("/sec-138", "/sec-142"),
         ))
 
     elif category == "tax_gst_compliance":
@@ -141,6 +163,13 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
         ))
 
     elif category == "workplace_injury_compensation":
+        if _has_any(q, ("construction", "bocw", "building", "mason", "scaffold", "scaffolding")):
+            packs.append(SourcePack(
+                id="bocw_1996",
+                title_patterns=("Building and Other Construction Workers (Regulation of Employment and Conditions of Service) Act 1996",),
+                search_query="Building and Other Construction Workers Act 1996 welfare board registration accident injury construction worker",
+                doc_ids=("bocw-1996",),
+            ))
         packs.append(SourcePack(
             id="factories_1948",
             title_patterns=("Factories Act 1948",),
@@ -193,6 +222,14 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             ))
 
     elif category == "labour_exploitation_discrimination":
+        if _has_any(q, ("nrega", "mgnrega", "job card", "mate")):
+            packs.append(SourcePack(
+                id="mgnrega_2005",
+                title_patterns=("Mahatma Gandhi National Rural Employment Guarantee Act 2005",),
+                search_query="Mahatma Gandhi National Rural Employment Guarantee Act 2005 job card wage payment unemployment allowance grievance",
+                doc_ids=("mgnrega-2005",),
+                anchor_patterns=("/sec-3", "/sec-6", "/sec-19", "/sec-23"),
+            ))
         if _has_any(q, ("wage", "wages", "salary", "half pay", "contractor", "minimum")):
             packs.append(SourcePack(
                 id="code_on_wages_2019",
@@ -217,11 +254,56 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
     elif category == "rti":
         packs.append(_rti_pack())
 
+    elif category == "legal_aid":
+        packs.append(SourcePack(
+            id="legal_services_authorities_1987",
+            title_patterns=("Legal Services Authorities Act 1987",),
+            search_query="Legal Services Authorities Act 1987 legal aid District Legal Services Authority Lok Adalat section 12",
+            doc_ids=("legal-services-authorities-1987",),
+            anchor_patterns=("/sec-12", "/sec-9", "/sec-19"),
+        ))
+
+    elif category == "lok_adalat_award_challenge":
+        packs.append(SourcePack(
+            id="legal_services_authorities_1987",
+            title_patterns=("Legal Services Authorities Act 1987",),
+            search_query="Legal Services Authorities Act 1987 section 21 Lok Adalat award final binding no appeal settlement",
+            doc_ids=("legal-services-authorities-1987",),
+            anchor_patterns=("/sec-21", "/sec-20", "/sec-19"),
+        ))
+
+    elif category == "criminal_procedure_notice":
+        if _uses_legacy_criminal_regime(route):
+            packs.append(_crpc_pack(q, notice=True))
+        elif route.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident":
+            packs.append(_bnss_pack(q))
+        else:
+            packs.append(_bnss_pack(q))
+            packs.append(_crpc_pack(q, notice=True))
+
+    elif category == "passport_police_verification":
+        # No verified Passports Act bare-Act PDF is indexed locally yet. Keep
+        # this route procedural, but do not fabricate an authoritative pack.
+        return packs
+
     elif category in {"police_fir", "criminal_defence_bail", "custody_compensation", "criminal_general"}:
-        if not _uses_legacy_criminal_regime(route):
+        if _uses_legacy_criminal_regime(route):
+            packs.append(_crpc_pack(q))
+        else:
             packs.append(_bnss_pack(q))
             if _has_any(q, ("theft", "rape", "cheating", "420", "assault", "threat", "hurt", "murder")):
                 packs.append(_bns_pack(q))
+            if route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc":
+                packs.append(_crpc_pack(q))
+        if _has_any(q, ("ndps", "narcotic", "ganja", "charas", "mdma", "heroin")):
+            packs.append(SourcePack(
+                id="ndps_1985",
+                title_patterns=("Narcotic Drugs and Psychotropic Substances Act 1985",),
+                search_query="NDPS Act 1985 section 36A section 37 default bail extended custody narcotic drug psychotropic substance",
+                doc_ids=("ndps-1985",),
+                anchor_patterns=("/sec-35-b", "/sec-35-c", "/sec-35-d", "/sec-36C", "/sec-37"),
+                priority=1.03,
+            ))
 
     elif category == "sexual_offence_survivor":
         if not _uses_legacy_criminal_regime(route):
@@ -253,16 +335,28 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
         if not _uses_legacy_criminal_regime(route):
             packs.append(_bnss_pack(q))
 
+    elif category == "street_vendor_municipal":
+        packs.append(SourcePack(
+            id="street_vendors_2014",
+            title_patterns=("Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014",),
+            search_query="Street Vendors Act 2014 Town Vending Committee certificate of vending seizure eviction goods",
+            doc_ids=("street-vendors-2014",),
+            anchor_patterns=("/sec-3", "/sec-18", "/sec-19", "/sec-27"),
+        ))
+
     return packs
 
 
 def _bnss_pack(query: str) -> SourcePack:
-    if _has_any(query, ("fir", "police refused", "police not", "thana", "station")):
-        search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 FIR information police refusal magistrate investigation"
-        anchor_patterns = ("/sec-173", "/sec-174", "/sec-175")
+    if _has_any(query, ("section 91", "crpc 91", "summons to produce", "produce document", "phone", "mobile", "device")):
+        search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 section 94 summons to produce document electronic record thing"
+        anchor_patterns = ("/sec-94",)
     elif _has_any(query, ("default bail", "no chargesheet", "charge sheet", "60 days", "90 days", "custody")):
         search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 default bail detention chargesheet custody section 187"
         anchor_patterns = ("/sec-187",)
+    elif _has_any(query, ("fir", "police refused", "police not", "thana", "station")):
+        search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 FIR information police refusal magistrate investigation"
+        anchor_patterns = ("/sec-173", "/sec-174", "/sec-175")
     else:
         search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 bail arrest remand custody criminal procedure"
         anchor_patterns = ()
@@ -271,6 +365,34 @@ def _bnss_pack(query: str) -> SourcePack:
         title_patterns=("Bharatiya Nagarik Suraksha Sanhita 2023",),
         search_query=search_query,
         doc_ids=("bnss-2023",),
+        anchor_patterns=anchor_patterns,
+    )
+
+
+def _crpc_pack(query: str, *, notice: bool = False) -> SourcePack:
+    if notice or _has_any(query, ("section 91", "summons to produce", "produce document", "phone", "mobile", "device")):
+        search_query = "Code of Criminal Procedure 1973 section 91 summons to produce document or other thing"
+        anchor_patterns = ("/sec-91",)
+    elif _has_any(query, ("default bail", "no chargesheet", "charge sheet", "60 days", "90 days", "custody", "remand")):
+        search_query = "Code of Criminal Procedure 1973 section 167 default bail detention chargesheet custody remand"
+        # This older IndiaCode PDF extracts s.167 text under a split s.161
+        # anchor sequence. Keep the real section in the query and include the
+        # observed anchors so the exact text is still promoted.
+        anchor_patterns = ("/sec-161-j", "/sec-161-k", "/sec-161-l", "/sec-161-m", "/sec-167")
+    elif _has_any(query, ("fir", "police refused", "police not", "thana", "station")):
+        search_query = "Code of Criminal Procedure 1973 section 154 FIR police refusal magistrate investigation"
+        anchor_patterns = ("/sec-154", "/sec-156")
+    elif _has_any(query, ("anticipatory", "before arrest")):
+        search_query = "Code of Criminal Procedure 1973 section 438 anticipatory bail"
+        anchor_patterns = ("/sec-438",)
+    else:
+        search_query = "Code of Criminal Procedure 1973 bail arrest remand criminal procedure"
+        anchor_patterns = ("/sec-437", "/sec-439", "/sec-167")
+    return SourcePack(
+        id="crpc_1973",
+        title_patterns=("Code of Criminal Procedure 1973", "Code of Criminal Procedure, 1973"),
+        search_query=search_query,
+        doc_ids=("crpc-1973",),
         anchor_patterns=anchor_patterns,
     )
 
@@ -313,6 +435,15 @@ def _uses_legacy_criminal_regime(route: MatterRoute) -> bool:
 
 def _has_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _is_scst_poa_context(q: str) -> bool:
+    if _has_any(q, (
+        "dalit", "caste", "scheduled caste", "scheduled tribe", "atrocity",
+        "thakur", "pahan", "sarna", "adivasi", "sc/st", "sc st",
+    )):
+        return True
+    return re.search(r"\b(?:sc|st)\b", q) is not None
 
 
 __all__ = ["SourcePack", "source_packs_for_route"]

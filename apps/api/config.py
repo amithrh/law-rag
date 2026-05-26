@@ -1,6 +1,7 @@
 """App configuration loaded from .env."""
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -82,6 +83,16 @@ class Settings(BaseSettings):
     embedding_runtime: Literal["flag", "st"] = "flag"
 
     # LLM (Ollama)
+    # Use an explicit IPv4 loopback host by default. On Mac/OrbStack,
+    # `localhost` can resolve to the Docker-published IPv6 listener first,
+    # which routes generation through the CPU-only Ollama container even
+    # when the faster host Ollama service is running on 127.0.0.1.
+    ollama_api_host: str = "127.0.0.1"
+    # Legacy compose/env name. Host-side Mac runs intentionally ignore this
+    # when it is set to the docker service name, but containerized API runs
+    # still honor it for backwards compatibility.
+    ollama_host: str = ""
+    ollama_port: int = 11434
     ollama_host_port: int = 11434
     # qwen3:14b (Apache-2.0) — dense 14B, hybrid thinking (we disable via
     # `think:false` in llm.py). Round-8 confirmed qwen3:32b is NOT a clean
@@ -91,6 +102,29 @@ class Settings(BaseSettings):
     # where 32b clearly wins.
     llm_model: str = "qwen3:14b"
     llm_max_tokens: int = 768
+
+    @property
+    def resolved_ollama_api_host(self) -> str:
+        """Return the Ollama host the API process should call.
+
+        Host-side development defaults to 127.0.0.1 to avoid Mac/OrbStack
+        `localhost` ambiguity. Containerized/prod deployments historically set
+        OLLAMA_HOST=ollama, so honor that legacy name only when the API is
+        actually running in a container or explicitly marked as such.
+        """
+        if self.ollama_api_host and self.ollama_api_host != "127.0.0.1":
+            return self.ollama_api_host
+        if self.ollama_host and (
+            os.environ.get("API_IN_DOCKER") == "1" or Path("/.dockerenv").exists()
+        ):
+            return self.ollama_host
+        return self.ollama_api_host or "127.0.0.1"
+
+    @property
+    def resolved_ollama_api_port(self) -> int:
+        if self.resolved_ollama_api_host == self.ollama_host and self.ollama_port:
+            return self.ollama_port
+        return self.ollama_host_port
 
     # Retrieval
     bm25_top_k: int = 100
@@ -327,6 +361,12 @@ class Settings(BaseSettings):
     # queries in the 102-query e2e eval (scripts/eval_query_expand.py).
     # Kill switch — flip to False to bypass and use plain hybrid_retrieve.
     query_expansion_enabled: bool = True
+    # Product latency gate: deterministic route-aware expansions stay on,
+    # but the fallback LLM rewrite call is disabled by default. The live
+    # eval showed that unresolved/general categories paid ~15s before
+    # retrieval for marginal recall benefit. Operators can enable this for
+    # offline recall sweeps via QUERY_EXPANSION_LLM_ENABLED=true.
+    query_expansion_llm_enabled: bool = False
     # Latency hardening: route-aware deterministic expansion handles common
     # matters without an LLM call. For ambiguous cases, cap variants so
     # retrieval/rerank cost is bounded. Total variants = original + this.
@@ -335,7 +375,7 @@ class Settings(BaseSettings):
     # route/LLM variants into one expanded search query and retrieves once.
     # Single is the default because live timing showed candidate retrieval
     # dominating latency (>40s) more than generation.
-    query_expansion_strategy: Literal["single", "multi"] = "multi"
+    query_expansion_strategy: Literal["single", "multi"] = "single"
     # When route-aware variants exist, the legal variant handles synonym
     # bridging. Skip the expensive sparse JSONB head on the original query
     # during multi-query retrieval to keep latency under control.

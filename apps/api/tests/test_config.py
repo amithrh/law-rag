@@ -19,7 +19,11 @@ def reset_env(monkeypatch):
     # Strip any DATABASE_URL / POSTGRES_* from the environment so each test
     # constructs Settings deterministically.
     for k in list(os.environ):
-        if k.startswith("POSTGRES_") or k == "DATABASE_URL":
+        if (
+            k.startswith("POSTGRES_")
+            or k.startswith("OLLAMA_")
+            or k in {"DATABASE_URL", "API_IN_DOCKER"}
+        ):
             monkeypatch.delenv(k, raising=False)
     yield
 
@@ -98,6 +102,29 @@ class TestDatabaseUrlResolution:
 class TestSettingsDefaults:
     def test_rerank_enabled_by_default(self):
         assert Settings(database_url="postgresql://x").rerank_enabled is True
+
+    def test_ollama_api_host_uses_ipv4_loopback_by_default(self):
+        # Avoid Mac/OrbStack localhost ambiguity where ::1 can hit the
+        # Docker-published CPU-only Ollama listener before host Ollama.
+        assert Settings(database_url="postgresql://x").ollama_api_host == "127.0.0.1"
+        assert (
+            Settings(database_url="postgresql://x").resolved_ollama_api_host
+            == "127.0.0.1"
+        )
+
+    def test_legacy_ollama_host_is_ignored_for_host_side_runs(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_HOST", "ollama")
+        s = Settings(database_url="postgresql://x")
+        assert s.ollama_host == "ollama"
+        assert s.resolved_ollama_api_host == "127.0.0.1"
+
+    def test_legacy_ollama_host_is_honored_in_docker(self, monkeypatch):
+        monkeypatch.setenv("API_IN_DOCKER", "1")
+        monkeypatch.setenv("OLLAMA_HOST", "ollama")
+        monkeypatch.setenv("OLLAMA_PORT", "11435")
+        s = Settings(database_url="postgresql://x")
+        assert s.resolved_ollama_api_host == "ollama"
+        assert s.resolved_ollama_api_port == 11435
 
     def test_strict_stop_thresholds_with_suppression(self):
         # Per Codex review #1, uncited sentences are suppressed (dropped

@@ -22,6 +22,7 @@ from apps.api.retrieval import (
     _apply_authority_rerank_boosts,
     _bm25_retrieve_sql,
     _preserve_required_source_packs,
+    _rerank_candidate_union,
     _source_cluster_scores,
     _source_quality_score,
     rrf_fuse,
@@ -204,6 +205,63 @@ def test_source_cluster_scores_reward_repeated_aligned_document():
     scores = _source_cluster_scores(clustered, route_category="rti")
 
     assert scores[10] > scores[20]
+
+
+def test_query_expansion_defaults_to_single_folded_retrieval():
+    s = Settings(database_url="postgresql://x")
+
+    assert s.query_expansion_enabled is True
+    assert s.query_expansion_llm_enabled is False
+    assert s.query_expansion_strategy == "single"
+    assert s.query_expansion_max_variants == 1
+
+
+def test_rerank_candidate_union_preserves_required_pack(monkeypatch):
+    from apps.api import rerank as rerank_module
+    from apps.api.source_packs import SourcePack
+
+    def fake_rerank(query, candidates, keep=None):
+        for candidate in candidates:
+            candidate.rerank_score = 0.95 if candidate.chunk_id in {1, 2} else 0.05
+        return sorted(
+            candidates,
+            key=lambda c: c.rerank_score if c.rerank_score is not None else -1.0,
+            reverse=True,
+        )
+
+    monkeypatch.setattr(rerank_module, "rerank", fake_rerank)
+    candidates = [
+        _retrieved_chunk(1, rerank=0.0),
+        _retrieved_chunk(2, rerank=0.0),
+        _retrieved_chunk(
+            99,
+            rerank=0.0,
+            metadata={"_required_source_pack": "bnss_2023"},
+        ),
+    ]
+    pack = SourcePack(
+        id="bnss_2023",
+        title_patterns=("Bharatiya Nagarik Suraksha Sanhita",),
+        doc_ids=("bnss-2023",),
+        anchor_patterns=("/sec-187",),
+        search_query="default bail BNSS section 187",
+    )
+
+    out = _rerank_candidate_union(
+        "default bail after chargesheet delay",
+        candidates,
+        variants=["default bail", "BNSS section 187 default bail"],
+        route_category="criminal_defence_bail",
+        packs=[pack],
+        top_k=2,
+        timings={},
+    )
+
+    assert len(out) == 2
+    assert any(c.chunk_id == 99 for c in out)
+    required = next(c for c in out if c.chunk_id == 99)
+    assert required.rerank_score is not None
+    assert required.rerank_score >= 0.42
 
 
 def _retrieved_chunk(

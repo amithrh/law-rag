@@ -271,7 +271,12 @@ def test_answer_emits_coverage_passages_and_sentences(monkeypatch):
 
 
 @pytest.mark.needs_stack
-def test_answer_off_topic_short_circuits_before_model_or_retrieval(monkeypatch):
+@pytest.mark.parametrize("query", [
+    "recipe for biryani",
+    "recommend a laptop under 60000 for gaming",
+    "who won yesterday cricket match india pakistan",
+])
+def test_answer_off_topic_short_circuits_before_model_or_retrieval(monkeypatch, query):
     """Off-topic routing should refuse immediately.
 
     A final live sanity check caught this taking the full retrieval path,
@@ -291,7 +296,7 @@ def test_answer_off_topic_short_circuits_before_model_or_retrieval(monkeypatch):
 
     with TestClient(app) as c:
         with c.stream("POST", "/answer", json={
-            "q": "recipe for biryani",
+            "q": query,
             "top_k": 4,
         }) as r:
             events = _collect_events(r)

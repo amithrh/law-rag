@@ -21,6 +21,13 @@ class LLMModelUnavailable(RuntimeError):
     """Raised when the configured Ollama model is not available locally."""
 
 
+def _ollama_url(path: str) -> str:
+    s = get_settings()
+    host = getattr(s, "resolved_ollama_api_host", "127.0.0.1")
+    port = getattr(s, "resolved_ollama_api_port", s.ollama_host_port)
+    return f"http://{host}:{port}{path}"
+
+
 def _model_unavailable_message(
     *,
     model: str,
@@ -44,8 +51,7 @@ def _model_unavailable_message(
 
 async def list_available_models(timeout_s: float = 2.0) -> list[str]:
     """Return local Ollama model names from /api/tags."""
-    s = get_settings()
-    url = f"http://localhost:{s.ollama_host_port}/api/tags"
+    url = _ollama_url("/api/tags")
     async with httpx.AsyncClient(timeout=timeout_s) as client:
         resp = await client.get(url)
         resp.raise_for_status()
@@ -163,7 +169,7 @@ async def stream_chat(
             "num_predict": max_tokens,
         },
     }
-    url = f"http://localhost:{s.ollama_host_port}/api/chat"
+    url = _ollama_url("/api/chat")
     async with httpx.AsyncClient(timeout=600) as client, client.stream(
         "POST",
         url,

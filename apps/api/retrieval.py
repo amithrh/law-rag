@@ -581,6 +581,157 @@ async def _fetch_source_pack_candidates(
     return out
 
 
+async def _merge_required_source_packs(
+    pool: asyncpg.Pool,
+    query: str,
+    *,
+    union: dict[int, RetrievedChunk],
+    packs: list[SourcePack],
+    timings: dict[str, float] | None,
+) -> None:
+    """Merge exact required-source candidates into an existing candidate map."""
+    s = get_settings()
+    if not getattr(s, "required_source_pack_enabled", True) or not packs:
+        return
+
+    t_source_pack = time.perf_counter()
+    try:
+        source_candidates = await _fetch_source_pack_candidates(
+            pool,
+            query,
+            packs=packs,
+            limit_per_pack=getattr(s, "required_source_pack_limit_per_pack", 4),
+        )
+    except Exception as e:
+        logger.warning("required-source pack retrieval failed: %s", e)
+        source_candidates = []
+    if timings is not None:
+        timings["required_source_pack"] = time.perf_counter() - t_source_pack
+
+    for c in source_candidates:
+        existing = union.get(c.chunk_id)
+        if existing is None:
+            union[c.chunk_id] = c
+            continue
+        existing.metadata.update(c.metadata)
+        existing.bm25_score = max(existing.bm25_score, c.bm25_score)
+
+
+def _rerank_candidate_union(
+    query: str,
+    candidate_list: list[RetrievedChunk],
+    *,
+    variants: list[str],
+    route_category: str,
+    packs: list[SourcePack],
+    top_k: int | None,
+    timings: dict[str, float] | None,
+) -> list[RetrievedChunk]:
+    """Rerank a merged candidate set while preserving exact source packs."""
+    s = get_settings()
+    limit = top_k or s.rerank_top_k
+    if not candidate_list:
+        return []
+
+    do_rerank = s.rerank_enabled
+    if not do_rerank:
+        return candidate_list[:limit]
+
+    from apps.api.rerank import rerank as _rerank
+    # Cap candidates at rerank_input_k to bound cost.
+    candidate_list.sort(
+        key=lambda c: (
+            1 if c.metadata.get("_required_source_pack") else 0,
+            c.combined_score,
+        ),
+        reverse=True,
+    )
+    candidate_list = candidate_list[: s.rerank_input_k]
+
+    # rerank() mutates each chunk's rerank_score in place. To take
+    # the max across variants we call it once per query and copy
+    # the scores into a side dict, then write the max back.
+    max_scores: dict[int, float] = {c.chunk_id: -1.0 for c in candidate_list}
+    rerank_queries = variants[: max(1, getattr(s, "rerank_variant_query_limit", 2))]
+    t_variant_rerank = time.perf_counter()
+    for q in rerank_queries:
+        # `keep=None` returns the full list, sorted by THIS query's score
+        reranked = _rerank(q, list(candidate_list), keep=None)
+        for c in reranked:
+            if c.rerank_score is not None and c.rerank_score > max_scores[c.chunk_id]:
+                max_scores[c.chunk_id] = c.rerank_score
+    if timings is not None:
+        timings["variant_rerank"] = time.perf_counter() - t_variant_rerank
+
+    # Write the per-chunk max back and re-sort. -1.0 default means
+    # rerank returned None (degraded state) → keep negative so the
+    # downstream `top_rerank = max(...)` check fails closed.
+    #
+    # 2026-05-21 additions (Codex/agent findings):
+    # A) section-N boost: when the ORIGINAL query contains an
+    #    explicit "section N" / "Article N" reference, multiply
+    #    the rerank score by 1.5× for any chunk whose anchor
+    #    matches `<slug>/sec-N`. Targets the canonical
+    #    "section 138 NI Act" failure where the bare-Act chunk
+    #    was retrieved but the rerank still preferred SC caselaw
+    #    that discusses s.138 more verbosely.
+    # B) bare-act source boost: +0.05 to rerank score for chunks
+    #    whose anchor doesn't match SC's "<year>-insc-..." pattern.
+    #    Mild preference for operative law over caselaw when both
+    #    score similarly. Inspired by TurboVec's source_quality
+    #    weight feature.
+    import re as _re
+    _sec_ref = _re.compile(r"section\s+(\d{1,4}[A-Z]?)|article\s+(\d{1,4}[A-Z]?)", _re.IGNORECASE)
+    _sc_anchor = _re.compile(r"^\d{4}-(insc|\d+-\d+)")
+    sec_matches = _sec_ref.findall(query)
+    target_secs: set[str] = set()
+    for m in sec_matches:
+        target_secs.add(m[0] or m[1])
+
+    for c in candidate_list:
+        score = max_scores[c.chunk_id]
+        if score < 0.0:
+            c.rerank_score = None
+            continue
+        # A) section-N boost
+        if target_secs and c.anchor:
+            anchor_lower = c.anchor.lower()
+            for tsec in target_secs:
+                if f"/sec-{tsec.lower()}" in anchor_lower:
+                    # Boost: 50% of headroom toward 1.0
+                    score = min(1.0, score + 0.5 * (1.0 - score))
+                    break
+        # B) bare-act source boost (mild preference for operative law)
+        if c.anchor and not _sc_anchor.match(c.anchor):
+            # 5% headroom-bonus toward 1.0
+            score = min(1.0, score + 0.05 * (1.0 - score))
+        # C) required-source pack boost. The route picked the matter
+        # and the pack fetched an exact indexed Act title. Keep that
+        # authority above the coverage gate even when the cross-encoder
+        # prefers a factually similar judgment.
+        if c.metadata.get("_required_source_pack"):
+            score = max(score, getattr(s, "required_source_pack_min_score", 0.42))
+            boost = getattr(s, "required_source_pack_boost", 0.10)
+            score = min(1.0, score + boost * (1.0 - score))
+        c.rerank_score = score
+    _apply_authority_rerank_boosts(
+        candidate_list,
+        route_category=route_category,
+        source_quality_boost=getattr(s, "source_quality_boost", 0.06),
+        source_cluster_boost=getattr(s, "source_cluster_boost", 0.04),
+    )
+    candidate_list.sort(
+        key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,
+        reverse=True,
+    )
+    return _preserve_required_source_packs(
+        candidate_list,
+        [pack.id for pack in packs],
+        limit=limit,
+        preferred_top_n=getattr(s, "required_source_pack_preferred_top_n", 4),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Hybrid retrieval — orchestrator
 # ---------------------------------------------------------------------------
@@ -882,6 +1033,51 @@ async def multi_query_hybrid_retrieve(
 
     if len(variants) == 1:
         # Either disabled, LLM down, or NOT_LEGAL — just original.
+        if getattr(s, "query_expansion_strategy", "single") == "single":
+            t_single = time.perf_counter()
+            chunks = await hybrid_retrieve(
+                pool,
+                query,
+                source_types=source_types,
+                subject_areas=subject_areas,
+                top_k=s.rerank_input_k,
+                use_reranker=False,
+                use_sparse=False,
+            )
+            if timings is not None:
+                timings["retrieval_single_query"] = time.perf_counter() - t_single
+            if not chunks:
+                return [], []
+
+            union = {c.chunk_id: c for c in chunks}
+            route = route_matter(query)
+            packs = source_packs_for_route(route, query)
+            await _merge_required_source_packs(
+                pool,
+                query,
+                union=union,
+                packs=packs,
+                timings=timings,
+            )
+            candidate_list = _rerank_candidate_union(
+                query,
+                list(union.values()),
+                variants=variants,
+                route_category=route.category,
+                packs=packs,
+                top_k=top_k,
+                timings=timings,
+            )
+            logger.info(
+                "single_query_retrieve: original only → %d candidates → top %d "
+                "(top_rerank=%.3f)",
+                len(union),
+                len(candidate_list),
+                (candidate_list[0].rerank_score if candidate_list and
+                 candidate_list[0].rerank_score is not None else 0.0),
+            )
+            return candidate_list, []
+
         t_single = time.perf_counter()
         chunks = await hybrid_retrieve(
             pool, query,
@@ -900,11 +1096,44 @@ async def multi_query_hybrid_retrieve(
             expanded_query,
             source_types=source_types,
             subject_areas=subject_areas,
-            top_k=top_k,
+            top_k=s.rerank_input_k,
+            use_reranker=False,
+            use_sparse=False,
         )
         if timings is not None:
             timings["single_expanded_retrieval"] = time.perf_counter() - t_single_expanded
-        return chunks, variants[1:]
+        if not chunks:
+            return [], variants[1:]
+
+        union = {c.chunk_id: c for c in chunks}
+        route = route_matter(query)
+        packs = source_packs_for_route(route, query)
+        await _merge_required_source_packs(
+            pool,
+            query,
+            union=union,
+            packs=packs,
+            timings=timings,
+        )
+        candidate_list = _rerank_candidate_union(
+            query,
+            list(union.values()),
+            variants=variants,
+            route_category=route.category,
+            packs=packs,
+            top_k=top_k,
+            timings=timings,
+        )
+        logger.info(
+            "single_query_retrieve: %d variants → %d candidates → top %d "
+            "(top_rerank=%.3f)",
+            len(variants),
+            len(union),
+            len(candidate_list),
+            (candidate_list[0].rerank_score if candidate_list and
+             candidate_list[0].rerank_score is not None else 0.0),
+        )
+        return candidate_list, variants[1:]
 
     # Stage 2a: gather candidates per variant in parallel.
     #
@@ -955,137 +1184,22 @@ async def multi_query_hybrid_retrieve(
 
     route = route_matter(query)
     packs = source_packs_for_route(route, query)
-    if getattr(s, "required_source_pack_enabled", True) and packs:
-        t_source_pack = time.perf_counter()
-        try:
-            source_candidates = await _fetch_source_pack_candidates(
-                pool,
-                query,
-                packs=packs,
-                limit_per_pack=getattr(s, "required_source_pack_limit_per_pack", 4),
-            )
-        except Exception as e:
-            logger.warning("required-source pack retrieval failed: %s", e)
-            source_candidates = []
-        if timings is not None:
-            timings["required_source_pack"] = time.perf_counter() - t_source_pack
-
-        for c in source_candidates:
-            existing = union.get(c.chunk_id)
-            if existing is None:
-                union[c.chunk_id] = c
-                continue
-            existing.metadata.update(c.metadata)
-            existing.bm25_score = max(existing.bm25_score, c.bm25_score)
-
-    candidate_list = list(union.values())
-
-    # Stage 3: rerank against original + each variant, take the MAX score
-    # per chunk. Rationale: the original query uses lay phrasing ("son threw
-    # me out") while variants use legal vocabulary ("Senior Citizens Act
-    # section 23 revocation of transfer"). The cross-encoder gives high
-    # scores ONLY when surface forms align — a lay-only rerank scores
-    # the right bare-Act chunks at 0.05-0.15 even when they're the right
-    # answer (verified on "i am prostitute can police catch me" → ITPA
-    # sec-7 ranked #1 in candidates but reranked at 0.13, below the 0.4
-    # coverage gate, → refused). Taking the max across all reranked
-    # variants captures "this chunk matches at least one of the queries
-    # we expanded into" — which IS what the user wanted to ask.
-    do_rerank = s.rerank_enabled
-    if do_rerank:
-        from apps.api.rerank import rerank as _rerank
-        # Cap candidates at rerank_input_k to bound cost.
-        candidate_list.sort(
-            key=lambda c: (
-                1 if c.metadata.get("_required_source_pack") else 0,
-                c.combined_score,
-            ),
-            reverse=True,
-        )
-        candidate_list = candidate_list[: s.rerank_input_k]
-
-        # rerank() mutates each chunk's rerank_score in place. To take
-        # the max across variants we call it once per query and copy
-        # the scores into a side dict, then write the max back.
-        max_scores: dict[int, float] = {c.chunk_id: -1.0 for c in candidate_list}
-        rerank_queries = variants[: max(1, getattr(s, "rerank_variant_query_limit", 2))]
-        t_variant_rerank = time.perf_counter()
-        for q_idx, q in enumerate(rerank_queries):
-            # `keep=None` returns the full list, sorted by THIS query's score
-            reranked = _rerank(q, list(candidate_list), keep=None)
-            for c in reranked:
-                if c.rerank_score is not None and c.rerank_score > max_scores[c.chunk_id]:
-                    max_scores[c.chunk_id] = c.rerank_score
-        if timings is not None:
-            timings["variant_rerank"] = time.perf_counter() - t_variant_rerank
-
-        # Write the per-chunk max back and re-sort. -1.0 default means
-        # rerank returned None (degraded state) → keep negative so the
-        # downstream `top_rerank = max(...)` check fails closed.
-        #
-        # 2026-05-21 additions (Codex/agent findings):
-        # A) section-N boost: when the ORIGINAL query contains an
-        #    explicit "section N" / "Article N" reference, multiply
-        #    the rerank score by 1.5× for any chunk whose anchor
-        #    matches `<slug>/sec-N`. Targets the canonical
-        #    "section 138 NI Act" failure where the bare-Act chunk
-        #    was retrieved but the rerank still preferred SC caselaw
-        #    that discusses s.138 more verbosely.
-        # B) bare-act source boost: +0.05 to rerank score for chunks
-        #    whose anchor doesn't match SC's "<year>-insc-..." pattern.
-        #    Mild preference for operative law over caselaw when both
-        #    score similarly. Inspired by TurboVec's source_quality
-        #    weight feature.
-        import re as _re
-        _sec_ref = _re.compile(r"section\s+(\d{1,4}[A-Z]?)|article\s+(\d{1,4}[A-Z]?)", _re.IGNORECASE)
-        _sc_anchor = _re.compile(r"^\d{4}-(insc|\d+-\d+)")
-        sec_matches = _sec_ref.findall(query)
-        target_secs: set[str] = set()
-        for m in sec_matches:
-            target_secs.add(m[0] or m[1])
-
-        for c in candidate_list:
-            score = max_scores[c.chunk_id]
-            if score < 0.0:
-                c.rerank_score = None
-                continue
-            # A) section-N boost
-            if target_secs and c.anchor:
-                anchor_lower = c.anchor.lower()
-                for tsec in target_secs:
-                    if f"/sec-{tsec.lower()}" in anchor_lower:
-                        # Boost: 50% of headroom toward 1.0
-                        score = min(1.0, score + 0.5 * (1.0 - score))
-                        break
-            # B) bare-act source boost (mild preference for operative law)
-            if c.anchor and not _sc_anchor.match(c.anchor):
-                # 5% headroom-bonus toward 1.0
-                score = min(1.0, score + 0.05 * (1.0 - score))
-            # C) required-source pack boost. The route picked the matter
-            # and the pack fetched an exact indexed Act title. Keep that
-            # authority above the coverage gate even when the cross-encoder
-            # prefers a factually similar judgment.
-            if c.metadata.get("_required_source_pack"):
-                score = max(score, getattr(s, "required_source_pack_min_score", 0.42))
-                boost = getattr(s, "required_source_pack_boost", 0.10)
-                score = min(1.0, score + boost * (1.0 - score))
-            c.rerank_score = score
-        _apply_authority_rerank_boosts(
-            candidate_list,
-            route_category=route.category,
-            source_quality_boost=getattr(s, "source_quality_boost", 0.06),
-            source_cluster_boost=getattr(s, "source_cluster_boost", 0.04),
-        )
-        candidate_list.sort(
-            key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,
-            reverse=True,
-        )
-        candidate_list = _preserve_required_source_packs(
-            candidate_list,
-            [pack.id for pack in packs],
-            limit=top_k or s.rerank_top_k,
-            preferred_top_n=getattr(s, "required_source_pack_preferred_top_n", 4),
-        )
+    await _merge_required_source_packs(
+        pool,
+        query,
+        union=union,
+        packs=packs,
+        timings=timings,
+    )
+    candidate_list = _rerank_candidate_union(
+        query,
+        list(union.values()),
+        variants=variants,
+        route_category=route.category,
+        packs=packs,
+        top_k=top_k,
+        timings=timings,
+    )
 
     logger.info(
         "multi_query_retrieve: %d variants → %d union candidates → "

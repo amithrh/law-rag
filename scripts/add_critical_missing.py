@@ -3,14 +3,14 @@
 
 Why this exists (May 23, 2026):
   The 500-query eval audit (data/processed/eval_500_REAL_ISSUES.md) found
-  62.5% retrieval_miss across personas. Root cause: 7 critical Acts whose
+  62.5% retrieval_miss across personas. Root cause: critical Acts whose
   full bare-Act PDFs were cached in data/raw/acts/ but never DB-inserted
   because tasks #14/#15 were marked complete prematurely. Re-running
   add_p0_batch.py wastes ~10 min trying to re-fetch the 77 wave-1
   handle-based entries (IndiaCode now returning 404s for handles), then
   reaching the cached_pdf entries.
 
-  This script trims to the 7 wave-2 entries only.
+  This script trims to the cached wave-2 entries only.
 
   Same chunk + embed + insert path as add_p0_batch.py — imports the
   pipeline functions directly to avoid duplication.
@@ -23,6 +23,12 @@ Wave-2 entries:
   - Code on Wages 2019                  (wages consolidation)
   - Motor Vehicles Act 1988             (gig-economy / accidents)
   - Payment of Gratuity Act 1972        (retirement benefit)
+  - Code of Criminal Procedure 1973     (legacy criminal procedure)
+  - Street Vendors Act 2014             (municipal seizure / vending)
+  - Forest Rights Act 2006              (tribal forest rights)
+  - PESA Act 1996                       (Scheduled Area gram sabha consent)
+  - MGNREGA Act 2005                    (job-card / wage-delay claims)
+  - BOCW Act 1996                       (construction worker welfare)
 
 Usage:
   PYTHONPATH=. .venv/bin/python scripts/add_critical_missing.py
@@ -88,6 +94,42 @@ WAVE2 = [
      "title": "Payment of Gratuity Act 1972",
      "cached_pdf": "data/raw/acts/gratuity-1972__a1972-39.pdf",
      "subject_area": "service_employment"},
+    {"slug": "crpc-1973",
+     "title": "Code of Criminal Procedure 1973",
+     "cached_pdf": "data/raw/acts/crpc-1973__ccp1973.pdf",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/6796/1/ccp1973.pdf",
+     "subject_area": "criminal",
+     "as_at": "1974-04-01"},
+    {"slug": "street-vendors-2014",
+     "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014",
+     "cached_pdf": "data/raw/acts/street-vendors-2014__a2014-07.pdf",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/2124/1/a2014-07.pdf",
+     "subject_area": "civil_general",
+     "as_at": "2014-03-04"},
+    {"slug": "fra-2006",
+     "title": "Scheduled Tribes and Other Traditional Forest Dwellers (Recognition of Forest Rights) Act 2006",
+     "cached_pdf": "data/raw/acts/fra-2006__a2007-02.pdf",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/8311/1/a2007-02.pdf",
+     "subject_area": "tribal_caste",
+     "as_at": "2007-01-01"},
+    {"slug": "pesa-1996",
+     "title": "Panchayats (Extension to the Scheduled Areas) Act 1996",
+     "cached_pdf": "data/raw/acts/pesa-1996__A1996-40.pdf",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/1973/1/A1996-40.pdf",
+     "subject_area": "tribal_caste",
+     "as_at": "1996-12-24"},
+    {"slug": "mgnrega-2005",
+     "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005",
+     "cached_pdf": "data/raw/acts/mgnrega-2005__the_mahatma_gandhi_national_rural_employment_guarantee_act_2005.pdf",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/6930/1/the_mahatma_gandhi_national_rural_employment_guarantee_act%2C_2005.pdf",
+     "subject_area": "service_employment",
+     "as_at": "2005-09-05"},
+    {"slug": "bocw-1996",
+     "title": "Building and Other Construction Workers (Regulation of Employment and Conditions of Service) Act 1996",
+     "cached_pdf": "data/raw/acts/bocw-1996__building-and-other-construction-workers-act-1996.pdf",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/9608/1/building-and-other-construction-workers-act-1996.pdf",
+     "subject_area": "service_employment",
+     "as_at": "1996-08-19"},
 ]
 
 EMBEDDING_MODEL = "BAAI/bge-m3"
@@ -102,8 +144,76 @@ def parse_pdf(path: Path) -> tuple[str, int]:
     return text, n_pages
 
 
+def _registry_row(row: dict) -> dict:
+    pdf_local = row["pdf_local"]
+    return {
+        "slug": row["slug"],
+        "title": row["title"],
+        "handle_id": row.get("handle_id", ""),
+        "handle_url": row.get("handle_url", ""),
+        "pdf_url": row.get("pdf_url") or f"file://{pdf_local}",
+        "pdf_local": pdf_local,
+        "pdf_pages": row["n_pages"],
+        "pdf_bytes": row["pdf_bytes"],
+        "text_chars": row["text_chars"],
+        "text_sha256": row["text_sha256"],
+        "pii_hits": row["pii_hits"],
+        "subject_area_hint": row.get("subject_area"),
+        "as_at": row.get("as_at"),
+    }
+
+
+def append_missing_acts_registry_rows(rows: list[dict]) -> int:
+    """Append parsed Act metadata to data/processed/acts.jsonl if absent.
+
+    The data directory is ignored in git, but local evaluation and corpus
+    audits use this registry to decide whether a source-pack doc is genuinely
+    available. Keep it in sync with DB ingest without duplicating slugs.
+    """
+    out_jsonl = ROOT / "data" / "processed" / "acts.jsonl"
+    out_jsonl.parent.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    if out_jsonl.exists():
+        with out_jsonl.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                slug = data.get("slug")
+                if isinstance(slug, str):
+                    seen.add(slug)
+
+    new_rows = [r for r in rows if r["slug"] not in seen]
+    if not new_rows:
+        return 0
+    with out_jsonl.open("a") as f:
+        for row in new_rows:
+            f.write(json.dumps(_registry_row(row), ensure_ascii=False) + "\n")
+    return len(new_rows)
+
+
+async def existing_chunk_counts(pool, slugs: list[str]) -> dict[str, int]:
+    if not slugs:
+        return {}
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT d.doc_id, count(c.id)::int AS n_chunks
+            FROM documents d
+            LEFT JOIN chunks c ON c.document_id = d.id
+            WHERE d.doc_id = ANY($1::text[])
+            GROUP BY d.doc_id
+            """,
+            slugs,
+        )
+    return {row["doc_id"]: int(row["n_chunks"]) for row in rows}
+
+
 async def main() -> None:
-    pool = await get_pool()
     print(f"=== Wave-2 critical-missing-acts ingest ({len(WAVE2)} acts) ===")
 
     # Step 1: parse all PDFs
@@ -121,11 +231,15 @@ async def main() -> None:
             print(f"  ✗ {slug}: parse failed — {e}")
             continue
         red = redact(text)
+        pdf_bytes = pdf.stat().st_size
         parsed.append({
             **entry,
             "pdf_local": str(pdf),
             "n_pages": n_pages,
+            "pdf_bytes": pdf_bytes,
             "text_chars": len(red.text),
+            "text_sha256": hashlib.sha256(red.text.encode("utf-8")).hexdigest()[:16],
+            "pii_hits": len([h for h in red.hits if h.confidence > 0]),
             "text": red.text,
         })
         print(f"  ✓ {slug}: pages={n_pages}, chars={len(red.text):,}")
@@ -134,10 +248,31 @@ async def main() -> None:
         print("\nNothing to ingest — exiting.")
         return
 
+    added_registry_rows = append_missing_acts_registry_rows(parsed)
+    print(f"\nRegistry: appended {added_registry_rows} missing rows to data/processed/acts.jsonl")
+
+    pool = await get_pool()
+    counts = await existing_chunk_counts(pool, [r["slug"] for r in parsed])
+    to_ingest = []
+    for r in parsed:
+        n_chunks = counts.get(r["slug"], 0)
+        if n_chunks > 0:
+            print(f"  - {r['slug']}: already has {n_chunks} chunks — skipping embed/insert")
+            continue
+        to_ingest.append(r)
+
+    if not to_ingest:
+        print("\n=== Done ===")
+        print("  new documents : 0")
+        print("  reused orphan : 0")
+        print("  chunks inserted: 0")
+        print("  Note: run backfill_sparse_embeddings.py next for sparse vectors.")
+        return
+
     # Step 2: chunk all
     print("\nStep 2: chunk")
     all_chunks: list[tuple[dict, object]] = []
-    for r in parsed:
+    for r in to_ingest:
         as_at_val = r.get("as_at")
         if isinstance(as_at_val, str) and as_at_val:
             try:

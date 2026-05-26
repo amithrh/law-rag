@@ -53,10 +53,34 @@ _CRIME_WORDS = (
 _CYBER_WORDS = (
     "cyber", "hacked", "facebook", "instagram", "whatsapp", "otp",
     "phishing", "upi", "credit card", "debit card", "online transaction",
-    "deepfake", "nudes", "fake account", "sextortion", "upload",
-    "secretly recorded", "recorded us", "private video", "sex video",
-    "intimate photo", "intimate video", "scam", "digital arrest",
+    "deepfake", "fake account", "sextortion", "upload", "uploaded",
+    "secretly recorded", "recorded us", "scam", "digital arrest",
     "parcel has drugs", "fake cbi", "fake police call",
+)
+_INTIMATE_IMAGE_WORDS = (
+    "private photo", "private photos", "private picture", "private pictures",
+    "private video", "private videos", "intimate photo", "intimate photos",
+    "intimate video", "intimate videos", "nude photo", "nude photos",
+    "nudes", "morphed photo", "morphed photos", "leaked photo",
+    "leaked photos", "deepfake", "sex video",
+)
+_IMAGE_ABUSE_CONTEXT_WORDS = (
+    "send to", "send it to", "send my", "send our", "send her", "send his",
+    "share my", "share our", "show my", "show our", "forward my",
+    "forward our", "upload", "uploaded", "post online", "posted", "posting",
+    "leak", "leaked", "blackmail", "threat", "threaten", "threatens",
+    "threatened", "threatening", "telegram", "whatsapp", "instagram",
+    "facebook", "circulate", "circulating",
+)
+_INTIMATE_IMAGE_RISK_WORDS = (
+    "ex", "boyfriend", "girlfriend", "bf", "gf", "partner", "stranger",
+    "unknown person", "online friend", "has my nudes", "has our nudes",
+    "has my nude", "has my private photo", "has my private photos",
+    "has my intimate", "saved my nudes", "kept my nudes",
+)
+_INTIMATE_IMAGE_SERVICE_WORDS = (
+    "photographer", "wedding", "family photo", "photo shoot", "photoshoot",
+    "album", "designer", "studio", "refund", "lost", "defective", "service",
 )
 _CONSUMER_WORDS = (
     "refund", "defective", "damaged", "broken", "delivery", "order",
@@ -65,7 +89,15 @@ _CONSUMER_WORDS = (
 )
 _OFF_TOPIC_WORDS = (
     "weather", "recipe", "python", "javascript", "cricket score",
-    "movie", "biryani",
+    "cricket match", "movie", "biryani", "weekend party", "gaming laptop",
+    "recommend a laptop", "laptop under", "quicksort",
+)
+_LEGAL_HINT_WORDS = (
+    "act", "law", "legal", "court", "case", "fir", "police", "notice",
+    "complaint", "appeal", "bail", "arrest", "warrant", "warranty",
+    "refund", "defective", "consumer", "copyright", "trademark", "stolen",
+    "fraud", "harassment", "harass", "claim", "compensation", "rights",
+    "licence", "license", "contract", "rent", "landlord", "tenant",
 )
 _TRADEMARK_WORDS = (
     "trademark", "trade mark", "brand name", "logo", "passing off",
@@ -76,7 +108,8 @@ _TRIBAL_CASTE_WORDS = (
     "adivasi", "tribal", "sarna", "pahan", "dalit", "scheduled caste",
     "scheduled tribe", "sc st", "caste slur", "caste name", "untouchability",
     "forest rights", "gram sabha", "pesa", "st certificate", "gond",
-    "ifr title", "cfr title",
+    "ifr title", "cfr title", "community forest", "minor forest produce",
+    "tendu", "scheduled area",
 )
 _LAND_RECORD_WORDS = (
     "pattadar", "passbook", "patta", "khata", "khatian", "khasra",
@@ -98,7 +131,7 @@ _BAIL_WORDS = (
     "bail", "arrested", "arrest notice", "notice for arrest",
     "chargesheet", "charge sheet", "custody limit", "custody period",
     "judicial custody", "police custody", "remand", "fir copy",
-    "mcoca", "uapa",
+    "mcoca", "uapa", "narcotic", "narcotics",
 )
 _SOCIAL_WELFARE_WORDS = (
     "aadhaar", "aadhar", "pension", "scholarship", "ration card",
@@ -109,7 +142,8 @@ _SOCIAL_WELFARE_WORDS = (
 _SEXUAL_OFFENCE_SURVIVOR_WORDS = (
     "was raped", "raped by", "rape by", "molested me", "molested by",
     "sexual assault", "caretaker", "visually impaired", "disabled girl",
-    "minor girl", "child raped", "pocso victim",
+    "minor girl", "minor daughter", "daughter touched", "teacher touched",
+    "pocso complaint", "child raped", "pocso victim",
 )
 _PRISON_RELEASE_WORDS = (
     "parole", "furlough", "remission", "premature release",
@@ -144,7 +178,23 @@ _BUSINESS_LICENSE_WORDS = (
 )
 _GOVT_COURT_PROCEDURE_WORDS = (
     "mandamus", "writ", "article 226", "cognizance", "condonation",
-    "limitation", "summons", "labour court", "section 91", "bnss section 91",
+    "limitation", "summons", "labour court",
+)
+_SECTION_91_NOTICE_WORDS = (
+    "section 91", "crpc 91", "91 crpc", "notice under 91",
+    "summons to produce", "produce document", "produce documents",
+    "produce phone", "produce mobile", "hand over phone", "seize phone",
+    "phone and whatsapp", "phone data", "device notice",
+)
+_PASSPORT_PROCEDURE_WORDS = (
+    "passport police verification", "police verification", "adverse police report",
+    "passport refused", "passport rejection", "passport denied", "passport pending",
+    "rpo", "regional passport officer", "passport impounded", "passport revoked",
+    "passport renewal", "passport application",
+)
+_LOK_ADALAT_CHALLENGE_WORDS = (
+    "lok adalat award", "challenge lok adalat", "set aside lok adalat",
+    "lok adalat settlement", "national lok adalat award",
 )
 _EDUCATION_WORDS = (
     "rte", "school", "admission", "tc", "transfer certificate",
@@ -185,7 +235,7 @@ _MENTAL_HEALTH_WORDS = (
 def route_matter(query: str) -> MatterRoute:
     q = _norm(query)
 
-    if _has_any(q, _OFF_TOPIC_WORDS):
+    if _is_off_topic(q):
         return MatterRoute(
             category="off_topic",
             label="Outside legal-help scope",
@@ -196,6 +246,51 @@ def route_matter(query: str) -> MatterRoute:
             missing_facts=[],
             red_flags=[],
             action_pack=None,
+        )
+
+    if _is_section_91_notice(q):
+        return MatterRoute(
+            category="criminal_procedure_notice",
+            label="Police production notice / device request",
+            confidence=0.82,
+            urgency="high",
+            required_sources=[
+                "CrPC 1973 section 91 for pre-1 July 2024 matters",
+                "BNSS 2023 section 94 for current production summons",
+                "BSA 2023 / Evidence Act rules where electronic records are involved",
+            ],
+            forums=["investigating officer/police station", "criminal court", "legal aid/lawyer"],
+            missing_facts=["notice date", "case/FIR number", "issuing officer or court", "exact items demanded", "whether you are accused, witness, or complainant"],
+            red_flags=_red_flags(q),
+            action_pack=_criminal_notice_pack(),
+            legal_regime=_criminal_regime(q),
+        )
+
+    if _is_passport_procedure(q):
+        return MatterRoute(
+            category="passport_police_verification",
+            label="Passport police verification / refusal",
+            confidence=0.78,
+            urgency="medium",
+            required_sources=["Passports Act 1967", "Passport Rules / MEA police-verification procedure", "BNSS/CrPC only where a criminal case, warrant, or summons is involved"],
+            forums=["Passport Seva Kendra / Regional Passport Office", "passport grievance portal", "High Court writ jurisdiction where refusal is arbitrary", "District Legal Services Authority"],
+            missing_facts=["application file number", "police verification date", "adverse-report reason", "pending FIR/case/warrant details", "RPO notice or refusal order"],
+            red_flags=_red_flags(q),
+            action_pack=_passport_pack(),
+            legal_regime=_criminal_regime(q) if _has_any(q, ("criminal case", "fir", "warrant", "summons", "case pending")) else None,
+        )
+
+    if _is_lok_adalat_challenge(q):
+        return MatterRoute(
+            category="lok_adalat_award_challenge",
+            label="Lok Adalat award / settlement challenge",
+            confidence=0.80,
+            urgency="medium",
+            required_sources=["Legal Services Authorities Act 1987 section 21", "constitutional/writ review principles where fraud, no consent, or jurisdiction is alleged"],
+            forums=["District Legal Services Authority", "court that referred the matter", "High Court writ jurisdiction where exceptional grounds exist"],
+            missing_facts=["award date", "case number", "whether you signed/consented", "fraud/coercion/no-authority facts", "copy of award and settlement terms"],
+            red_flags=[],
+            action_pack=_lok_adalat_pack(),
         )
 
     if _has_any(q, _SOCIAL_WELFARE_WORDS):
@@ -240,12 +335,16 @@ def route_matter(query: str) -> MatterRoute:
             action_pack=_digital_platform_pack(),
         )
 
-    if _has_any(q, _CYBER_WORDS):
+    if _is_cyber_issue(q):
         return MatterRoute(
             category="cyber_fraud_or_harassment",
             label="Cyber fraud / online harassment",
             confidence=0.82,
-            urgency="emergency" if _has_any(q, ("lost money", "upi", "credit card", "debit card", "otp", "blackmail", "nudes", "deepfake", "upload", "secretly recorded", "intimate video", "sex video")) else "high",
+            urgency="emergency" if _has_any(q, (
+                "lost money", "upi", "credit card", "debit card", "otp",
+                "blackmail", "nudes", "nude", "deepfake", "upload",
+                "secretly recorded", "intimate video", "sex video",
+            )) or _is_intimate_image_emergency(q) else "high",
             required_sources=["Information Technology Act 2000", "BNS/BNSS or IPC/CrPC based on incident date"],
             forums=["National Cyber Crime Portal", "1930 cyber helpline", "local police station"],
             missing_facts=["incident date", "platform", "amount lost", "whether money is still moving", "screenshots/transaction IDs"],
@@ -432,9 +531,9 @@ def route_matter(query: str) -> MatterRoute:
             label="Cheque dishonour",
             confidence=0.82,
             urgency="high",
-            required_sources=["Negotiable Instruments Act 1881", "BNSS/CrPC complaint procedure"],
+            required_sources=["Negotiable Instruments Act 1881 sections 138 and 142", "BNSS/CrPC complaint procedure"],
             forums=["Judicial Magistrate court", "lawyer/legal aid for notice drafting"],
-            missing_facts=["date cheque returned", "bank return memo reason", "notice sent date", "amount", "drawer details"],
+            missing_facts=["date cheque returned", "bank return memo reason", "demand notice sent date", "15-day payment-window status", "amount and drawer details"],
             red_flags=[],
             action_pack=_cheque_pack(),
         )
@@ -491,12 +590,32 @@ def route_matter(query: str) -> MatterRoute:
             action_pack=_child_family_pack(),
         )
 
-    if _has_any(q, ("domestic violence", "husband beat", "husband is beating", "slaps me", "dowry", "in laws", "maintenance", "divorce", "custody")):
+    if _has_any(q, ("legal aid", "free lawyer", "nalsa", "dlsa", "lok adalat")) and not _is_family_safety_issue(q):
+        return MatterRoute(
+            category="legal_aid",
+            label="Legal aid / court support",
+            confidence=0.80,
+            urgency="medium",
+            required_sources=["Legal Services Authorities Act 1987", "NALSA schemes"],
+            forums=["District Legal Services Authority", "Taluk Legal Services Committee", "Lok Adalat where suitable"],
+            missing_facts=["district", "income/category eligibility", "case type", "court stage"],
+            red_flags=[],
+            action_pack=_legal_aid_pack(),
+        )
+
+    if _is_family_safety_issue(q) or _has_any(q, (
+        "domestic violence", "husband beat", "husband is beating",
+        "husband threatens", "husband threatened", "husband threatening",
+        "slaps me", "dowry", "in laws", "maintenance", "divorce", "custody",
+    )):
         return MatterRoute(
             category="family_domestic",
             label="Family / domestic violence / maintenance",
             confidence=0.74,
-            urgency="emergency" if _has_any(q, ("beating", "violence", "food", "locked", "threat")) else "high",
+            urgency="emergency" if _is_family_safety_issue(q) or _has_any(q, (
+                "beating", "violence", "food", "locked", "threat", "threatens",
+                "threatened", "threatening",
+            )) else "high",
             required_sources=["PWDVA 2005", "family law statute by religion", "BNSS/CrPC maintenance provisions where applicable"],
             forums=["Protection Officer", "Magistrate court", "Family Court", "District Legal Services Authority"],
             missing_facts=["religion/personal law context", "marriage date", "children", "current safety", "income and residence details"],
@@ -629,24 +748,11 @@ def route_matter(query: str) -> MatterRoute:
             label="RTI / government information",
             confidence=0.77,
             urgency="low",
-            required_sources=["Right to Information Act 2005"],
+            required_sources=["Right to Information Act 2005 sections 7 and 19"],
             forums=["Public Information Officer", "First Appellate Authority", "Information Commission"],
-            missing_facts=["public authority", "application date", "reply date", "RTI registration number"],
+            missing_facts=["public authority", "application date", "reply or non-reply date", "RTI registration number", "first appeal filing date if already filed"],
             red_flags=[],
             action_pack=_rti_pack(),
-        )
-
-    if _has_any(q, ("legal aid", "free lawyer", "nalsa", "dlsa", "lok adalat")):
-        return MatterRoute(
-            category="legal_aid",
-            label="Legal aid / court support",
-            confidence=0.80,
-            urgency="medium",
-            required_sources=["Legal Services Authorities Act 1987", "NALSA schemes"],
-            forums=["District Legal Services Authority", "Taluk Legal Services Committee", "Lok Adalat where suitable"],
-            missing_facts=["district", "income/category eligibility", "case type", "court stage"],
-            red_flags=[],
-            action_pack=_legal_aid_pack(),
         )
 
     if _has_any(q, _BANKING_CREDIT_WORDS):
@@ -730,6 +836,58 @@ def _has_any(text: str, needles: tuple[str, ...]) -> bool:
     return False
 
 
+def _is_off_topic(q: str) -> bool:
+    return _has_any(q, _OFF_TOPIC_WORDS) and not _has_any(q, _LEGAL_HINT_WORDS)
+
+
+def _is_section_91_notice(q: str) -> bool:
+    return _has_any(q, _SECTION_91_NOTICE_WORDS) and _has_any(q, ("police", "court", "fir", "case", "notice", "summons", "io", "investigating officer"))
+
+
+def _is_passport_procedure(q: str) -> bool:
+    return "passport" in q and _has_any(q, _PASSPORT_PROCEDURE_WORDS + ("criminal case", "case pending", "warrant", "summons"))
+
+
+def _is_lok_adalat_challenge(q: str) -> bool:
+    return _has_any(q, _LOK_ADALAT_CHALLENGE_WORDS) and _has_any(q, ("challenge", "set aside", "cancel", "fraud", "coercion", "without consent", "appeal", "review"))
+
+
+def _is_cyber_issue(q: str) -> bool:
+    if _has_any(q, _CYBER_WORDS):
+        return True
+    if not _has_any(q, _INTIMATE_IMAGE_WORDS):
+        return False
+    if _has_any(q, _IMAGE_ABUSE_CONTEXT_WORDS):
+        return True
+    if _has_any(q, _INTIMATE_IMAGE_SERVICE_WORDS):
+        return False
+    return _has_any(q, _INTIMATE_IMAGE_RISK_WORDS)
+
+
+def _is_intimate_image_emergency(q: str) -> bool:
+    return _has_any(q, _INTIMATE_IMAGE_WORDS) and (
+        _has_any(q, _IMAGE_ABUSE_CONTEXT_WORDS)
+        or (
+            _has_any(q, _INTIMATE_IMAGE_RISK_WORDS)
+            and not _has_any(q, _INTIMATE_IMAGE_SERVICE_WORDS)
+        )
+    )
+
+
+def _is_family_safety_issue(q: str) -> bool:
+    has_family_context = _has_any(q, (
+        "domestic violence", "husband", "wife", "in laws", "mother in law",
+        "father in law", "dowry", "marriage", "married",
+    ))
+    has_immediate_safety = _has_any(q, (
+        "husband beat", "husband is beating", "beating me", "beats me",
+        "slaps me", "hit me", "hitting me", "locked", "threat", "threatens",
+        "threatened", "threatening", "kill", "no food", "not giving food",
+        "threw me out", "unsafe",
+    ))
+    return has_family_context and has_immediate_safety
+
+
 def _is_work_injury(q: str) -> bool:
     if _has_any(q, _WORK_INJURY_WORDS):
         return True
@@ -743,6 +901,8 @@ def _is_survivor_sexual_offence(q: str) -> bool:
     if accused_context:
         return False
     if _has_any(q, _SEXUAL_OFFENCE_SURVIVOR_WORDS):
+        return True
+    if _has_any(q, ("minor", "child", "daughter")) and _has_any(q, ("touch", "touched", "molest", "pocso")):
         return True
     survivor_context = _has_any(q, ("my sister", "my daughter", "my wife", "me", "victim", "survivor"))
     sexual_context = _has_any(q, ("rape", "molest", "sexual assault", "pocso"))
@@ -766,7 +926,10 @@ def _is_reproductive_rights(q: str) -> bool:
 
 
 def _is_senior_citizen_issue(q: str) -> bool:
-    if _has_any(q, ("son threw", "daughter threw", "children not taking care", "senior citizen", "old age", "gift deed", "threw me out", "daughter in law")):
+    if _has_any(q, ("son threw", "daughter threw", "children not taking care", "senior citizen", "old age", "gift deed", "daughter in law")):
+        return True
+    parent_transfer = _has_any(q, ("father", "mother", "parent")) and _has_any(q, ("gift", "gifted", "transfer", "transferred")) and _has_any(q, ("food", "basic amenities", "maintenance", "not taking care", "stopped giving"))
+    if parent_transfer:
         return True
     senior_age = re.search(r"\b(6[0-9]|7[0-9]|8[0-9]|9[0-9])\b", q) is not None
     neglect_or_shelter = _has_any(q, (
@@ -785,12 +948,19 @@ def _red_flags(q: str) -> list[str]:
         flags.append("Liberty/custody issue")
     if _has_any(q, ("lost money", "upi", "otp", "credit card", "bank account")):
         flags.append("Time-sensitive money trail")
-    if _has_any(q, ("threw me out", "homeless", "not giving food", "beating")):
+    if _has_any(q, (
+        "threw me out", "homeless", "not giving food", "beating", "locked",
+        "hit me", "hitting me", "unsafe", "threatens", "threatened",
+        "threatening",
+    )):
         flags.append("Shelter or personal safety concern")
     return flags
 
 
 def _criminal_regime(q: str) -> str:
+    years = _extract_years(q)
+    if len(years) > 1 and any(y < 2024 for y in years) and any(y > 2024 for y in years):
+        return "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
     year = _extract_year(q)
     if year is not None and year < 2024:
         return "legacy_ipc_crpc_evidence_for_pre_2024_incident"
@@ -804,8 +974,12 @@ def _criminal_regime(q: str) -> str:
 
 
 def _extract_year(q: str) -> int | None:
-    m = re.search(r"\b(20\d{2}|19\d{2})\b", q)
-    return int(m.group(1)) if m else None
+    years = _extract_years(q)
+    return years[0] if years else None
+
+
+def _extract_years(q: str) -> list[int]:
+    return [int(m.group(1)) for m in re.finditer(r"\b(20\d{2}|19\d{2})\b", q)]
 
 
 def _mentions_before_july_2024(q: str) -> bool:
@@ -1307,12 +1481,57 @@ def _cheque_pack() -> ActionPack:
         title="Cheque dishonour path",
         next_steps=[
             "Preserve the original cheque, bank return memo, and all payment communications.",
-            "Check notice and complaint timelines carefully with a lawyer/legal-aid clinic.",
+            "Check the statutory demand-notice, payment-window, and complaint timelines carefully with a lawyer/legal-aid clinic.",
             "Prepare drawer details, amount due, and the transaction background.",
         ],
         documents=["original cheque", "return memo", "notice copy", "postal/courier proof", "invoice/loan proof"],
         escalation=["Judicial Magistrate court", "legal aid/lawyer for limitation-sensitive drafting"],
         cautions=["This category is deadline-sensitive."],
+    )
+
+
+def _criminal_notice_pack() -> ActionPack:
+    return ActionPack(
+        id="criminal_procedure_notice",
+        title="Police notice response path",
+        next_steps=[
+            "Read the notice exactly: issuing authority, case number, item demanded, and appearance/production date.",
+            "Preserve the device/data and avoid deleting, altering, or forwarding material connected to the case.",
+            "Get urgent legal-aid or lawyer help before handing over a phone or passwords, especially if you may be treated as an accused.",
+        ],
+        documents=["notice copy", "FIR/case number", "ID proof", "device ownership proof", "screenshots/messages", "prior police communications"],
+        escalation=["investigating officer", "Magistrate/criminal court", "District Legal Services Authority"],
+        cautions=["A CrPC section 91-style notice is now usually mapped to BNSS section 94 for current matters; the incident/case date matters."],
+    )
+
+
+def _passport_pack() -> ActionPack:
+    return ActionPack(
+        id="passport_police_verification",
+        title="Passport verification path",
+        next_steps=[
+            "Collect the Passport Seva file number, police verification details, and the RPO notice/refusal reason.",
+            "Ask for the adverse-report reason in writing and prepare a factual reply with case-status documents.",
+            "Escalate through passport grievance/RPO first, then consider legal aid or writ review if the refusal is unsupported.",
+        ],
+        documents=["passport file number", "RPO notice/refusal order", "police verification report if available", "case/FIR/warrant status papers", "identity/address proof"],
+        portals=["passportindia.gov.in grievance/status channels"],
+        escalation=["Regional Passport Office", "passport grievance officer", "District Legal Services Authority", "High Court writ jurisdiction"],
+    )
+
+
+def _lok_adalat_pack() -> ActionPack:
+    return ActionPack(
+        id="lok_adalat_award_challenge",
+        title="Lok Adalat award review path",
+        next_steps=[
+            "Collect the award, settlement memo, referral order, and proof of who consented or signed.",
+            "Identify the narrow challenge ground: no consent, fraud, coercion, mistaken party authority, or lack of jurisdiction.",
+            "Get DLSA/court help quickly; ordinary appeal routes are usually limited for Lok Adalat awards.",
+        ],
+        documents=["Lok Adalat award", "settlement memo", "case papers", "signature/authority proof", "fraud/coercion evidence"],
+        escalation=["District Legal Services Authority", "referring court", "High Court writ jurisdiction"],
+        cautions=["Do not frame this as a normal appeal without checking section 21 and the exact consent facts."],
     )
 
 
