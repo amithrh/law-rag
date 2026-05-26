@@ -293,6 +293,7 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
         "retrieval_single_query_ms",
         "single_expanded_retrieval_ms",
         "variant_candidate_retrieval_ms",
+        "required_source_pack_ms",
         "variant_rerank_ms",
         "retrieval_ms",
         "prompt_build_ms",
