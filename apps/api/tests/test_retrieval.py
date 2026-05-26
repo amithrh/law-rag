@@ -17,7 +17,12 @@ import json
 import pytest
 
 from apps.api.config import Settings
-from apps.api.retrieval import rrf_fuse, sparse_retrieve
+from apps.api.retrieval import (
+    RetrievedChunk,
+    _preserve_required_source_packs,
+    rrf_fuse,
+    sparse_retrieve,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +88,50 @@ def test_rrf_k_dampens_top_rank_dominance():
     assert ratio_low > ratio_high, (
         f"expected k=1 to dominate rank-1 more than k=60: "
         f"ratios low={ratio_low:.2f} high={ratio_high:.2f}"
+    )
+
+
+def test_preserve_required_source_pack_keeps_exact_act_in_top_k():
+    candidates = [
+        _retrieved_chunk(i, rerank=0.99 - i * 0.05)
+        for i in range(8)
+    ]
+    required = _retrieved_chunk(
+        99,
+        rerank=0.48,
+        metadata={"_required_source_pack": "bnss_2023"},
+    )
+    out = _preserve_required_source_packs(
+        [*candidates, required],
+        ["bnss_2023"],
+        limit=8,
+    )
+    assert len(out) == 8
+    assert any(c.chunk_id == 99 for c in out)
+    assert all(c.chunk_id != 7 for c in out)
+
+
+def _retrieved_chunk(
+    idx: int,
+    *,
+    rerank: float,
+    metadata: dict | None = None,
+) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id=idx,
+        document_id=idx,
+        anchor=f"doc/sec-{idx}",
+        text=f"chunk {idx}",
+        source_type="bare_act",
+        subject_area=None,
+        as_at=None,
+        paragraph_no=None,
+        title=f"doc {idx}",
+        citation=None,
+        court=None,
+        statute_short=None,
+        rerank_score=rerank,
+        metadata=metadata or {},
     )
 
 

@@ -216,6 +216,67 @@ def _hydrate_row(r) -> RetrievedChunk:
     )
 
 
+def _preserve_required_source_packs(
+    candidates: list[RetrievedChunk],
+    pack_ids: list[str],
+    *,
+    limit: int,
+) -> list[RetrievedChunk]:
+    """Keep at least one exact required-source chunk per fired pack.
+
+    Rerankers often prefer fact-heavy judgments over the bare Act section,
+    even when the router knows that Act is mandatory authority. This helper
+    preserves the highest-scoring exact-source chunk for each fired pack
+    inside the bounded top-K without changing the ordering otherwise.
+    """
+    if limit <= 0 or not candidates or not pack_ids:
+        return candidates[:limit]
+
+    selected = candidates[:limit]
+    selected_chunk_ids = {c.chunk_id for c in selected}
+    present_pack_ids = {
+        str(pack_id)
+        for c in selected
+        if (pack_id := c.metadata.get("_required_source_pack"))
+    }
+
+    for pack_id in pack_ids:
+        if pack_id in present_pack_ids:
+            continue
+        best = next(
+            (
+                c
+                for c in candidates[limit:]
+                if c.metadata.get("_required_source_pack") == pack_id
+                and c.chunk_id not in selected_chunk_ids
+            ),
+            None,
+        )
+        if best is None:
+            continue
+        if len(selected) < limit:
+            selected.append(best)
+        else:
+            replace_idx = next(
+                (
+                    idx
+                    for idx in range(len(selected) - 1, -1, -1)
+                    if not selected[idx].metadata.get("_required_source_pack")
+                ),
+                len(selected) - 1,
+            )
+            selected_chunk_ids.discard(selected[replace_idx].chunk_id)
+            selected[replace_idx] = best
+        selected_chunk_ids.add(best.chunk_id)
+        present_pack_ids.add(pack_id)
+
+    selected.sort(
+        key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,
+        reverse=True,
+    )
+    return selected[:limit]
+
+
 async def _fetch_source_pack_candidates(
     pool: asyncpg.Pool,
     query: str,
@@ -231,25 +292,35 @@ async def _fetch_source_pack_candidates(
     async with pool.acquire() as conn:
         for pack in packs:
             title_patterns = [f"%{pattern}%" for pattern in pack.title_patterns]
+            doc_ids = list(pack.doc_ids)
+            anchor_patterns = [f"%{pattern}%" for pattern in pack.anchor_patterns]
             rows = await conn.fetch(
                 """
                 SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                        c.subject_area, c.as_at, c.paragraph_no, c.metadata,
                        d.title, d.citation, d.court, d.statute_short,
-                       ts_rank(c.text_tsv, plainto_tsquery('english', $3)) AS bm25_score
+                       ts_rank(c.text_tsv, plainto_tsquery('english', $5)) AS bm25_score,
+                       CASE
+                         WHEN c.anchor ILIKE ANY($4::text[]) THEN 1
+                         ELSE 0
+                       END AS anchor_priority
                 FROM chunks c
                 JOIN documents d ON d.id = c.document_id
                 WHERE NOT c.quarantined
                   AND c.source_type = ANY($2::text[])
                   AND (
-                    d.title ILIKE ANY($1::text[])
+                    d.doc_id = ANY($3::text[])
+                    OR d.title ILIKE ANY($1::text[])
                     OR COALESCE(d.statute_short, '') ILIKE ANY($1::text[])
                   )
-                ORDER BY bm25_score DESC, c.paragraph_no NULLS LAST, c.id
-                LIMIT $4
+                ORDER BY anchor_priority DESC, bm25_score DESC,
+                         c.paragraph_no NULLS LAST, c.id
+                LIMIT $6
                 """,
                 title_patterns,
                 list(pack.source_types),
+                doc_ids,
+                anchor_patterns,
                 pack.search_query,
                 limit_per_pack,
             )
@@ -728,7 +799,11 @@ async def multi_query_hybrid_retrieve(
             key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,
             reverse=True,
         )
-        candidate_list = candidate_list[: top_k or s.rerank_top_k]
+        candidate_list = _preserve_required_source_packs(
+            candidate_list,
+            [pack.id for pack in packs],
+            limit=top_k or s.rerank_top_k,
+        )
 
     logger.info(
         "multi_query_retrieve: %d variants → %d union candidates → "

@@ -32,7 +32,12 @@ from apps.api.llm import (
 )
 from apps.api.matter_router import MatterRoute, route_matter
 from apps.api.relevance import compute_relevance
-from apps.api.retrieval import RetrievedChunk, hybrid_retrieve, multi_query_hybrid_retrieve
+from apps.api.retrieval import (
+    RetrievedChunk,
+    _preserve_required_source_packs,
+    hybrid_retrieve,
+    multi_query_hybrid_retrieve,
+)
 from apps.api.verifier import (
     SentenceStatus,
     SentenceVerification,
@@ -451,7 +456,17 @@ async def answer(req: AnswerRequest):
             return EventSourceResponse(low_dense())
 
     t_prompt = time.perf_counter()
-    passages, idx_map = _make_passages(retrieved, req.top_k)
+    required_pack_ids = []
+    for h in retrieved:
+        pack_id = h.metadata.get("_required_source_pack")
+        if pack_id and pack_id not in required_pack_ids:
+            required_pack_ids.append(pack_id)
+    prompt_retrieved = _preserve_required_source_packs(
+        retrieved,
+        required_pack_ids,
+        limit=req.top_k,
+    )
+    passages, idx_map = _make_passages(prompt_retrieved, req.top_k)
 
     # Build prompt
     system = load_answer_prompt()
@@ -461,7 +476,7 @@ async def answer(req: AnswerRequest):
     # Coverage chip — sent up front so the UI can render bounds immediately
     seen_sources = set()
     seen_subjects = set()
-    for h in retrieved[:req.top_k]:
+    for h in prompt_retrieved[:req.top_k]:
         seen_sources.add(h.source_type)
         if h.subject_area:
             seen_subjects.add(h.subject_area)
