@@ -1565,6 +1565,108 @@ def test_grounded_template_for_bonded_labour_advance_restriction_works_with_dm_s
     assert any("Darbhanga-to-Bangalore" in line and "[2]" in line for line in lines)
 
 
+def test_grounded_template_for_arrest_production_delay_cites_article22_and_bnss():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "papa arrest 5 din ho gaya magistrate ke samne kab le jana hota hai"
+    passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-58"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-57"},
+    ]
+
+    lines = _grounded_template_lines(q, route_matter(q), passages)
+    joined = " ".join(lines)
+
+    assert "Article 22" in joined and "[1]" in joined
+    assert "24 hours" in joined and "[2]" in joined
+    assert "without unnecessary delay" in joined and "[3]" in joined
+    assert "'5 din' in police custody" in joined and "[1]" in joined
+
+
+def test_grounded_template_for_bonded_labour_release_and_aadhaar_followups():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    release_q = "release certificate not given to bonded labour rehab money pending 3 years jharkhand"
+    release_passages = [
+        {"index": 1, "title": "Bonded Labour System (Abolition) Act 1976", "anchor": "bonded-labour-1976/sec-4"},
+        {"index": 2, "title": "Bonded Labour System (Abolition) Act 1976", "anchor": "bonded-labour-1976/sec-12"},
+        {"index": 3, "title": "Bonded Labour System (Abolition) Act 1976", "anchor": "bonded-labour-1976/sec-13"},
+    ]
+    release_joined = " ".join(_grounded_template_lines(release_q, route_matter(release_q), release_passages))
+
+    assert "release-certificate" in release_joined and "[2]" in release_joined
+    assert "Vigilance Committee" in release_joined and "[3]" in release_joined
+
+    aadhaar_q = "thekedar took my aadhaar original 6 months back not returning he keeping bihar workers id"
+    aadhaar_passages = [
+        {"index": 2, "title": "Bonded Labour System (Abolition) Act 1976", "anchor": "bonded-labour-1976/sec-12"},
+        {"index": 4, "title": "Aadhaar Act 2016", "anchor": "aadhaar-2016/sec-29"},
+    ]
+    aadhaar_joined = " ".join(_grounded_template_lines(aadhaar_q, route_matter(aadhaar_q), aadhaar_passages))
+
+    assert "Aadhaar" in aadhaar_joined and "[4]" in aadhaar_joined
+    assert "District Magistrate" in aadhaar_joined and "[2]" in aadhaar_joined
+
+
+def test_grounded_template_for_ration_portability_fd_nominee_and_child_return():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    ration_q = "ration card west bengal not working in chennai shop no rice for family one nation one card not happening"
+    ration_passages = [
+        {"index": 1, "title": "National Food Security Act 2013", "anchor": "national-food-security-2013/sec-3"},
+        {"index": 2, "title": "National Food Security Act 2013", "anchor": "national-food-security-2013/sec-14"},
+        {"index": 3, "title": "National Food Security Act 2013", "anchor": "national-food-security-2013/sec-15"},
+    ]
+    ration_joined = " ".join(_grounded_template_lines(ration_q, route_matter(ration_q), ration_passages))
+    assert "Chennai ration shop under portability" in ration_joined and "[1]" in ration_joined
+    assert "District Grievance Redressal Officer" in ration_joined and "[3]" in ration_joined
+
+    fd_q = "private cooperative bank fd of grandfather not honoured nominee facing harassment"
+    fd_passages = [
+        {"index": 4, "title": "Banking Regulation Act 1949", "anchor": "banking-regulation-1949/sec-45ZA-a"},
+        {"index": 5, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-2-42"},
+        {"index": 9, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+    ]
+    fd_joined = " ".join(_grounded_template_lines(fd_q, route_matter(fd_q), fd_passages))
+    assert "section 45ZA" in fd_joined and "[4]" in fd_joined
+    assert "service-deficiency" in fd_joined and "[5]" in fd_joined
+    assert "RBI Ombudsman" in fd_joined and "[9]" in fd_joined
+
+    custody_q = "my husband took our 5 year old to delhi during fight and is not letting me meet how do I get her back fast"
+    custody_passages = [
+        {"index": 6, "title": "Guardians and Wards Act 1890", "anchor": "guardians-wards-1890/sec-25"},
+        {"index": 7, "title": "Guardians and Wards Act 1890", "anchor": "guardians-wards-1890/sec-17"},
+        {"index": 8, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+    ]
+    custody_joined = " ".join(_grounded_template_lines(custody_q, route_matter(custody_q), custody_passages))
+    assert "custody-return" in custody_joined and "[6]" in custody_joined
+    assert "minor's welfare" in custody_joined and "[7]" in custody_joined
+    assert "Article 21" in custody_joined and "[8]" in custody_joined
+
+
+def test_grounded_template_for_minor_deepfake_cites_pocso_and_it67b():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "my schoolmate is making deepfake nude videos of girls in class using AI and circulating I am one of them I am 15"
+    passages = [
+        {"index": 1, "title": "Protection of Children from Sexual Offences Act 2012", "anchor": "pocso-2012/sec-14"},
+        {"index": 2, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-67B"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-77"},
+    ]
+
+    lines = _grounded_template_lines(q, route_matter(q), passages)
+    joined = " ".join(lines)
+
+    assert "POCSO" in joined and "[1]" in joined
+    assert "IT Act child" in joined and "[2]" in joined
+    assert "BNS voyeurism" in joined and "[3]" in joined
+
+
 def test_grounded_template_for_birth_certificate_uses_rti_without_generic_pension_text():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter

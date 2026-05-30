@@ -4219,8 +4219,8 @@ def _is_marriage_name_change_issue(q: str) -> bool:
 
 def _is_spa_raid_subject_issue(q: str) -> bool:
     spa_context = _has_any(q, ("spa", "massage parlour", "massage parlor"))
-    raid_context = _has_any(q, ("raid", "raided", "police took", "took me", "station", "itpa", "pita"))
-    subject_context = _has_any(q, ("i just do massage", "i only do massage", "scared", "what will happen", "took me and other girls"))
+    raid_context = _has_any(q, ("raid", "raided", "police came", "police took", "took me", "station", "itpa", "pita", "cctv"))
+    subject_context = _has_any(q, ("i just do massage", "i only do massage", "scared", "what will happen", "am i in trouble", "need lawyer", "ran away", "took me and other girls"))
     return spa_context and raid_context and subject_context
 
 

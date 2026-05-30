@@ -583,7 +583,7 @@ def test_final_eval_gap_routes_get_required_source_packs():
             "it_act_2000", "consumer_protection_2019"
         ),
         "private cooperative bank fd of grandfather not honoured nominee facing harassment": (
-            "consumer_protection_2019",
+            "banking_regulation_1949", "consumer_protection_2019", "rbi_integrated_ombudsman_2021",
         ),
         "someone leaked my chat with therapist on twitter mental health privacy": (
             "it_act_2000", "dpdp_2023", "mental_healthcare_2017"
@@ -617,6 +617,19 @@ def test_final_eval_gap_routes_get_required_source_packs():
         ids = _pack_ids(query)
         for expected_id in expected_ids:
             assert expected_id in ids, query
+
+    fd_ids = _pack_ids("private cooperative bank fd of grandfather not honoured nominee facing harassment")
+    assert "cooperative_bank_recovery_case_law" not in fd_ids
+    assert "sarfaesi_2002" not in fd_ids
+    nbfc_recovery_ids = _pack_ids("bajaj finserv recovery agent calling my office for emi dues")
+    assert "cooperative_bank_recovery_case_law" not in nbfc_recovery_ids
+    assert "sarfaesi_2002" not in nbfc_recovery_ids
+    fd_packs = source_packs_for_route(
+        route_matter("private cooperative bank fd of grandfather not honoured nominee facing harassment"),
+        "private cooperative bank fd of grandfather not honoured nominee facing harassment",
+    )
+    fd_banking = next(pack for pack in fd_packs if pack.id == "banking_regulation_1949")
+    assert "/sec-45ZA" in fd_banking.anchor_patterns
 
 
 def test_stage5_hard_fail_routes_get_required_source_packs():
@@ -1829,3 +1842,46 @@ def test_stage10_source_pack_false_positive_guards():
     assert "national_food_security_2013" in _pack_ids(
         "ration card not working pds no rice for family"
     )
+
+
+def test_stage37_source_pack_precision_for_child_cyber_arrest_and_custody():
+    child_deepfake_ids = _pack_ids(
+        "my schoolmate is making deepfake nude videos of girls in class using AI and circulating I am one of them I am 15"
+    )
+    assert {"it_act_2000", "pocso_2012", "bns_2023"} <= set(child_deepfake_ids)
+
+    adult_private_ids = _pack_ids(
+        "he took my private pictures during video call now threatening to put on telegram"
+    )
+    assert {"it_act_2000", "bns_2023"} <= set(adult_private_ids)
+    adult_private_packs = source_packs_for_route(
+        route_matter("he took my private pictures during video call now threatening to put on telegram"),
+        "he took my private pictures during video call now threatening to put on telegram",
+    )
+    bns_pack = next(pack for pack in adult_private_packs if pack.id == "bns_2023")
+    assert "/sec-351" in bns_pack.anchor_patterns
+
+    minor_deepfake_packs = source_packs_for_route(
+        route_matter("my schoolmate is making deepfake nude videos of girls in class using AI and circulating I am one of them I am 15"),
+        "my schoolmate is making deepfake nude videos of girls in class using AI and circulating I am one of them I am 15",
+    )
+    minor_bns = next(pack for pack in minor_deepfake_packs if pack.id == "bns_2023")
+    assert minor_bns.anchor_patterns[0] == "/sec-77"
+
+    child_saw_ids = _pack_ids(
+        "my child saw a leaked nude video on telegram and is scared can I complain online"
+    )
+    assert "pocso_2012" not in child_saw_ids
+
+    arrest_ids = _pack_ids("papa arrest 5 din ho gaya magistrate ke samne kab le jana hota hai")
+    assert {"constitution_article_21", "constitution_article_22", "bnss_2023"} <= set(arrest_ids)
+
+    custody_ids = _pack_ids(
+        "my husband took our 5 year old to delhi during fight and is not letting me meet how do I get her back fast"
+    )
+    assert {"guardians_wards_1890", "constitution_article_21"} <= set(custody_ids)
+
+    spa_ids = _pack_ids(
+        "police came to spa where I work in delhi I ran away am I in trouble do I need lawyer they have my photo from cctv"
+    )
+    assert {"itpa_1956", "bnss_2023"} <= set(spa_ids)

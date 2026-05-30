@@ -1407,6 +1407,7 @@ def test_stage27_final100_hard_fail_routes_to_safe_forums():
         "false dacoity case lodged on my brother by forest guard for collecting tendu leaves dindori": "criminal_defence_bail",
         "how to legally change my surname after marriage, do i need to publish in gazette": "family_marriage_status",
         "the spa was raided last week and police took me and other girls to station I just do massage I am scared what will happen now": "criminal_defence_bail",
+        "police came to spa where I work in delhi I ran away am I in trouble do I need lawyer they have my photo from cctv": "criminal_defence_bail",
         "site mukadam beat me head injury 8 stitches when i asked for old wages mumbai": "workplace_injury_compensation",
         "daughter in law took my jewellery worth 12 lakh saying for safe keeping not returning agra": "criminal_general",
         "sarpanch giving common village land to his brother no panchayat meeting was held": "land_revenue_records",

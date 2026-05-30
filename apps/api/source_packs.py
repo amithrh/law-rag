@@ -161,6 +161,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
 
     elif category == "arrest_custody_safeguard":
         packs.append(_constitution_article_21_pack("Article 21 Article 22 arrest custody handcuff personal liberty"))
+        packs.append(_constitution_article_22_pack(q))
         if _uses_legacy_criminal_regime(route):
             packs.append(_crpc_pack(q))
         else:
@@ -496,7 +497,11 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
     elif category == "cyber_fraud_or_harassment":
         it_search = "Information Technology Act 2000 section 66C 66D 66E 67 cyber fraud intimate image"
         it_anchors: tuple[str, ...] = ()
-        if _has_any(q, (
+        child_intimate_image_context = _has_child_intimate_image_subject_context(q)
+        if child_intimate_image_context:
+            it_search = "Information Technology Act 2000 section 67B child sexually explicit material section 66E privacy section 67A electronic publication"
+            it_anchors = ("/sec-67B", "/sec-66E", "/sec-67A", "/sec-67")
+        elif _has_any(q, (
             "nude", "private photo", "private photos", "private picture",
             "private pictures", "intimate", "sex video", "porn video",
             "morphed", "deepfake", "lookalike", "look alike", "face same",
@@ -595,9 +600,9 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             ))
         if (
             _has_any(q, (
-            "nude", "private photo", "intimate", "sex video", "porn", "morphed",
+            "nude", "private photo", "private photos", "private picture", "private pictures", "intimate", "sex video", "porn", "morphed",
             "deepfake", "leaked", "blackmail", "stalker", "stalking", "tinder",
-            "extortion", "gang", "took my phone", "otp", "phonepe", "upi",
+            "extortion", "gang", "threatening", "telegram", "took my phone", "otp", "phonepe", "upi",
             "fraud", "scam", "fake whatsapp", "harassing", "harassment",
             "identity misuse", "identity theft", "fake loan", "cheating",
             "tweet", "defamation", "fake call", "phishing", "debited",
@@ -627,13 +632,14 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 anchor_patterns=("/sec-123", "/sec-125", "/sec-125A"),
                 priority=0.96,
             ))
-        if _has_child_age_context(q) and _has_any(q, ("nude", "private photo", "intimate", "sex video", "porn", "morphed", "deepfake", "leaked")):
+        if child_intimate_image_context:
             packs.append(SourcePack(
                 id="pocso_2012",
                 title_patterns=("Protection of Children from Sexual Offences Act 2012",),
-                search_query="Protection of Children from Sexual Offences Act 2012 child sexual image reporting special court",
+                search_query="Protection of Children from Sexual Offences Act 2012 section 13 section 14 section 15 child pornography sexual image reporting special court",
                 doc_ids=("pocso-2012",),
-                priority=0.96,
+                anchor_patterns=("/sec-13", "/sec-14", "/sec-15", "/sec-19"),
+                priority=1.12,
             ))
 
     elif category == "consumer":
@@ -1574,7 +1580,12 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 priority=1.18,
             ))
             packs.append(_ni_act_cheque_pack(priority=1.10))
-        if _has_any(q, ("cooperative bank", "co-operative bank", "crop loan", "agri loan", "agricultural loan", "buffalo", "livestock")):
+        agri_recovery_context = _has_any(q, (
+            "crop loan", "agri loan", "agricultural loan", "farm loan", "kisan loan",
+            "agricultural development bank", "land mortgage bank",
+            "buffalo", "livestock", "tractor",
+        ))
+        if agri_recovery_context:
             packs.append(SourcePack(
                 id="cooperative_bank_recovery_case_law",
                 title_patterns=("COOPERATIVE AGRICULTURAL DEVELOPMENT BANK", "COOPERATIVE LAND MORTGAGE BANK", "REGISTRAR,COOPERATIVE SOCIETIES"),
@@ -1600,14 +1611,24 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 anchor_patterns=("/sec-13", "/sec-17"),
                 priority=1.1,
             ))
+        fd_nominee_context = _has_any(q, (
+            "fixed deposit", "fd ", " fd", "fd of", "fd not", "fd account",
+            "nominee", "depositor", "deposit not honoured", "not honoured",
+        ))
+        banking_search = "Banking Regulation Act 1949 cooperative bank depositor fixed deposit banking company"
+        banking_anchors: tuple[str, ...] = ()
+        if fd_nominee_context:
+            banking_search = "Banking Regulation Act 1949 section 45ZA nomination depositor death fixed deposit nominee payment"
+            banking_anchors = ("/sec-45ZA",)
         packs.append(SourcePack(
             id="banking_regulation_1949",
             title_patterns=("Banking Regulation Act 1949",),
-            search_query="Banking Regulation Act 1949 cooperative bank depositor fixed deposit banking company",
+            search_query=banking_search,
             doc_ids=("banking-regulation-1949",),
-            priority=1.04,
+            anchor_patterns=banking_anchors,
+            priority=1.16 if fd_nominee_context else 1.04,
         ))
-        if _has_any(q, (
+        if fd_nominee_context or _has_any(q, (
             "ombudsman", "rbi", "cms.rbi", "fair practices", "deficiency in service",
             "recovery agent", "recovery agents", "customer liability", "bank complaint",
             "nbfc complaint", "credit card complaint", "education loan", "student loan",
@@ -1642,8 +1663,8 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             title_patterns=("Consumer Protection Act 2019",),
             search_query="Consumer Protection Act 2019 banking service deficiency fixed deposit nominee complaint",
             doc_ids=("consumer-protection-2019",),
-            anchor_patterns=("/sec-2-", "/sec-35", "/sec-38"),
-            priority=1.02,
+            anchor_patterns=("/sec-2", "/sec-35", "/sec-38"),
+            priority=1.14 if fd_nominee_context else 1.02,
         ))
 
     elif category == "social_welfare_identity":
@@ -2153,8 +2174,8 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 priority=1.08,
             ))
         if category == "criminal_defence_bail" and _has_any(q, (
-            "itpa", "pita", "immoral traffic", "parlour", "spa raid",
-            "spa was raided", "spa raided", "raided", "massage", "receptionist",
+            "itpa", "pita", "immoral traffic", "parlour", "spa", "spa raid",
+            "spa was raided", "spa raided", "police came to spa", "raided", "massage", "receptionist",
         )):
             packs.append(SourcePack(
                 id="itpa_1956",
@@ -2484,6 +2505,8 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             anchor_patterns=("/sec-7", "/sec-17", "/sec-25"),
             priority=1.06,
         ))
+        if _has_any(q, ("not letting me meet", "get her back", "get him back", "return", "took our", "took my child", "blocked calls", "fast")):
+            packs.append(_constitution_article_21_pack("Article 21 child custody child return habeas corpus personal liberty welfare"))
         non_hindu_family_context = _is_non_hindu_family_context(q)
         if not non_hindu_family_context:
             packs.append(SourcePack(
@@ -3055,6 +3078,8 @@ def _crpc_pack(query: str, *, notice: bool = False) -> SourcePack:
 
 
 def _bns_pack(query: str) -> SourcePack:
+    private_image_context = _has_any(query, ("nude", "private photo", "private photos", "private picture", "private pictures", "intimate", "sex video", "porn", "morphed", "deepfake", "leaked", "voyeur"))
+    threat_image_context = private_image_context and _has_any(query, ("blackmail", "threat", "threatening", "extortion", "coerce", "coercion"))
     if _has_any(query, ("acid", "chemical attack", "threw something on my face", "eyes burning")):
         if _has_any(query, ("threat", "threatening", "threaten", "throw acid", "throw chemical")):
             search_query = "Bharatiya Nyaya Sanhita 2023 section 351 criminal intimidation threat section 124 acid attack"
@@ -3105,9 +3130,12 @@ def _bns_pack(query: str) -> SourcePack:
     elif _has_any(query, ("pan leaked", "aadhaar leaked", "aadhar leaked", "personal data", "data breach", "identity misuse", "fake loan")) and _has_any(query, ("fraud", "misuse", "fake loan", "cheating", "identity theft")):
         search_query = "Bharatiya Nyaya Sanhita 2023 cheating forgery identity misuse false document"
         anchor_patterns = ("/sec-318", "/sec-319", "/sec-336", "/sec-338", "/sec-340")
-    elif _has_any(query, ("nude", "private photo", "intimate", "sex video", "porn", "morphed", "deepfake", "leaked", "voyeur", "blackmail")):
-        search_query = "Bharatiya Nyaya Sanhita 2023 voyeurism intimate image criminal intimidation defamation"
-        anchor_patterns = ("/sec-77", "/sec-78", "/sec-351", "/sec-356")
+    elif threat_image_context:
+        search_query = "Bharatiya Nyaya Sanhita 2023 section 351 criminal intimidation section 77 voyeurism intimate image defamation"
+        anchor_patterns = ("/sec-351", "/sec-77", "/sec-78", "/sec-356")
+    elif private_image_context:
+        search_query = "Bharatiya Nyaya Sanhita 2023 section 77 voyeurism intimate image section 356 defamation electronic publication"
+        anchor_patterns = ("/sec-77", "/sec-356", "/sec-78")
     elif _has_any(query, ("didn't sign", "did not sign", "fake signature", "forged", "forgery", "loan against", "blank paper", "thumb impression")):
         search_query = "Bharatiya Nyaya Sanhita 2023 cheating forgery false document using forged document property fraud"
         anchor_patterns = ("/sec-318", "/sec-319", "/sec-336", "/sec-338", "/sec-340")
@@ -3631,6 +3659,7 @@ def _has_adult_choice_marriage_context(text: str) -> bool:
 def _has_child_age_context(text: str) -> bool:
     patterns = (
         r"\b(?:age|aged|is|was)\s+([1-9]|1[0-7])\b",
+        r"\bi\s+am\s+([1-9]|1[0-7])\b",
         r"\b(?:son|daughter|boy|girl|child)\s+(?:is\s+)?([1-9]|1[0-7])\s*(?:year|years|yr|yrs)\b",
         r"\b([1-9]|1[0-7])\s*(?:year|years|yr|yrs)\s*old\b",
         r"\b([1-9]|1[0-7])\s*(?:year|years|yr|yrs)\s+(?:daughter|son|girl|boy|child|minor)\b",
@@ -3641,6 +3670,27 @@ def _has_child_age_context(text: str) -> bool:
     if _has_adult_age_context(text):
         return False
     return _has_any(text, ("child", "minor", "under 18", "under eighteen"))
+
+
+def _has_child_intimate_image_subject_context(text: str) -> bool:
+    image_context = _has_any(text, (
+        "nude", "private photo", "private photos", "private picture",
+        "private pictures", "intimate", "sex video", "porn", "morphed",
+        "deepfake", "leaked",
+    ))
+    if not image_context or not _has_child_age_context(text):
+        return False
+    if _has_any(text, (
+        "child saw", "child watched", "my child saw", "my child watched",
+        "daughter saw", "son saw", "student saw", "minor saw",
+    )):
+        return False
+    return bool(re.search(r"\bi\s+am\s+([1-9]|1[0-7])\b", text)) or _has_any(text, (
+        "i am one of", "one of them", "girls in class", "boys in class",
+        "schoolmate", "classmate", "minor girl", "minor boy", "child nude",
+        "child porn", "child pornography", "daughter nude", "son nude",
+        "my daughter", "my son", "under 18 girl", "under 18 boy",
+    ))
 
 
 def _has_explicit_child_age_context(text: str) -> bool:

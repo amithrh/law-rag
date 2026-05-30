@@ -264,6 +264,11 @@ def _grounded_template_lines(
         if bonded_lines:
             return bonded_lines
 
+    if route.category == "arrest_custody_safeguard" and _is_arrest_production_delay_query(q):
+        arrest_lines = _arrest_production_delay_template_lines(q, passages)
+        if arrest_lines:
+            return arrest_lines
+
     if route.category == "environment_compensation" and _is_mining_displacement_query(q):
         mining_lines = _mining_displacement_template_lines(passages)
         if mining_lines:
@@ -312,6 +317,11 @@ def _grounded_template_lines(
         trans_lines = _trans_identity_template_lines(passages)
         if trans_lines:
             return trans_lines
+
+    if route.category == "social_welfare_identity" and _is_ration_portability_query(q):
+        ration_lines = _ration_portability_template_lines(q, passages)
+        if ration_lines:
+            return ration_lines
 
     if route.category == "employment_wages" and _is_gig_platform_worker_query(q):
         gig_lines = _gig_platform_worker_template_lines(passages)
@@ -375,6 +385,11 @@ def _grounded_template_lines(
         security_cheque_lines = _security_cheque_defence_template_lines(passages)
         if security_cheque_lines:
             return security_cheque_lines
+
+    if route.category == "banking_credit_dispute" and _is_fixed_deposit_nominee_query(q):
+        fd_lines = _banking_fd_nominee_template_lines(q, passages)
+        if fd_lines:
+            return fd_lines
 
     if route.category == "court_procedure" and _is_private_magistrate_complaint_query(q):
         private_complaint_lines = _private_magistrate_complaint_template_lines(passages)
@@ -496,7 +511,7 @@ def _grounded_template_lines(
 
     if (
         route.category == "criminal_defence_bail"
-        and _has_any_term(q, ("juvenile", "minor", "under 18", "under eighteen", "age proof", "school certificate", "birth certificate", "adult jail", "son 17", "daughter 17", "boy 17", "girl 17"))
+        and _has_any_term(q, ("juvenile", "minor", "under 18", "under eighteen", "age proof", "age determination", "verify age", "school certificate", "birth certificate", "adult jail", "observation home", "son 17", "daughter 17", "boy 17", "girl 17", "son 16", "daughter 16", "boy 16", "girl 16", "16 yr", "16 yrs", "16 year"))
     ):
         juvenile_lines = _juvenile_age_custody_template_lines(q, passages)
         if juvenile_lines:
@@ -505,7 +520,7 @@ def _grounded_template_lines(
     if (
         route.category == "criminal_defence_bail"
         and _has_any_term(q, ("spa", "massage parlour", "massage parlor", "massage"))
-        and _has_any_term(q, ("raid", "raided", "police took", "station", "itpa", "pita"))
+        and _has_any_term(q, ("raid", "raided", "police came", "police took", "station", "itpa", "pita", "cctv", "ran away"))
     ):
         spa_lines = _itpa_spa_raid_template_lines(q, passages)
         if spa_lines:
@@ -608,6 +623,11 @@ def _grounded_template_lines(
         if adoption_lines:
             return adoption_lines
 
+    if route.category == "child_custody_adoption" and _is_child_return_or_access_query(q):
+        custody_lines = _child_return_custody_template_lines(q, passages)
+        if custody_lines:
+            return custody_lines
+
     if route.category == "child_custody_adoption" and _has_any_term(q, ("supervised visitation", "unsupervised visitation", "visitation order", "visitation for my")):
         visitation_lines = _supervised_visitation_template_lines(passages)
         if visitation_lines:
@@ -671,6 +691,241 @@ def _grounded_template_lines(
             return prohibition_lines
 
     return []
+
+
+def _arrest_production_delay_template_lines(query: str, passages: list[dict]) -> list[str]:
+    article22 = _find_passage_index(
+        passages,
+        title_terms=("constitution",),
+        anchor_terms=("/sec-22",),
+    )
+    article21 = _find_passage_index(
+        passages,
+        title_terms=("constitution",),
+        anchor_terms=("/sec-21",),
+    )
+    bnss57 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-57",),
+    )
+    bnss58 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-58",),
+    )
+    crpc56 = _find_passage_index(
+        passages,
+        title_terms=("code of criminal procedure",),
+        anchor_terms=("/sec-56",),
+    )
+    crpc57 = _find_passage_index(
+        passages,
+        title_terms=("code of criminal procedure",),
+        anchor_terms=("/sec-57",),
+    )
+    if article22 is None and article21 is None and bnss57 is None and bnss58 is None and crpc56 is None and crpc57 is None:
+        return []
+    lines = ["**Short answer**"]
+    if article22 is not None:
+        arrest_subject = "your father/papa's arrest" if "papa" in query else "the arrest"
+        lines.append(
+            f"For {arrest_subject}, the Constitution Article 22 source is the key safeguard: after arrest, the person must be produced before the nearest Magistrate within 24 hours, excluding journey time [{article22}]."
+        )
+    elif article21 is not None:
+        lines.append(
+            f"The Constitution Article 21 source makes this a personal-liberty problem, so unexplained custody without court production should be treated as urgent [{article21}]."
+        )
+    if bnss58 is not None:
+        lines.append(
+            f"For current-law procedure, the BNSS source says police cannot detain an arrested person beyond 24 hours without Magistrate authority, excluding journey time [{bnss58}]."
+        )
+    elif crpc57 is not None:
+        lines.append(
+            f"For pre-1 July 2024 matters, the CrPC source gives the same 24-hour custody limit without Magistrate authority, excluding journey time [{crpc57}]."
+        )
+    if bnss57 is not None:
+        lines.append(
+            f"The BNSS production source also requires taking the arrested person before the Magistrate or officer in charge without unnecessary delay [{bnss57}]."
+        )
+    elif crpc56 is not None:
+        lines.append(
+            f"The CrPC production source similarly requires production before the Magistrate or officer in charge without unnecessary delay [{crpc56}]."
+        )
+    if _has_any_term(query, ("5 din", "five days", "5 days", "4 din", "four days", "3 din", "three days")):
+        delay_cite = article22 if article22 is not None else bnss58 if bnss58 is not None else crpc57 if crpc57 is not None else bnss57 if bnss57 is not None else crpc56 if crpc56 is not None else article21
+        lines.append(
+            f"So '5 din' in police custody without being taken before the Magistrate should be treated as an urgent unlawful-detention/production issue, not a routine police delay [{delay_cite}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = article22 if article22 is not None else bnss58 if bnss58 is not None else crpc57 if crpc57 is not None else bnss57 if bnss57 is not None else crpc56 if crpc56 is not None else article21
+    lines.append(
+        f"- Take the arrest time, police station, FIR number if known, and any remand or arrest papers to DLSA or a criminal lawyer urgently and seek production/remand verification before the Magistrate [{action_cite}]."
+    )
+    return lines
+
+
+def _ration_portability_template_lines(query: str, passages: list[dict]) -> list[str]:
+    nfsa3 = _find_passage_index(
+        passages,
+        title_terms=("national food security",),
+        anchor_terms=("/sec-3",),
+    )
+    nfsa12 = _find_passage_index(
+        passages,
+        title_terms=("national food security",),
+        anchor_terms=("/sec-12",),
+    )
+    nfsa14 = _find_passage_index(
+        passages,
+        title_terms=("national food security",),
+        anchor_terms=("/sec-14",),
+    )
+    nfsa15 = _find_passage_index(
+        passages,
+        title_terms=("national food security",),
+        anchor_terms=("/sec-15",),
+    )
+    if nfsa3 is None and nfsa12 is None and nfsa14 is None and nfsa15 is None:
+        return []
+    if _has_any_term(query, ("west bengal", "chennai", "one nation")):
+        portability_phrase = "West Bengal ration card not working at a Chennai ration shop under portability"
+    else:
+        portability_phrase = "ration portability" if _has_any_term(query, ("one nation", "portability", "chennai", "migrant")) else "ration-card denial"
+    lines = ["**Short answer**"]
+    if nfsa3 is not None:
+        lines.append(
+            f"For this {portability_phrase}, the NFSA source is relevant because it covers subsidised foodgrains for eligible households under the targeted public distribution system [{nfsa3}]."
+        )
+    if nfsa12 is not None:
+        lines.append(
+            f"The NFSA reforms source supports framing the issue as a TPDS/ration-shop delivery failure, including transparency and doorstep-delivery reforms under the Act [{nfsa12}]."
+        )
+    if nfsa14 is not None:
+        lines.append(
+            f"The NFSA grievance source requires every State Government to put an internal grievance redressal mechanism in place for expeditious and effective redressal [{nfsa14}]."
+        )
+    if nfsa15 is not None:
+        lines.append(
+            f"The NFSA District Grievance Redressal Officer source is the escalation route for ration entitlement complaints at district level [{nfsa15}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = nfsa15 if nfsa15 is not None else nfsa14 if nfsa14 is not None else nfsa12 if nfsa12 is not None else nfsa3
+    lines.append(
+        f"- Keep the ration-card number, shop details, denial date, Aadhaar or portability error screenshot if any, and family-member details, then file a written complaint through the State NFSA grievance/DGRO route [{action_cite}]."
+    )
+    return lines
+
+
+def _banking_fd_nominee_template_lines(query: str, passages: list[dict]) -> list[str]:
+    banking45za = _find_passage_index(
+        passages,
+        title_terms=("banking regulation",),
+        anchor_terms=("/sec-45ZA",),
+    )
+    banking = _find_passage_index(
+        passages,
+        title_terms=("banking regulation",),
+    )
+    consumer2 = _find_passage_index(
+        passages,
+        title_terms=("consumer protection",),
+        anchor_terms=("/sec-2",),
+    )
+    consumer35 = _find_passage_index(
+        passages,
+        title_terms=("consumer protection",),
+        anchor_terms=("/sec-35",),
+    )
+    ombudsman = _find_passage_index(
+        passages,
+        title_terms=("ombudsman", "reserve bank"),
+    )
+    if banking is None and consumer2 is None and consumer35 is None and ombudsman is None:
+        return []
+    lines = ["**Short answer**"]
+    if banking45za is not None:
+        fd_context = "a private/cooperative bank not honouring your grandfather's FD nominee claim" if "grandfather" in query else "a fixed-deposit nominee claim"
+        lines.append(
+            f"For {fd_context} after the depositor's death, Banking Regulation Act section 45ZA is the exact source to check for the bank's payment-to-nominee route [{banking45za}]."
+        )
+        lines.append(
+            f"Keep any family succession dispute separate from the bank-release step: section 45ZA is about the bank paying the nominee according to the nomination, while beneficial ownership disputes may still need separate succession advice [{banking45za}]."
+        )
+    elif banking is not None:
+        lines.append(
+            f"For a fixed-deposit or nominee refusal by a bank, keep the issue framed as a depositor/banking-service dispute, not as agricultural loan recovery or SARFAESI enforcement [{banking}]."
+        )
+    if consumer2 is not None:
+        lines.append(
+            f"The Consumer Protection Act source is relevant because banking services can be tested as a service-deficiency complaint when a depositor or nominee is denied service or faces refusal/harassment without lawful basis [{consumer2}]."
+        )
+    elif consumer35 is not None:
+        lines.append(
+            f"The Consumer Protection Act complaint source gives the consumer-forum route if the bank's refusal amounts to service deficiency [{consumer35}]."
+        )
+    if ombudsman is not None:
+        lines.append(
+            f"The RBI Ombudsman source may be an escalation path after the written bank complaint period under that scheme is satisfied [{ombudsman}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = ombudsman if ombudsman is not None else consumer35 if consumer35 is not None else consumer2 if consumer2 is not None else banking45za if banking45za is not None else banking
+    relation_phrase = "grandfather's" if "grandfather" in query else "the depositor's"
+    lines.append(
+        f"- Give the branch a written demand with {relation_phrase} FD receipt/account details, death certificate if applicable, nominee proof, KYC, and the refusal/harassment record; then escalate to the bank grievance channel, RBI Ombudsman if available, or consumer forum [{action_cite}]."
+    )
+    return lines
+
+
+def _child_return_custody_template_lines(query: str, passages: list[dict]) -> list[str]:
+    gwa17 = _find_passage_index(
+        passages,
+        title_terms=("guardians and wards",),
+        anchor_terms=("/sec-17",),
+    )
+    gwa25 = _find_passage_index(
+        passages,
+        title_terms=("guardians and wards",),
+        anchor_terms=("/sec-25",),
+    )
+    family_court = _find_passage_index(
+        passages,
+        title_terms=("family courts",),
+    )
+    article21 = _find_passage_index(
+        passages,
+        title_terms=("constitution",),
+        anchor_terms=("/sec-21",),
+    )
+    if gwa17 is None and gwa25 is None and family_court is None and article21 is None:
+        return []
+    if _has_any_term(query, ("5 year", "five year", "delhi")):
+        child_phrase = "your 5-year-old child taken to Delhi"
+    else:
+        child_phrase = "your daughter" if _has_any_term(query, ("daughter", "her")) else "your son" if _has_any_term(query, ("son", "him")) else "the child"
+    lines = ["**Short answer**"]
+    if gwa25 is not None:
+        lines.append(
+            f"If the other parent has taken {child_phrase} and is not allowing access, the Guardians and Wards Act source on return to guardian custody is the first custody-return source to check [{gwa25}]."
+        )
+    if gwa17 is not None:
+        lines.append(
+            f"The same Act's welfare source means the court should decide custody or return around the minor's welfare, not only which parent acted first [{gwa17}]."
+        )
+    if article21 is not None:
+        lines.append(
+            f"Article 21 can support urgent child-return or habeas-corpus framing where the child's liberty/welfare facts make ordinary custody timing inadequate [{article21}]."
+        )
+    if family_court is not None:
+        lines.append(
+            f"The Family Courts source points to the Family Court as the ordinary forum for custody/access disputes where immediate writ relief is not required [{family_court}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = gwa25 if gwa25 is not None else gwa17 if gwa17 is not None else article21 if article21 is not None else family_court
+    lines.append(
+        f"- Collect birth proof, school/medical records, messages blocking access, the child's current location, and any prior custody order, then seek urgent custody/access or child-return relief through Family Court or High Court depending on urgency [{action_cite}]."
+    )
+    return lines
 
 
 def _msme_43b_payment_template_lines(query: str, passages: list[dict]) -> list[str]:
@@ -1630,6 +1885,16 @@ def _deepfake_lookalike_template_lines(query: str, passages: list[dict]) -> list
         title_terms=("information technology",),
         anchor_terms=("/sec-67A",),
     )
+    it67b = _find_passage_index(
+        passages,
+        title_terms=("information technology",),
+        anchor_terms=("/sec-67B",),
+    )
+    pocso = _find_passage_index(
+        passages,
+        title_terms=("protection of children from sexual offences", "pocso"),
+        anchor_terms=("/sec-13", "/sec-14", "/sec-15", "/sec-19"),
+    )
     bns356 = _find_passage_index(
         passages,
         title_terms=("bharatiya nyaya",),
@@ -1650,10 +1915,19 @@ def _deepfake_lookalike_template_lines(query: str, passages: list[dict]) -> list
         title_terms=("digital personal data protection",),
         anchor_terms=("/sec-8",),
     )
-    if it66e is None and it67a is None and bns356 is None and bns77 is None and bns351 is None and dpdp8 is None:
+    if it66e is None and it67a is None and it67b is None and pocso is None and bns356 is None and bns77 is None and bns351 is None and dpdp8 is None:
         return []
     lines = ["**Short answer**"]
-    if it66e is not None:
+    if pocso is not None:
+        minor_context = "a 15-year-old student targeted by schoolmate-made deepfake nude videos" if _has_any_term(query, ("i am 15", "schoolmate", "class")) else "the person affected is a minor"
+        lines.append(
+            f"Because this involves {minor_context}, the POCSO source must be checked for child sexual image or reporting duties before treating this as only a generic deepfake complaint [{pocso}]."
+        )
+    if it67b is not None:
+        lines.append(
+            f"The IT Act child sexually-explicit material source is directly relevant where a minor's nude or sexual deepfake is being made or circulated electronically [{it67b}]."
+        )
+    elif it66e is not None:
         lines.append(
             f"For a porn/deepfake lookalike video, the IT Act privacy source is relevant where a private image is captured, published, or transmitted without consent [{it66e}]."
         )
@@ -1678,9 +1952,9 @@ def _deepfake_lookalike_template_lines(query: str, passages: list[dict]) -> list
             f"The DPDP source matters only if an identifiable platform or data fiduciary handled your personal data; it imposes security-safeguard duties for personal data breach contexts [{dpdp8}]."
         )
     lines.append("**What you can do next**")
-    action_cite = it66e if it66e is not None else it67a if it67a is not None else bns356 if bns356 is not None else bns77 if bns77 is not None else bns351 if bns351 is not None else dpdp8
+    action_cite = pocso if pocso is not None else it67b if it67b is not None else it66e if it66e is not None else it67a if it67a is not None else bns356 if bns356 is not None else bns77 if bns77 is not None else bns351 if bns351 is not None else dpdp8
     lines.append(
-        f"- Save URLs, screenshots, uploader/channel details, view counts, and timestamps, then use the cybercrime portal/platform grievance route and cite the exact cyber/criminal provisions after matching the facts [{action_cite}]."
+        f"- Separate the child sexual-image issue, the electronic publication/privacy issue, and any threat or reputation issue, then match each part to the cited POCSO, IT Act, or BNS source that applies [{action_cite}]."
     )
     return lines
 
@@ -1714,7 +1988,10 @@ def _cyber_blackmail_template_lines(query: str, passages: list[dict]) -> list[st
     if bns351 is None and bns308 is None and it66e is None and it66d is None and it67 is None:
         return []
     lines = ["**Short answer**"]
-    scenario_phrase = "dating-app blackmail" if _has_any_term(query, ("bumble", "tinder", "dating app")) else "cyber blackmail or extortion"
+    if _has_any_term(query, ("private picture", "private pictures")) and "telegram" in query:
+        scenario_phrase = "private-picture Telegram threat after a video call"
+    else:
+        scenario_phrase = "dating-app blackmail" if _has_any_term(query, ("bumble", "tinder", "dating app")) else "cyber blackmail or extortion"
     if bns351 is not None:
         lines.append(
             f"For this {scenario_phrase}, the BNS source treats a threat of injury to person, reputation, or property as criminal intimidation where the statutory ingredients are met [{bns351}]."
@@ -1733,7 +2010,7 @@ def _cyber_blackmail_template_lines(query: str, passages: list[dict]) -> list[st
         )
     elif it67 is not None:
         lines.append(
-            f"If the threatened electronic material is obscene or sexually explicit, the IT Act source is the electronic-publication source to check [{it67}]."
+            f"If the threatened Telegram publication involves obscene or sexually explicit private pictures, the IT Act source is the electronic-publication source to check [{it67}]."
         )
     lines.append("**What you can do next**")
     action_cite = it66e if it66e is not None else it66d if it66d is not None else it67 if it67 is not None else bns351 if bns351 is not None else bns308
@@ -1744,6 +2021,10 @@ def _cyber_blackmail_template_lines(query: str, passages: list[dict]) -> list[st
     elif it66d is not None:
         lines.append(
             f"- For the cyber-law track, compare the dating-app personation or cheating facts to the IT Act cheating-by-personation source before filing the complaint [{it66d}]."
+        )
+    elif it67 is not None:
+        lines.append(
+            f"- For the cyber-law track, compare the threatened electronic publication facts to the IT Act obscene-publication source before filing the complaint [{it67}]."
         )
     else:
         lines.append(
@@ -2346,7 +2627,7 @@ def _juvenile_age_custody_template_lines(query: str, passages: list[dict]) -> li
     )
     if age_proof is None and court_inquiry is None and bail is None and no_jail is None and board is None:
         return []
-    child_phrase = "your son" if "son" in query else "the child"
+    child_phrase = "your daughter" if "daughter" in query else "your son" if "son" in query else "the child"
     lines = ["**Short answer**"]
     if age_proof is not None:
         lines.append(
@@ -2710,21 +2991,93 @@ def _bonded_labour_template_lines(query: str, passages: list[dict]) -> list[str]
         title_terms=("bonded labour system",),
         anchor_terms=("/sec-4",),
     )
+    sec10 = _find_passage_index(
+        passages,
+        title_terms=("bonded labour system",),
+        anchor_terms=("/sec-10",),
+    )
     sec12 = _find_passage_index(
         passages,
         title_terms=("bonded labour system",),
         anchor_terms=("/sec-12",),
     )
-    if sec12 is not None and sec4 is None and _has_any_term(query, ("advance", "not letting leave", "cannot leave", "can't leave")):
+    sec13 = _find_passage_index(
+        passages,
+        title_terms=("bonded labour system",),
+        anchor_terms=("/sec-13",),
+    )
+    aadhaar29 = _find_passage_index(
+        passages,
+        title_terms=("aadhaar", "aadhar"),
+        anchor_terms=("/sec-29",),
+    )
+    aadhaar37 = _find_passage_index(
+        passages,
+        title_terms=("aadhaar", "aadhar"),
+        anchor_terms=("/sec-37",),
+    )
+    release_context = _has_any_term(query, ("release certificate", "rehabilitation", "rehab", "rehab money", "200000", "2 lakh"))
+    aadhaar_context = _has_any_term(query, ("aadhaar", "aadhar", "original id", "id original", "identity card", "documents"))
+    restraint_context = _has_any_term(query, ("hostage", "cannot go home", "not letting leave", "can't leave", "cannot leave", "advance"))
+    if aadhaar_context and (sec12 is not None or aadhaar29 is not None or aadhaar37 is not None):
+        lines = ["**Short answer**"]
+        if sec12 is not None:
+            lines.append(
+                f"If a contractor is keeping workers' Aadhaar or original ID while stopping them from leaving, keep it framed as a bonded/forced-labour rescue fact for District Magistrate inquiry [{sec12}]."
+            )
+        if aadhaar29 is not None:
+            lines.append(
+                f"The Aadhaar Act source should be kept as a separate identity-data source, so the complaint should record exactly who took the Aadhaar and how it is being used or withheld [{aadhaar29}]."
+            )
+        elif aadhaar37 is not None:
+            lines.append(
+                f"The Aadhaar Act penalty source is a separate identity misuse route to check after you pin down who kept or used the Aadhaar details [{aadhaar37}]."
+            )
+        lines.append("**What you can do next**")
+        action_cite = sec12 if sec12 is not None else aadhaar29 if aadhaar29 is not None else aadhaar37
+        lines.append(
+            f"- Give the DM/labour office the contractor name, worksite, worker names, Aadhaar-withholding fact, and whether anyone is prevented from leaving; ask for rescue/release action and return of documents [{action_cite}]."
+        )
+        return lines
+    if release_context and (sec12 is not None or sec13 is not None or sec10 is not None or sec4 is not None):
+        lines = ["**Short answer**"]
+        if sec4 is not None:
+            lines.append(
+                f"The Bonded Labour Act source says the bonded labour system is abolished and bonded labourers stand freed from the obligation to render bonded labour [{sec4}]."
+            )
+        if sec12 is not None:
+            release_place = "Jharkhand SDM/DM" if "jharkhand" in query else "District Magistrate"
+            lines.append(
+                f"For a release-certificate or rehabilitation-money follow-up, start with the {release_place} inquiry/action source because the DM must inquire whether bonded or forced labour is being enforced and take necessary action [{sec12}]."
+            )
+        if sec13 is not None:
+            lines.append(
+                f"The Vigilance Committee source is also relevant for tracking bonded-labour identification, release, and follow-up at district/sub-divisional level [{sec13}]."
+            )
+        elif sec10 is not None:
+            lines.append(
+                f"The Act also allows specified authorities to implement its provisions, so the complaint should be tied to the local authority named for bonded-labour implementation [{sec10}]."
+            )
+        lines.append("**What you can do next**")
+        action_cite = sec12 if sec12 is not None else sec13 if sec13 is not None else sec10 if sec10 is not None else sec4
+        lines.append(
+            f"- File a written request with the SDM/DM for release-certificate status, rescue record, rehabilitation status, and Vigilance Committee follow-up, attaching worksite, contractor, family, and prior complaint details [{action_cite}]."
+        )
+        return lines
+    if sec12 is not None and (sec4 is None or restraint_context) and _has_any_term(query, ("advance", "not letting leave", "cannot leave", "can't leave", "hostage", "cannot go home")):
         worksite_phrase = "worksite"
         if "darbhanga" in query and _has_any_term(query, ("bangalore", "bengaluru")):
             worksite_phrase = "Darbhanga-to-Bangalore worksite"
         elif _has_any_term(query, ("site", "worksite")):
             worksite_phrase = "site or worksite"
+        if _has_any_term(query, ("brick kiln", "hostage", "wife sick")):
+            restraint_phrase = "keeping the family at the brick-kiln worksite despite the advance and illness facts"
+        else:
+            restraint_phrase = "keeping the family at the worksite" if _has_any_term(query, ("family", "hostage")) else "using an advance to stop you leaving the worksite"
         return [
             "**Short answer**",
             (
-                "If a thekedar or contractor is using an advance to stop you leaving the worksite, "
+                f"If a thekedar or contractor is {restraint_phrase}, "
                 "ask the District Magistrate to inquire whether bonded labour or forced labour is being enforced "
                 f"and to take necessary action [{sec12}]."
             ),
@@ -3729,10 +4082,35 @@ def _is_witness_or_false_evidence_threat_query(text: str) -> bool:
     return witness_context and threat_context
 
 
+def _is_arrest_production_delay_query(text: str) -> bool:
+    arrest_context = _has_any_term(text, ("arrest", "arrested", "detained", "custody", "lockup", "police picked", "utha liya"))
+    production_context = _has_any_term(text, ("magistrate", "not produced", "produce before", "produced before", "24 hours", "twenty four hours", "kab le jana", "court ke samne"))
+    prolonged_context = _has_any_term(text, ("5 din", "five days", "5 days", "4 din", "four days", "3 din", "three days"))
+    return arrest_context and (production_context or prolonged_context)
+
+
+def _is_ration_portability_query(text: str) -> bool:
+    ration_context = _has_any_term(text, ("ration", "pds", "public distribution", "foodgrain", "food grain"))
+    denial_context = _has_any_term(text, ("not working", "no rice", "denied", "refused", "not happening", "portability", "one nation", "shop"))
+    return ration_context and denial_context
+
+
+def _is_fixed_deposit_nominee_query(text: str) -> bool:
+    deposit_context = _has_any_term(text, ("fixed deposit", "fd ", " fd", "fd of", "fd not", "nominee", "depositor"))
+    denial_context = _has_any_term(text, ("not honoured", "not honored", "refusing", "refused", "harassment", "not giving", "denied"))
+    return deposit_context and denial_context
+
+
 def _is_cyber_blackmail_or_extortion_query(text: str) -> bool:
     cyber_context = _has_any_term(text, ("bumble", "tinder", "whatsapp", "instagram", "telegram", "online", "cyber", "screenshots", "nude", "nudes", "photo", "video", "phone"))
     coercion_context = _has_any_term(text, ("blackmail", "extortion", "threat", "threatening", "leaked", "leak", "send", "took my phone", "gang"))
     return cyber_context and coercion_context
+
+
+def _is_child_return_or_access_query(text: str) -> bool:
+    child_context = _has_any_term(text, ("child", "daughter", "son", "5 year", "five year", "minor", "her back", "him back"))
+    withholding_context = _has_any_term(text, ("not letting me meet", "took our", "took my", "get her back", "get him back", "blocked calls", "return", "away"))
+    return child_context and withholding_context
 
 
 def _is_identity_police_threat_query(text: str) -> bool:
