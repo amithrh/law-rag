@@ -1983,6 +1983,114 @@ def test_grounded_templates_do_not_false_activate_on_adjacent_queries():
     assert _grounded_template_lines(no_licence, route_matter(no_licence), traffic_passages) == []
 
 
+def test_grounded_stage38_review_blocker_templates_use_required_acts():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    kanya_q = "kanya vivah scheme money not given after my daughter wedding where to complain"
+    kanya_lines = _grounded_template_lines(kanya_q, route_matter(kanya_q), [
+        {"index": 1, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+        {"index": 2, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-19"},
+    ])
+    kanya_joined = " ".join(kanya_lines)
+    assert "RTI source" in kanya_joined
+    assert "request in writing" in kanya_joined
+    assert "prescribed fee" in kanya_joined
+
+    wage_q = "boss saying i signed paper give up wages but i dont read english kannada bangalore"
+    wage_lines = _grounded_template_lines(wage_q, route_matter(wage_q), [
+        {"index": 3, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-60@2019-08-08"},
+        {"index": 4, "title": "Indian Contract Act 1872", "anchor": "indian-contract-1872/sec-19-a"},
+        {"index": 5, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45@2019-08-08"},
+    ])
+    wage_joined = " ".join(wage_lines)
+    assert "Code on Wages" in wage_joined
+    assert "Contract Act" in wage_joined
+    assert "hear and determine claims" in wage_joined
+    assert "[3]" in wage_joined
+    assert "[4]" in wage_joined
+
+    otp_q = "otp fraud 2 lakh lost bank says my fault no refund what can i do"
+    otp_lines = _grounded_template_lines(otp_q, route_matter(otp_q), [
+        {"index": 6, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66D"},
+        {"index": 7, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+    ])
+    otp_joined = " ".join(otp_lines)
+    assert "cyber-fraud" in otp_joined
+    assert "RBI Ombudsman" in otp_joined
+    assert "regulated-entity complaint route" in otp_joined
+    non_bank_cyber = _grounded_template_lines(
+        "tinder girl threatening to leak chat screenshots unless i pay money",
+        route_matter("tinder girl threatening to leak chat screenshots unless i pay money"),
+        [
+            {"index": 18, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66D"},
+            {"index": 19, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+        ],
+    )
+    assert "bank account" not in " ".join(non_bank_cyber)
+    assert "Ombudsman" not in " ".join(non_bank_cyber)
+
+    private_nudes_q = "ex boyfriend leaked my private nudes on telegram and whatsapp, police saying delete links only, what sections apply"
+    private_nudes_lines = _grounded_template_lines(private_nudes_q, route_matter(private_nudes_q), [
+        {"index": 20, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
+        {"index": 21, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-77@2024-07-01"},
+    ])
+    private_nudes_joined = " ".join(private_nudes_lines)
+    assert "leaked private nudes on Telegram or WhatsApp" in private_nudes_joined
+    assert "[20]" in private_nudes_joined
+    assert "[21]" in private_nudes_joined
+
+    decree_q = "judgment debtor not paying money decree can court attach property"
+    decree_lines = _grounded_template_lines(decree_q, route_matter(decree_q), [
+        {"index": 8, "title": "Code of Civil Procedure 1908", "anchor": "cpc-1908/sec-51@2026-01-10"},
+        {"index": 9, "title": "Code of Civil Procedure 1908", "anchor": "cpc-1908/sec-47-a@2026-01-10"},
+    ])
+    decree_joined = " ".join(decree_lines)
+    assert "CPC execution" in decree_joined
+    assert "attachment and sale" in decree_joined
+    assert "court executing the decree" in decree_joined
+
+    quashing_q = "482 CrPC quashing FIR in high court what documents needed"
+    quashing_lines = _grounded_template_lines(quashing_q, route_matter(quashing_q), [
+        {"index": 10, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-528@2024-07-01"},
+        {"index": 11, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-482"},
+    ])
+    quashing_joined = " ".join(quashing_lines)
+    assert "CrPC section 482" in quashing_joined
+    assert "pre-1 July 2024" in quashing_joined
+
+    senior_q = "maintenance tribunal ordered son to pay but he stopped paying how to enforce"
+    senior_lines = _grounded_template_lines(senior_q, route_matter(senior_q), [
+        {"index": 12, "title": "Maintenance and Welfare of Parents and Senior Citizens Act 2007", "anchor": "mwp-2007/sec-11"},
+        {"index": 13, "title": "Maintenance and Welfare of Parents and Senior Citizens Act 2007", "anchor": "mwp-2007/sec-13"},
+    ])
+    senior_joined = " ".join(senior_lines)
+    assert "enforcement" in senior_joined
+    assert "Senior Citizens Act" in senior_joined
+    assert "deposit" in senior_joined
+
+    ndps_q = "NDPS case 50 gram ganja, first time accused, can I get bail and which court should I approach"
+    ndps_lines = _grounded_template_lines(ndps_q, route_matter(ndps_q), [
+        {"index": 14, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-20"},
+        {"index": 15, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480@2024-07-01"},
+    ])
+    ndps_joined = " ".join(ndps_lines)
+    assert "NDPS cannabis possession source" in ndps_joined
+    assert "BNSS bail source says" in ndps_joined
+    assert "[14]" in ndps_joined
+    assert "[15]" in ndps_joined
+
+    ndps_fallback_lines = _grounded_template_lines(ndps_q, route_matter(ndps_q), [
+        {"index": 16, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-2-a"},
+        {"index": 17, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-483@2024-07-01"},
+    ])
+    ndps_fallback_joined = " ".join(ndps_fallback_lines)
+    assert "NDPS definition source" in ndps_fallback_joined
+    assert "BNSS bail source says" in ndps_fallback_joined
+    assert "[16]" in ndps_fallback_joined
+    assert "[17]" in ndps_fallback_joined
+
+
 def test_grounded_rti_appeal_template_requires_appeal_source():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter

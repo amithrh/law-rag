@@ -9,6 +9,7 @@ from scripts.eval_timed_100 import (
     expected_act_hit,
     expected_act_keys,
     expected_procedure_anchor_coverage,
+    load_eval_rows,
 )
 
 
@@ -28,6 +29,26 @@ def test_expected_act_aliases_cover_eval_corpus_annotations():
         "Prem Shankar Shukla v Delhi Admin 1980 + Citizen for Democracy v State of Assam 1995",
     ]
     assert len(scored) / len(rows) >= 0.95
+
+
+def test_load_eval_rows_keeps_unicode_next_line_inside_json_string(tmp_path):
+    queries_dir = tmp_path / "queries"
+    queries_dir.mkdir()
+    row = {
+        "query": "section marker sec-88-\u0085 anchor should stay in one record",
+        "expected_category": "court_procedure",
+        "expected_act_hint": "CPC",
+    }
+    (queries_dir / "procedural.jsonl").write_text(
+        json.dumps(row, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    rows = load_eval_rows(queries_dir, limit=10, seed=1)
+
+    assert len(rows) == 1
+    assert rows[0]["persona"] == "procedural"
+    assert rows[0]["query"] == "section marker sec-88-\u0085 anchor should stay in one record"
 
 
 def test_expected_act_aliases_cover_human_like_mixed_hints():

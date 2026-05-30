@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+import json
+
 from scripts.eval_timed_100 import flatten_row
-from scripts.legal_safety_eval import analyze_safety_row, summarize_safety
+from scripts.legal_safety_eval import analyze_safety_row, load_jsonl, summarize_safety
 
 
 def _labels(row: dict) -> dict:
     return analyze_safety_row(row)["labels"]
+
+
+def test_load_jsonl_keeps_unicode_next_line_inside_json_string(tmp_path):
+    path = tmp_path / "safety.jsonl"
+    row = {
+        "query": "section marker sec-88-\u0085 anchor should stay in one record",
+        "expected_category": "court_procedure",
+        "route_category": "court_procedure",
+    }
+    path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    rows = load_jsonl(path)
+
+    assert len(rows) == 1
+    assert rows[0]["query"] == "section marker sec-88-\u0085 anchor should stay in one record"
 
 
 def test_flags_wrong_criminal_regime_for_post_2024_incident():

@@ -1885,3 +1885,80 @@ def test_stage37_source_pack_precision_for_child_cyber_arrest_and_custody():
         "police came to spa where I work in delhi I ran away am I in trouble do I need lawyer they have my photo from cctv"
     )
     assert {"itpa_1956", "bnss_2023"} <= set(spa_ids)
+
+
+def test_stage38_review_blocker_queries_get_precise_source_packs():
+    generic_kanya_ids = _pack_ids(
+        "kanya vivah scheme money not given after my daughter wedding where to complain"
+    )
+    assert "rti_2005" in generic_kanya_ids
+    assert "bihar_kanya_vivah_service" not in generic_kanya_ids
+
+    bihar_kanya_ids = _pack_ids(
+        "bihar kanya vivah scheme money not given by government after my daughter wedding"
+    )
+    assert {"bihar_kanya_vivah_service", "rti_2005"} <= set(bihar_kanya_ids)
+
+    wage_ids = _pack_ids(
+        "boss saying i signed paper give up wages but i dont read english kannada bangalore"
+    )
+    assert {"code_on_wages_2019_contracting_out", "indian_contract_1872_free_consent"} <= set(wage_ids)
+
+    otp_ids = _pack_ids("otp fraud 2 lakh lost bank says my fault no refund what can i do")
+    assert {"it_act_2000", "rbi_integrated_ombudsman_2021"} <= set(otp_ids)
+
+    quashing_ids = _pack_ids("482 CrPC quashing FIR in high court what documents needed")
+    assert {"bnss_2023_quashing", "crpc_1973_quashing"} <= set(quashing_ids)
+    legacy_quashing_ids = _pack_ids("482 CrPC quashing FIR in high court what documents needed, FIR is from 2023")
+    assert "crpc_1973_quashing" in legacy_quashing_ids
+    assert "bnss_2023_quashing" not in legacy_quashing_ids
+    bnss_named_quashing_ids = _pack_ids("BNSS 2023 section 528 quashing FIR in high court what documents needed")
+    assert "bnss_2023_quashing" in bnss_named_quashing_ids
+    assert "crpc_1973_quashing" in bnss_named_quashing_ids
+    assert "bnss_2023_quashing" not in _pack_ids(
+        "can high court quash consumer forum order in my refund case"
+    )
+    assert "crpc_1973_quashing" not in _pack_ids(
+        "can high court quash civil execution order under CPC"
+    )
+
+    execution_packs = source_packs_for_route(
+        route_matter("judgment debtor not paying money decree can court attach property"),
+        "judgment debtor not paying money decree can court attach property",
+    )
+    cpc = next(pack for pack in execution_packs if pack.id == "cpc_1908")
+    assert "/sec-51" in cpc.anchor_patterns
+    assert "/sec-47" in cpc.anchor_patterns
+
+    senior_packs = source_packs_for_route(
+        route_matter("maintenance tribunal ordered son to pay but he stopped paying how to enforce"),
+        "maintenance tribunal ordered son to pay but he stopped paying how to enforce",
+    )
+    senior = next(pack for pack in senior_packs if pack.id == "senior_citizens_2007")
+    assert "/sec-11" in senior.anchor_patterns
+    assert "/sec-13" in senior.anchor_patterns
+    senior_gift_packs = source_packs_for_route(
+        route_matter("father gifted flat to son but son not paying maintenance can tribunal cancel gift deed"),
+        "father gifted flat to son but son not paying maintenance can tribunal cancel gift deed",
+    )
+    senior_gift = next(pack for pack in senior_gift_packs if pack.id == "senior_citizens_2007")
+    assert "/sec-23" in senior_gift.anchor_patterns
+
+    juvenile_packs = source_packs_for_route(
+        route_matter("son 17 yrs in adult jail puzhal pocso case age proof school certificate where to file"),
+        "son 17 yrs in adult jail puzhal pocso case age proof school certificate where to file",
+    )
+    jj_pack = next(pack for pack in juvenile_packs if pack.id == "jj_2015")
+    assert "/sec-2-t" in jj_pack.anchor_patterns
+
+    ndps_packs = source_packs_for_route(
+        route_matter("NDPS case 50 gram ganja, first time accused, can I get bail and which court should I approach"),
+        "NDPS case 50 gram ganja, first time accused, can I get bail and which court should I approach",
+    )
+    bnss = next(pack for pack in ndps_packs if pack.id == "bnss_2023")
+    assert "/sec-480" in bnss.anchor_patterns
+    assert "/sec-483" in bnss.anchor_patterns
+    ndps = next(pack for pack in ndps_packs if pack.id == "ndps_1985")
+    assert "/sec-2-a" in ndps.anchor_patterns
+    assert "/sec-14" in ndps.anchor_patterns
+    assert "/sec-37" in ndps.anchor_patterns

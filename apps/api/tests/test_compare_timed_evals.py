@@ -33,6 +33,24 @@ def test_load_rows_backfills_legal_safety(tmp_path):
     assert rows[0]["legal_safety"]["labels"]["dangerous_off_topic"] is True
 
 
+def test_load_rows_keeps_unicode_next_line_inside_json_string(tmp_path):
+    path = tmp_path / "eval.jsonl"
+    row = {
+        "query": "section marker sec-88-\u0085 anchor should stay in one record",
+        "expected_category": "court_procedure",
+        "expected_act_hint": "CPC",
+        "route_category": "court_procedure",
+        "relevance_verdict": "ok",
+        "sentence_count": 1,
+    }
+    path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    rows = load_rows(path)
+
+    assert len(rows) == 1
+    assert rows[0]["query"] == "section marker sec-88-\u0085 anchor should stay in one record"
+
+
 def test_summarize_run_counts_core_product_metrics():
     rows = [
         {

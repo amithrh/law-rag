@@ -565,7 +565,8 @@ def write_safety_report(rows: list[dict[str, Any]], *, inp: Path, out_md: Path) 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    # JSONL records are LF-delimited; splitlines() treats U+0085 as a newline.
+    for line in path.read_text(encoding="utf-8").split("\n"):
         if line.strip():
             rows.append(json.loads(line))
     return rows

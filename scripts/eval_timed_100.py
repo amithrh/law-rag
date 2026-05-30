@@ -275,7 +275,8 @@ def load_eval_rows(queries_dir: Path, *, limit: int, seed: int) -> list[dict[str
     by_persona: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for path in sorted(queries_dir.glob("*.jsonl")):
         persona = path.stem
-        for line in path.read_text(encoding="utf-8").splitlines():
+        # JSONL records are LF-delimited; splitlines() treats U+0085 as a newline.
+        for line in path.read_text(encoding="utf-8").split("\n"):
             if not line.strip():
                 continue
             row = json.loads(line)

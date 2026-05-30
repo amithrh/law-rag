@@ -463,6 +463,37 @@ def route_matter(query: str) -> MatterRoute:
     if priority_route is not None:
         return priority_route
 
+    if _is_criminal_quashing_issue(q):
+        regime = _criminal_regime(q)
+        if regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident":
+            required_sources = [
+                "CrPC 1973 section 482 for pre-1 July 2024 or legacy CrPC framing",
+                "FIR, charge-sheet, summons, and lower-court orders only to identify the case stage",
+            ]
+        elif regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc":
+            required_sources = [
+                "BNSS 2023 section 528 for current High Court inherent-powers/quashing framing",
+                "CrPC 1973 section 482 for pre-1 July 2024 or legacy CrPC framing",
+                "FIR, charge-sheet, summons, and lower-court orders only to identify the case stage",
+            ]
+        else:
+            required_sources = [
+                "BNSS 2023 section 528 for current High Court inherent-powers/quashing framing",
+                "FIR, charge-sheet, summons, and lower-court orders only to identify the case stage",
+            ]
+        return MatterRoute(
+            category="criminal_defence_bail",
+            label="Criminal quashing / High Court procedure",
+            confidence=0.84,
+            urgency="high",
+            required_sources=required_sources,
+            forums=["High Court", "criminal court named in the case papers", "District Legal Services Authority", "criminal lawyer/legal-aid desk"],
+            missing_facts=["incident date", "FIR/charge-sheet sections", "current case stage", "summons or next hearing date", "copy of FIR/charge-sheet/order being challenged"],
+            red_flags=_red_flags(q),
+            action_pack=_bail_pack(),
+            legal_regime=regime,
+        )
+
     if _is_section_91_notice(q):
         return MatterRoute(
             category="criminal_procedure_notice",
@@ -1478,7 +1509,7 @@ def route_matter(query: str) -> MatterRoute:
             label="Civil court procedure / appeal / execution",
             confidence=0.78,
             urgency="medium",
-            required_sources=["Code of Civil Procedure 1908", "Limitation Act 1963 where delay or appeal time is involved", "court rules and practice directions for the relevant court"],
+            required_sources=["Code of Civil Procedure 1908 (CPC)", "Limitation Act 1963 where delay or appeal time is involved", "court rules and practice directions for the relevant court"],
             forums=["civil court / High Court filing counter", "District Legal Services Authority", "lawyer/legal-aid clinic"],
             missing_facts=["court and case number", "decree/order date", "appeal or execution stage", "limitation/deadline date", "copies of judgment, decree, or order"],
             red_flags=[],
@@ -5046,6 +5077,16 @@ def _is_senior_citizen_issue(q: str) -> bool:
     ))
     if senior_welfare_context and not family_or_maintenance_context:
         return False
+    tribunal_enforcement = (
+        _has_any(q, ("maintenance tribunal", "senior citizen tribunal", "tribunal ordered", "tribunal order"))
+        and _has_any(q, ("son", "daughter", "children", "parent", "father", "mother", "relative", "senior citizen", "ordered"))
+        and _has_any(q, (
+            "pay", "maintenance", "stopped paying", "not paying", "enforce",
+            "enforcement", "default", "missed payment", "order not followed",
+        ))
+    )
+    if tribunal_enforcement:
+        return True
     if _has_any(q, ("son threw", "daughter threw", "children not taking care")):
         return True
     if _has_any(q, ("senior citizen", "old age")) and family_or_maintenance_context:
@@ -5102,6 +5143,19 @@ def _is_civil_procedure_issue(q: str) -> bool:
         return False
     if _has_any(q, ("consumer", "e-daakhil", "edaakhil", "district consumer", "consumer complaint")):
         return False
+    execution_context = _has_any(q, (
+        "judgment debtor", "judgement debtor", "money decree", "decree amount",
+        "decree money", "decree execution", "execution of decree",
+        "attach property", "attachment of property", "attach his property",
+        "attach her property",
+    ))
+    execution_action = _has_any(q, (
+        "not paying", "not paid", "refusing to pay", "stopped paying",
+        "execute", "execution", "attach", "attachment", "property",
+        "order 21", "order xxi",
+    ))
+    if execution_context and execution_action:
+        return True
     if _has_any(q, _CIVIL_PROCEDURE_WORDS):
         return True
     civil_forum = _has_any(q, ("cpc", "civil court", "district court", "high court"))
@@ -5109,6 +5163,19 @@ def _is_civil_procedure_issue(q: str) -> bool:
     if civil_forum and procedural_step:
         return True
     return _has_any(q, ("decree holder", "substantial question")) and _has_any(q, ("file", "procedure", "appeal", "execution"))
+
+
+def _is_criminal_quashing_issue(q: str) -> bool:
+    quashing_context = _has_any(q, (
+        "quash", "quashing", "482 crpc", "crpc 482", "section 482",
+        "sec 482", "482 petition", "bnss 528", "section 528", "sec 528",
+    ))
+    criminal_case_context = _has_any(q, (
+        "fir", "criminal case", "chargesheet", "charge sheet", "summons",
+        "accused", "police case", "criminal proceeding", "criminal proceedings",
+        "criminal complaint", "police report", "charge-sheet",
+    ))
+    return quashing_context and criminal_case_context
 
 
 def _red_flags(q: str) -> list[str]:
@@ -5133,10 +5200,10 @@ def _red_flags(q: str) -> list[str]:
 
 
 def _criminal_regime(q: str) -> str:
-    years = _extract_years(q)
+    years = _extract_incident_years(q)
     if len(years) > 1 and any(y < 2024 for y in years) and any(y > 2024 for y in years):
         return "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
-    year = _extract_year(q)
+    year = years[0] if years else None
     if year is not None and year < 2024:
         return "legacy_ipc_crpc_evidence_for_pre_2024_incident"
     if year == 2024 and _mentions_before_july_2024(q):
@@ -5155,6 +5222,33 @@ def _extract_year(q: str) -> int | None:
 
 def _extract_years(q: str) -> list[int]:
     return [int(m.group(1)) for m in re.finditer(r"\b(20\d{2}|19\d{2})\b", q)]
+
+
+def _extract_incident_years(q: str) -> list[int]:
+    years: list[int] = []
+    for match in re.finditer(r"\b(20\d{2}|19\d{2})\b", q):
+        if _looks_like_statute_year(q, match.start(), match.end()):
+            continue
+        years.append(int(match.group(1)))
+    return years
+
+
+def _looks_like_statute_year(q: str, start: int, end: int) -> bool:
+    before = q[max(0, start - 36):start].lower()
+    after = q[end:end + 28].lower()
+    statute_before = (
+        "bnss", "bns", "bsa", "crpc", "ipc", "ndps", "pocso",
+        "evidence act", "information technology act", "it act",
+        "code on wages", "senior citizens act", "juvenile justice act",
+        "act", "code", "sanhita", "adhiniyam",
+    )
+    if any(term in before for term in statute_before):
+        incident_markers = ("incident", "offence", "offense", "crime", "fir", "arrest", "arrested", "case from", "happened", "occurred")
+        if not any(term in before for term in incident_markers):
+            return True
+    if re.match(r"\s*(act|code|section|sec|s\.|sanhita|adhiniyam)\b", after):
+        return True
+    return False
 
 
 def _mentions_before_july_2024(q: str) -> bool:

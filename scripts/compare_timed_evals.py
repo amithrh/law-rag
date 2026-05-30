@@ -28,7 +28,8 @@ GATE_MEDIAN_LATENCY_MS = 20_000
 
 def load_rows(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    # JSONL records are LF-delimited; splitlines() treats U+0085 as a newline.
+    for line in path.read_text(encoding="utf-8").split("\n"):
         if line.strip():
             row = json.loads(line)
             row["legal_safety"] = analyze_safety_row(row)

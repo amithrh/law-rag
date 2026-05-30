@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import math
 
-from scripts.eval_quality_gate import GateConfig, evaluate_gate, score_rows
+from scripts.eval_quality_gate import GateConfig, evaluate_gate, load_rows, score_rows
 
 
 def _row(**overrides):
@@ -36,6 +37,17 @@ def _row(**overrides):
     }
     row.update(overrides)
     return row
+
+
+def test_load_rows_keeps_unicode_next_line_inside_json_string(tmp_path):
+    path = tmp_path / "eval.jsonl"
+    row = _row(query="section marker sec-88-\u0085 anchor should stay in one record")
+    path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    rows = load_rows(path)
+
+    assert len(rows) == 1
+    assert rows[0]["query"] == "section marker sec-88-\u0085 anchor should stay in one record"
 
 
 def test_gate_passes_when_real_eval_metrics_cross_thresholds():

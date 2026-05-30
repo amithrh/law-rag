@@ -1493,3 +1493,49 @@ def test_stage36_blocker_routes_are_procedural_not_generic():
         "bajaj finserv EMI bounced because of bank error, now they are charging 6000 penalty and threatening CIBIL"
     )
     assert bank_route.category == "banking_credit_dispute"
+
+
+def test_stage38_review_blocker_routes_are_specific_not_generic():
+    execution = route_matter(
+        "judgment debtor not paying money decree can court attach property"
+    )
+    assert execution.category == "court_procedure"
+    assert "CPC" in " ".join(execution.required_sources)
+
+    quashing = route_matter(
+        "482 CrPC quashing FIR in high court what documents needed"
+    )
+    assert quashing.category == "criminal_defence_bail"
+    assert "quashing" in quashing.label.lower()
+    assert any("BNSS 2023 section 528" in source for source in quashing.required_sources)
+    legacy_quashing = route_matter(
+        "482 CrPC quashing FIR in high court what documents needed, FIR is from 2023"
+    )
+    assert legacy_quashing.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+    assert any("CrPC 1973 section 482" in source for source in legacy_quashing.required_sources)
+    assert not any("BNSS 2023 section 528" in source for source in legacy_quashing.required_sources)
+    bnss_named_quashing = route_matter(
+        "BNSS 2023 section 528 quashing FIR in high court what documents needed"
+    )
+    assert bnss_named_quashing.category == "criminal_defence_bail"
+    assert bnss_named_quashing.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    assert any("BNSS 2023 section 528" in source for source in bnss_named_quashing.required_sources)
+    assert route_matter(
+        "can high court quash consumer forum order in my refund case"
+    ).category != "criminal_defence_bail"
+    assert route_matter(
+        "can high court quash civil execution order under CPC"
+    ).category != "criminal_defence_bail"
+
+    assert route_matter(
+        "kanya vivah scheme money not given after my daughter wedding where to complain"
+    ).category == "social_welfare_identity"
+    assert route_matter(
+        "boss saying i signed paper give up wages but i dont read english kannada bangalore"
+    ).category == "employment_wages"
+    assert route_matter(
+        "otp fraud 2 lakh lost bank says my fault no refund what can i do"
+    ).category == "cyber_fraud_or_harassment"
+    assert route_matter(
+        "maintenance tribunal ordered son to pay but he stopped paying how to enforce"
+    ).category == "senior_citizen"

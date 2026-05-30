@@ -41,7 +41,9 @@ class GateConfig:
 
 def load_rows(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    # JSONL records are LF-delimited. Do not use splitlines(): source text can
+    # contain Unicode line separators such as U+0085 inside a JSON string.
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
         if not line.strip():
             continue
         try:

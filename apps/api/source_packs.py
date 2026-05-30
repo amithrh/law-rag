@@ -432,15 +432,22 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             ))
 
     elif category == "senior_citizen":
-        senior_anchor_patterns = (
-            ("/sec-23",)
-            if _has_any(q, ("gift", "gifted", "gift deed", "transfer", "transferred", "settlement deed"))
-            else ("/sec-4", "/sec-5", "/sec-9", "/sec-23")
-        )
+        has_gift_transfer = _has_any(q, ("gift", "gifted", "gift deed", "transfer", "transferred", "settlement deed"))
+        if _has_any(q, ("enforce", "enforcement", "stopped paying", "not paying", "tribunal ordered", "tribunal order", "default")):
+            senior_anchor_patterns = (("/sec-23", "/sec-11", "/sec-13", "/sec-9", "/sec-5") if has_gift_transfer else ("/sec-11", "/sec-13", "/sec-9", "/sec-5"))
+            senior_search = "Maintenance and Welfare of Parents and Senior Citizens Act 2007 section 11 enforcement order maintenance section 13 deposit maintenance amount tribunal"
+            if has_gift_transfer:
+                senior_search += " section 23 transfer property gift deed void"
+        elif has_gift_transfer:
+            senior_anchor_patterns = ("/sec-23",)
+            senior_search = "Maintenance and Welfare of Parents and Senior Citizens Act 2007 section 23 maintenance tribunal transfer property"
+        else:
+            senior_anchor_patterns = ("/sec-4", "/sec-5", "/sec-9", "/sec-23")
+            senior_search = "Maintenance and Welfare of Parents and Senior Citizens Act 2007 section 4 section 23 maintenance tribunal transfer property"
         packs.append(SourcePack(
             id="senior_citizens_2007",
             title_patterns=("Maintenance and Welfare of Parents and Senior Citizens Act 2007",),
-            search_query="Maintenance and Welfare of Parents and Senior Citizens Act 2007 section 4 section 23 maintenance tribunal transfer property",
+            search_query=senior_search,
             doc_ids=("mwp-2007", "senior-citizens-2007"),
             anchor_patterns=senior_anchor_patterns,
         ))
@@ -597,6 +604,18 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 doc_ids=("telecommunications-2023",),
                 anchor_patterns=("/sec-29", "/sec-42"),
                 priority=1.02,
+            ))
+        if _has_any(q, ("otp", "phishing", "unauthorized debit", "unauthorised debit", "bank says my fault", "no refund", "icici", "sbi", "hdfc")) and _has_any(q, ("bank", "account", "upi", "debit", "lost", "refund", "transaction")):
+            packs.append(SourcePack(
+                id="rbi_integrated_ombudsman_2021",
+                title_patterns=(
+                    "Reserve Bank Integrated Ombudsman Scheme 2021",
+                    "Reserve Bank - Integrated Ombudsman Scheme 2021",
+                ),
+                search_query="Reserve Bank Integrated Ombudsman Scheme 2021 bank customer complaint unauthorized electronic transaction customer liability refund",
+                doc_ids=("rbi-integrated-ombudsman-2021",),
+                anchor_patterns=("/sec-2", "/sec-3"),
+                priority=1.12,
             ))
         if (
             _has_any(q, (
@@ -1220,6 +1239,26 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             ))
 
     elif category == "employment_wages":
+        if _has_any(q, (
+            "give up wages", "waive wages", "waiver of wages", "signed paper",
+            "signed document", "signed form",
+        )):
+            packs.append(SourcePack(
+                id="code_on_wages_2019_contracting_out",
+                title_patterns=("Code on Wages 2019",),
+                search_query="Code on Wages 2019 section 60 contracting out relinquishes right amount minimum wages agreement null void section 45 claims",
+                doc_ids=("code-on-wages-2019",),
+                anchor_patterns=("/sec-60", "/sec-61", "/sec-45"),
+                priority=1.24,
+            ))
+            packs.append(SourcePack(
+                id="indian_contract_1872_free_consent",
+                title_patterns=("Indian Contract Act 1872",),
+                search_query="Indian Contract Act 1872 section 19 voidability agreement without free consent coercion fraud misrepresentation",
+                doc_ids=("indian-contract-1872",),
+                anchor_patterns=("/sec-19",),
+                priority=1.10,
+            ))
         if _has_gig_platform_work_context(q):
             packs.append(SourcePack(
                 id="social_security_code_2020_gig_platform",
@@ -2098,6 +2137,25 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             "pregnant", "pregnancy", "newborn", "new born",
         )):
             packs.append(_constitution_article_21_pack(q))
+        if category == "criminal_defence_bail" and _has_criminal_quashing_context(q):
+            if not _uses_legacy_criminal_regime(route):
+                packs.append(SourcePack(
+                    id="bnss_2023_quashing",
+                    title_patterns=("Bharatiya Nagarik Suraksha Sanhita 2023",),
+                    search_query="Bharatiya Nagarik Suraksha Sanhita 2023 section 528 inherent powers High Court quashing criminal proceeding FIR",
+                    doc_ids=("bnss-2023",),
+                    anchor_patterns=("/sec-528",),
+                    priority=1.22,
+                ))
+            if _uses_legacy_criminal_regime(route) or route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc":
+                packs.append(SourcePack(
+                    id="crpc_1973_quashing",
+                    title_patterns=("Code of Criminal Procedure 1973", "Code of Criminal Procedure, 1973"),
+                    search_query="Code of Criminal Procedure 1973 section 482 inherent powers High Court quashing FIR criminal proceeding",
+                    doc_ids=("crpc-1973",),
+                    anchor_patterns=("/sec-482",),
+                    priority=1.22 if _uses_legacy_criminal_regime(route) else 1.18,
+                ))
         if category == "criminal_defence_bail" and _has_any(q, ("pregnant", "pregnancy", "sick", "infirm", "medical bail", "interim bail")):
             packs.append(SourcePack(
                 id="bnss_2023_medical_bail",
@@ -2243,6 +2301,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 title_patterns=("Juvenile Justice (Care and Protection of Children) Act 2015",),
                 search_query="age determination school date birth certificate matriculation medical age test",
                 doc_ids=("jj-2015",),
+                anchor_patterns=("/sec-2-t", "/sec-2-u"),
                 priority=1.18,
             ))
             packs.append(SourcePack(
@@ -2250,6 +2309,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 title_patterns=("Juvenile Justice (Care and Protection of Children) Act 2015",),
                 search_query="person child court determine age",
                 doc_ids=("jj-2015",),
+                anchor_patterns=("/sec-2-t",),
                 priority=1.22,
             ))
             packs.append(SourcePack(
@@ -2257,6 +2317,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 title_patterns=("Juvenile Justice (Care and Protection of Children) Act 2015",),
                 search_query="Juvenile Justice Act section 94 age determination date of birth certificate school matriculation panchayat ossification test",
                 doc_ids=("jj-2015",),
+                anchor_patterns=("/sec-2-t",),
                 priority=1.24,
             ))
             packs.append(SourcePack(
@@ -2282,6 +2343,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                     title_patterns=("Juvenile Justice (Care and Protection of Children) Act 2015",),
                     search_query="age determination school date birth certificate matriculation medical age test child in conflict",
                     doc_ids=("jj-2015",),
+                    anchor_patterns=("/sec-2-t", "/sec-2-u"),
                     priority=1.10,
                 ))
                 packs.append(SourcePack(
@@ -2289,6 +2351,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                     title_patterns=("Juvenile Justice (Care and Protection of Children) Act 2015",),
                     search_query="person child court determine age",
                     doc_ids=("jj-2015",),
+                    anchor_patterns=("/sec-2-t",),
                     priority=1.14,
                 ))
                 packs.append(SourcePack(
@@ -2346,7 +2409,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             ))
         if category in {"police_fir", "criminal_general"} and _has_any(q, ("bangladeshi", "murshidabad", "nationality", "citizen", "migrant", "illegal immigrant")):
             packs.append(_constitution_article_21_pack("Article 21 personal liberty police threat identity nationality"))
-        if category in {"police_fir", "criminal_general"} and _has_witch_hunting_state_law_context(q):
+        if category in {"police_fir", "criminal_general", "criminal_defence_bail"} and _has_witch_hunting_state_law_context(q):
             packs.append(_witch_hunting_state_pack(q))
         if category == "criminal_general" and _has_any(q, ("daughter in law", "daughter-in-law", "bahu")) and _has_any(q, ("jewellery", "jewelry", "gold", "streedhan", "stridhan")):
             packs.append(SourcePack(
@@ -2373,9 +2436,17 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             ndps_search = "NDPS Act 1985 section 36A section 37 default bail extended custody narcotic drug psychotropic substance"
             ndps_anchors = ("/sec-35-b", "/sec-35-c", "/sec-35-d")
             ndps_priority = 1.03
-            if _has_any(q, ("cbd", "thc", "vape", "vape pen", "vape cartridge", "cannabis", "weed", "hash", "personal use", "small quantity")):
-                ndps_search = "NDPS Act 1985 narcotic drug cannabis psychotropic substance possession small quantity bail seizure"
-                ndps_anchors = ("/sec-2", "/sec-20", "/sec-21", "/sec-22", "/sec-37")
+            if _has_any(q, (
+                "cbd", "thc", "vape", "vape pen", "vape cartridge",
+                "cannabis", "weed", "hash", "ganja", "charas",
+                "personal use", "small quantity", "50 gram", "50 grams",
+                "50g", "first time accused", "first-time accused",
+            )):
+                ndps_search = "NDPS Act 1985 section 2 cannabis hemp ganja charas small quantity bail seizure section 37"
+                ndps_anchors = ("/sec-2-a", "/sec-14", "/sec-37")
+                if _has_any(q, ("cbd", "thc", "vape", "vape pen", "vape cartridge", "mdma", "psychotropic")):
+                    ndps_search = "NDPS Act 1985 psychotropic substance possession small quantity bail seizure section 22 section 37"
+                    ndps_anchors = ("/sec-22", "/sec-37", "/sec-2")
                 ndps_priority = 1.08
             if _has_any(q, ("no chargesheet", "no charge sheet", "default bail", "180 days", "4 months", "commercial")):
                 ndps_search = "NDPS Act 1985 section 36A one hundred eighty days custody chargesheet default bail commercial quantity section 37"
@@ -2864,10 +2935,14 @@ def _cpc_pack(query: str) -> SourcePack:
     search_query = "Code of Civil Procedure 1908 civil court procedure filing appeal decree"
     anchor_patterns: tuple[str, ...] = ()
     priority = 1.0
-    if _has_any(query, ("order 21", "order xxi", "execution", "decree holder", "execute decree")):
-        search_query = "Code of Civil Procedure 1908 execution of decrees Order XXI decree holder execution petition"
-        anchor_patterns = ("/sec-36", "/sec-38", "/sec-47", "/sec-51")
-        priority = 1.06
+    if _has_any(query, (
+        "order 21", "order xxi", "execution", "decree holder",
+        "execute decree", "judgment debtor", "judgement debtor",
+        "money decree", "attach property", "attachment of property",
+    )):
+        search_query = "Code of Civil Procedure 1908 execution of decrees Order XXI judgment debtor money decree attachment property"
+        anchor_patterns = ("/sec-51", "/sec-47")
+        priority = 1.12
     elif _has_any(query, ("second appeal", "substantial question", "section 100", "cpc 100")):
         search_query = "Code of Civil Procedure 1908 section 100 second appeal substantial question of law"
         anchor_patterns = ("/sec-100",)
@@ -2972,7 +3047,10 @@ def _family_courts_pack() -> SourcePack:
 
 
 def _bnss_pack(query: str) -> SourcePack:
-    if _has_production_notice_context(query):
+    if _has_criminal_quashing_context(query):
+        search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 section 528 saving inherent powers High Court quashing criminal proceeding FIR"
+        anchor_patterns = ("/sec-528",)
+    elif _has_production_notice_context(query):
         search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 section 94 summons to produce document electronic record thing"
         anchor_patterns = ("/sec-94",)
     elif _has_digital_device_seizure_context(query):
@@ -3006,6 +3084,9 @@ def _bnss_pack(query: str) -> SourcePack:
     elif _has_any(query, ("default bail", "no chargesheet", "no charge sheet", "60 days", "90 days", "custody")):
         search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 default bail detention chargesheet custody section 187"
         anchor_patterns = ("/sec-187",)
+    elif _has_any(query, ("bail", "surety", "bond", "first time accused", "first-time accused")):
+        search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 regular bail bond surety sections 480 483"
+        anchor_patterns = ("/sec-480", "/sec-483")
     elif _has_any(query, ("chargesheet", "charge sheet")):
         search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 section 193 police report completion of investigation charge sheet"
         anchor_patterns = ("/sec-193",)
@@ -3025,7 +3106,10 @@ def _bnss_pack(query: str) -> SourcePack:
 
 
 def _crpc_pack(query: str, *, notice: bool = False) -> SourcePack:
-    if notice or _has_production_notice_context(query):
+    if _has_criminal_quashing_context(query):
+        search_query = "Code of Criminal Procedure 1973 section 482 saving inherent powers High Court quashing criminal proceeding FIR"
+        anchor_patterns = ("/sec-482",)
+    elif notice or _has_production_notice_context(query):
         search_query = "Code of Criminal Procedure 1973 section 91 summons to produce document or other thing"
         anchor_patterns = ("/sec-91",)
     elif _has_digital_device_seizure_context(query):
@@ -3775,6 +3859,19 @@ def _has_production_notice_context(q: str) -> bool:
         "section 91", "crpc 91", "summons to produce", "produce document",
         "notice asking", "summons under", "asked me to produce",
     ))
+
+
+def _has_criminal_quashing_context(q: str) -> bool:
+    quashing = _has_any(q, (
+        "quash", "quashing", "482 crpc", "crpc 482", "section 482",
+        "sec 482", "482 petition", "bnss 528", "section 528", "sec 528",
+    ))
+    criminal_case = _has_any(q, (
+        "fir", "criminal case", "chargesheet", "charge sheet", "summons",
+        "accused", "police case", "criminal proceeding", "criminal proceedings",
+        "criminal complaint", "police report", "charge-sheet",
+    ))
+    return quashing and criminal_case
 
 
 def _has_digital_device_seizure_context(q: str) -> bool:

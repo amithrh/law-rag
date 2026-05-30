@@ -193,7 +193,7 @@ def main() -> int:
     if not args.eval_file.exists():
         raise SystemExit(f"eval file not found: {args.eval_file}")
 
-    items = [json.loads(line) for line in args.eval_file.read_text().splitlines() if line.strip()]
+    items = [json.loads(line) for line in args.eval_file.read_text().split("\n") if line.strip()]
     if args.limit:
         items = items[:args.limit]
     logger.info("running %d queries against %s", len(items), args.api)
