@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -288,6 +289,134 @@ def _hydrate_row(r) -> RetrievedChunk:
     )
 
 
+def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) -> None:
+    """Trim packed multi-section source chunks to the section the pack needs."""
+    if pack.id == "jj_2015_age_claim_court":
+        match = re.search(
+            r"\(2\)\s+In case a person alleged to have committed an offence claims.*?(?=\n\s*Provided that the person shall|while the person’s claim|while the person's claim|$)",
+            chunk.text or "",
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if match:
+            chunk.text = (
+                "Juvenile Justice (Care and Protection of Children) Act 2015, Section 9\n\n"
+                + match.group(0).strip()
+            )
+            chunk.anchor = "jj-2015/sec-9"
+            chunk.metadata["section_no"] = "9"
+        return
+    if pack.id == "jj_2015_age_documents":
+        text = chunk.text or ""
+        match = re.search(
+            r"(?:94\.\s+\(1\).*?reasonable grounds for doubt regarding\s+)?whether the person brought before it is a child.*?(?=\n\s*95\.\s+\(1\)|$)",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if not match:
+            match = re.search(
+                r"94\.\s+\(1\).*?(?=\n\s*95\.\s+\(1\)|$)",
+                text,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+        if match:
+            chunk.text = (
+                "Juvenile Justice (Care and Protection of Children) Act 2015, Section 94\n\n"
+                + match.group(0).strip()
+            )
+            chunk.anchor = "jj-2015/sec-94"
+            chunk.metadata["section_no"] = "94"
+        return
+    if pack.id == "constitution_article_46":
+        match = re.search(
+            r"46\.\s+Promotion of educational and economic interests.*?(?=\n\s*\d{1,3}\.\s+|$)",
+            chunk.text or "",
+            flags=re.DOTALL,
+        )
+        if match:
+            chunk.text = "Constitution of India, Article 46\n\n" + match.group(0).strip()
+            chunk.anchor = "constitution-india/sec-46"
+            chunk.metadata["section_no"] = "46"
+        return
+    if pack.id == "constitution_article_47":
+        match = re.search(
+            r"47\.\s+Duty of the State.*?(?=\n\s*\d{1,3}\.\s+|$)",
+            chunk.text or "",
+            flags=re.DOTALL,
+        )
+        if match:
+            chunk.text = "Constitution of India, Article 47\n\n" + match.group(0).strip()
+        return
+    if pack.id != "ndps_1985" or "section 36a" not in pack.search_query.lower():
+        if pack.id == "jj_2015" and "adoption" in pack.search_query.lower():
+            text = chunk.text or ""
+            match = re.search(r"\b(56|57|58|59|62|63)\.\s+.*", text, flags=re.DOTALL)
+            if match:
+                sec_no = match.group(1)
+                chunk.text = (
+                    "Juvenile Justice (Care and Protection of Children) Act 2015, "
+                    f"Section {sec_no}\n\n"
+                    + match.group(0).strip()
+                )
+                chunk.anchor = f"jj-2015/sec-{sec_no}"
+                chunk.metadata["section_no"] = sec_no
+        return
+    text = chunk.text or ""
+    match = re.search(r"36A\.\s+Offences triable by Special Courts.*", text, flags=re.DOTALL)
+    if not match and "one hundred and eighty days" in text.lower():
+        match = re.search(r"\(4\)\s+In respect of persons accused.*?(?=\n\s*\(5\)|$)", text, flags=re.DOTALL)
+    if match:
+        chunk.text = (
+            "Narcotic Drugs and Psychotropic Substances Act 1985, Section 36A\n\n"
+            + match.group(0).strip()
+        )
+        chunk.anchor = "ndps-1985/sec-36A"
+        chunk.metadata["section_no"] = "36A"
+
+
+_BIHAR_TERMS = (
+    "bihar", "patna", "gaya", "muzaffarpur", "bhagalpur",
+    "darbhanga", "purnea", "samastipur", "siwan", "chhapra",
+    "motihari", "nalanda", "begusarai", "madhubani",
+)
+
+
+def _query_allows_state_specific_source(query: str, chunk: RetrievedChunk) -> bool:
+    title = (chunk.title or "").lower()
+    q = query.lower()
+    if "bihar mukhyamantri kanya vivah" in title:
+        return any(term in q for term in _BIHAR_TERMS)
+    if (
+        any(term in q for term in ("prohibition law", "excise act", "liquor", "caught me drinking", "drinking village", "sharab"))
+        and ("state of bihar" in title or "bihar prohibition" in title)
+    ):
+        return _query_has_bihar_excise_jurisdiction(q)
+    return True
+
+
+def _query_has_bihar_excise_jurisdiction(q: str) -> bool:
+    if any(term in q for term in (
+        "bihar colony", "bihar border", "near bihar border", "bihar bhawan",
+        "from bihar",
+    )):
+        return False
+    if any(term in q for term in ("delhi", "uttar pradesh", " up ", " u.p.", "noida", "lucknow")):
+        return False
+    return any(term in q for term in (
+        "bihar prohibition", "bihar excise", "in bihar", "at bihar",
+        "under bihar", "bihar police", "bihar thana", "patna", "gaya",
+        "muzaffarpur", "bhagalpur", "darbhanga", "purnea", "samastipur",
+        "siwan", "chhapra", "motihari", "nalanda", "begusarai",
+        "madhubani",
+    ))
+
+
+def _filter_query_ineligible_sources(
+    query: str,
+    chunks: list[RetrievedChunk],
+) -> list[RetrievedChunk]:
+    return [c for c in chunks if _query_allows_state_specific_source(query, c)]
+
+
 def _preserve_required_source_packs(
     candidates: list[RetrievedChunk],
     pack_ids: list[str],
@@ -524,6 +653,120 @@ def _source_cluster_scores(
     return out
 
 
+_SEC_ANCHOR_RE = re.compile(r"(?:^|/)sec-(\d{1,4})([A-Z]{0,2})(?:-([A-Z]))?", re.IGNORECASE)
+
+
+def _section_numbers_from_anchor_patterns(anchor_patterns: tuple[str, ...]) -> list[str]:
+    """Extract exact legal section numbers from source-pack anchor hints.
+
+    Required-source packs are meant to fetch section 3, not section 30 just
+    because both contain the string `/sec-3`. Prefer chunk metadata for exact
+    matching and keep a boundary-regex fallback for older chunks.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for pattern in anchor_patterns:
+        match = _SEC_ANCHOR_RE.search(pattern)
+        if not match:
+            continue
+        num = match.group(1)
+        inline_suffix = (match.group(2) or "").upper()
+        hyphen_suffix = (match.group(3) or "").upper()
+        candidates = [f"{num}{inline_suffix}"]
+        # Some legacy hints used normalized anchors such as `/sec-13-b`
+        # for legal section 13B. Treat that as 13B plus a literal anchor
+        # regex, not as section 13; otherwise `/sec-71-a` also matches
+        # unrelated `/sec-71__2` split chunks.
+        if hyphen_suffix:
+            candidates = [f"{num}{hyphen_suffix}"]
+        for sec_no in candidates:
+            if sec_no and sec_no not in seen:
+                seen.add(sec_no)
+                out.append(sec_no)
+    return out
+
+
+def _anchor_boundary_regexes(section_nos: list[str]) -> list[str]:
+    return [rf"(^|/)sec-{re.escape(sec_no)}(@|-|__|$)" for sec_no in section_nos]
+
+
+def _anchor_regexes_from_patterns(anchor_patterns: tuple[str, ...]) -> list[str]:
+    section_regexes = _anchor_boundary_regexes(_section_numbers_from_anchor_patterns(anchor_patterns))
+    literal_regexes = [
+        rf"(^|[#/]){re.escape(pattern.removeprefix('/').removesuffix('@'))}($|@|__)"
+        for pattern in anchor_patterns
+        if pattern and pattern.removeprefix("/").removesuffix("@")
+    ]
+    return [*section_regexes, *literal_regexes]
+
+
+def _source_pack_anchor_order(
+    chunk: RetrievedChunk,
+    *,
+    section_nos: list[str],
+    anchor_regexes: list[str],
+) -> int:
+    section_no = str(chunk.metadata.get("section_no") or "").upper()
+    section_order = {sec_no.upper(): idx for idx, sec_no in enumerate(section_nos)}
+    if section_no in section_order:
+        return section_order[section_no]
+    anchor = chunk.anchor or ""
+    for idx, anchor_regex in enumerate(anchor_regexes):
+        if re.search(anchor_regex, anchor, flags=re.IGNORECASE):
+            return idx
+    return 9999
+
+
+def _diversify_source_pack_chunks(
+    chunks: list[RetrievedChunk],
+    *,
+    section_nos: list[str],
+    anchor_regexes: list[str],
+    limit: int,
+) -> list[RetrievedChunk]:
+    """Keep one strong chunk per requested anchor before duplicates.
+
+    Some official PDFs split a single legal section into many chunks. A
+    straight LIMIT can therefore return four Section 18 chunks and miss the
+    requested inspector/sampling sections entirely. Round-robin by anchor
+    order keeps source packs representative while preserving BM25 ordering
+    inside each section.
+    """
+    if limit <= 0 or len(chunks) <= limit:
+        return chunks
+
+    ranked = sorted(
+        chunks,
+        key=lambda c: (
+            -float(c.bm25_score or 0.0),
+            c.paragraph_no is None,
+            c.paragraph_no if c.paragraph_no is not None else 999999,
+            c.chunk_id,
+        ),
+    )
+    groups: dict[int, list[RetrievedChunk]] = {}
+    for chunk in ranked:
+        order = _source_pack_anchor_order(
+            chunk,
+            section_nos=section_nos,
+            anchor_regexes=anchor_regexes,
+        )
+        groups.setdefault(order, []).append(chunk)
+
+    diversified: list[RetrievedChunk] = []
+    orders = sorted(groups)
+    max_group_len = max(len(group) for group in groups.values())
+    for round_idx in range(max_group_len):
+        for order in orders:
+            group = groups[order]
+            if round_idx >= len(group):
+                continue
+            diversified.append(group[round_idx])
+            if len(diversified) >= limit:
+                return diversified
+    return diversified
+
+
 async def _fetch_source_pack_candidates(
     pool: asyncpg.Pool,
     query: str,
@@ -538,19 +781,65 @@ async def _fetch_source_pack_candidates(
     out: list[RetrievedChunk] = []
     async with pool.acquire() as conn:
         for pack in packs:
+            if pack.id == "jj_2015_age_documents":
+                rows = await conn.fetch(
+                    """
+                    SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
+                           c.subject_area, c.as_at, c.paragraph_no, c.metadata,
+                           d.title, d.citation, d.court, d.statute_short,
+                           ts_rank(c.text_tsv, plainto_tsquery('english', $1)) AS bm25_score,
+                           1 AS anchor_priority,
+                           1 AS anchor_order
+                    FROM chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    -- These JJ chunks are quarantined only because the
+                    -- chunker mis-anchored s.94 under s.30. The exact-text
+                    -- branch below trims and re-anchors them before use.
+                    WHERE c.source_type = 'bare_act'
+                      AND d.doc_id = 'jj-2015'
+                      AND (
+                        c.text ILIKE '%Where, it is obvious to the Committee or the Board%'
+                        OR c.text ILIKE '%date of birth certificate from the school%'
+                      )
+                    ORDER BY
+                      CASE
+                        WHEN c.text ILIKE '%date of birth certificate from the school%' THEN 0
+                        ELSE 1
+                      END,
+                      c.id
+                    LIMIT $2
+                    """,
+                    pack.search_query,
+                    limit_per_pack,
+                )
+                for row in rows:
+                    chunk = _hydrate_row(row)
+                    _focus_required_source_pack_text(chunk, pack)
+                    chunk.bm25_score = float(row["bm25_score"] or 0.0)
+                    chunk.metadata["_required_source_pack"] = pack.id
+                    chunk.metadata["_required_source_priority"] = pack.priority
+                    chunk.metadata["_required_source_query"] = pack.search_query
+                    out.append(chunk)
+                continue
             title_patterns = [f"%{pattern}%" for pattern in pack.title_patterns]
             doc_ids = list(pack.doc_ids)
-            anchor_patterns = [f"%{pattern}%" for pattern in pack.anchor_patterns]
+            section_nos = _section_numbers_from_anchor_patterns(pack.anchor_patterns)
+            anchor_regexes = _anchor_regexes_from_patterns(pack.anchor_patterns)
+            fetch_limit = max(limit_per_pack, limit_per_pack * max(1, len(pack.anchor_patterns)) * 4)
             rows = await conn.fetch(
                 """
                 SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                        c.subject_area, c.as_at, c.paragraph_no, c.metadata,
                        d.title, d.citation, d.court, d.statute_short,
-                       ts_rank(c.text_tsv, plainto_tsquery('english', $5)) AS bm25_score,
+                       ts_rank(c.text_tsv, plainto_tsquery('english', $6)) AS bm25_score,
                        CASE
-                         WHEN c.anchor ILIKE ANY($4::text[]) THEN 1
+                         WHEN cardinality($4::text[]) > 0
+                           AND c.metadata->>'section_no' = ANY($4::text[]) THEN 1
+                         WHEN cardinality($5::text[]) > 0
+                           AND c.anchor ~* ANY($5::text[]) THEN 1
                          ELSE 0
-                       END AS anchor_priority
+                       END AS anchor_priority,
+                       COALESCE(array_position($4::text[], c.metadata->>'section_no'), 9999) AS anchor_order
                 FROM chunks c
                 JOIN documents d ON d.id = c.document_id
                 WHERE NOT c.quarantined
@@ -560,24 +849,55 @@ async def _fetch_source_pack_candidates(
                     OR d.title ILIKE ANY($1::text[])
                     OR COALESCE(d.statute_short, '') ILIKE ANY($1::text[])
                   )
-                ORDER BY anchor_priority DESC, bm25_score DESC,
+                  AND (
+                    (cardinality($4::text[]) = 0 AND cardinality($5::text[]) = 0)
+                    OR c.metadata->>'section_no' = ANY($4::text[])
+                    OR c.anchor ~* ANY($5::text[])
+                  )
+                ORDER BY anchor_priority DESC, anchor_order ASC, bm25_score DESC,
                          c.paragraph_no NULLS LAST, c.id
-                LIMIT $6
+                LIMIT $7
                 """,
                 title_patterns,
                 list(pack.source_types),
                 doc_ids,
-                anchor_patterns,
+                section_nos,
+                anchor_regexes,
                 pack.search_query,
-                limit_per_pack,
+                fetch_limit,
             )
+            pack_chunks: list[RetrievedChunk] = []
             for row in rows:
                 chunk = _hydrate_row(row)
+                _focus_required_source_pack_text(chunk, pack)
+                if (
+                    pack.id == "ndps_1985"
+                    and "section 36a" in pack.search_query.lower()
+                    and chunk.metadata.get("section_no") != "36A"
+                ):
+                    continue
+                if (
+                    pack.id == "constitution_article_46"
+                    and chunk.metadata.get("section_no") != "46"
+                ):
+                    continue
+                if (
+                    pack.id == "jj_2015"
+                    and "adoption" in pack.search_query.lower()
+                    and chunk.metadata.get("section_no") not in {"56", "57", "58", "59", "62", "63"}
+                ):
+                    continue
                 chunk.bm25_score = float(row["bm25_score"] or 0.0)
                 chunk.metadata["_required_source_pack"] = pack.id
                 chunk.metadata["_required_source_priority"] = pack.priority
                 chunk.metadata["_required_source_query"] = pack.search_query
-                out.append(chunk)
+                pack_chunks.append(chunk)
+            out.extend(_diversify_source_pack_chunks(
+                pack_chunks,
+                section_nos=section_nos,
+                anchor_regexes=anchor_regexes,
+                limit=limit_per_pack,
+            ))
     return out
 
 
@@ -608,12 +928,36 @@ async def _merge_required_source_packs(
     if timings is not None:
         timings["required_source_pack"] = time.perf_counter() - t_source_pack
 
-    for c in source_candidates:
+    for c in _filter_query_ineligible_sources(query, source_candidates):
         existing = union.get(c.chunk_id)
         if existing is None:
             union[c.chunk_id] = c
             continue
+        existing_pack = existing.metadata.get("_required_source_pack")
+        existing_priority = float(existing.metadata.get("_required_source_priority") or 0.0)
+        existing_query = existing.metadata.get("_required_source_query")
+        incoming_pack = c.metadata.get("_required_source_pack")
+        incoming_priority = float(c.metadata.get("_required_source_priority") or 0.0)
+        incoming_wins = bool(incoming_pack) and (
+            not existing_pack or incoming_priority >= existing_priority
+        )
+        if incoming_wins and c.anchor != existing.anchor:
+            existing.anchor = c.anchor
+            existing.text = c.text
+            existing.title = c.title
+            existing.source_type = c.source_type
+            existing.subject_area = c.subject_area
+            existing.as_at = c.as_at
+            existing.paragraph_no = c.paragraph_no
+            existing.citation = c.citation
+            existing.court = c.court
+            existing.statute_short = c.statute_short
         existing.metadata.update(c.metadata)
+        if existing_pack and incoming_pack and existing_priority > incoming_priority:
+            existing.metadata["_required_source_pack"] = existing_pack
+            existing.metadata["_required_source_priority"] = existing_priority
+            if existing_query:
+                existing.metadata["_required_source_query"] = existing_query
         existing.bm25_score = max(existing.bm25_score, c.bm25_score)
 
 
@@ -917,6 +1261,13 @@ async def hybrid_retrieve(
         if r["id"] not in merged:
             merged[r["id"]] = _hydrate_row(r)
         merged[r["id"]].sparse_score = float(r["sparse_score"])
+
+    if merged:
+        merged = {
+            cid: chunk
+            for cid, chunk in merged.items()
+            if _query_allows_state_specific_source(query, chunk)
+        }
 
     # ---- Stage 1.5 — fuse (RRF when multi-head, weighted-sum otherwise) ----
     if use_sparse:

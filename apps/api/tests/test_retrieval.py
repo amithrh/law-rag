@@ -20,14 +20,21 @@ from apps.api.config import Settings
 from apps.api.retrieval import (
     RetrievedChunk,
     _apply_authority_rerank_boosts,
+    _anchor_boundary_regexes,
+    _anchor_regexes_from_patterns,
     _bm25_retrieve_sql,
+    _fetch_source_pack_candidates,
+    _filter_query_ineligible_sources,
+    _focus_required_source_pack_text,
     _preserve_required_source_packs,
     _rerank_candidate_union,
+    _section_numbers_from_anchor_patterns,
     _source_cluster_scores,
     _source_quality_score,
     rrf_fuse,
     sparse_retrieve,
 )
+from apps.api.source_packs import SourcePack
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +298,120 @@ def _retrieved_chunk(
     )
 
 
+def test_state_specific_scheme_source_requires_matching_state_context():
+    bihar_scheme = _retrieved_chunk(
+        1,
+        rerank=0.9,
+        title="Bihar Mukhyamantri Kanya Vivah Yojana Service Description",
+    )
+    rti = _retrieved_chunk(2, rerank=0.8, title="Right to Information Act 2005")
+
+    generic = _filter_query_ineligible_sources(
+        "kanya vivah scheme money not given after daughter wedding",
+        [bihar_scheme, rti],
+    )
+    assert [c.chunk_id for c in generic] == [2]
+
+    state_specific = _filter_query_ineligible_sources(
+        "bihar kanya vivah scheme money not given after daughter wedding",
+        [bihar_scheme, rti],
+    )
+    assert [c.chunk_id for c in state_specific] == [1, 2]
+
+
+def test_state_prohibition_case_requires_matching_state_context():
+    bihar_case = _retrieved_chunk(
+        1,
+        rerank=0.9,
+        source_type="sc_judgment",
+        title="SATVINDER SINGH versus THE STATE OF BIHAR",
+    )
+    bnss = _retrieved_chunk(2, rerank=0.8, title="Bharatiya Nagarik Suraksha Sanhita 2023")
+
+    generic = _filter_query_ineligible_sources(
+        "police caught me drinking village they saying case under prohibition law what punishment",
+        [bihar_case, bnss],
+    )
+    assert [c.chunk_id for c in generic] == [2]
+
+    border_context = _filter_query_ineligible_sources(
+        "police caught me drinking near bihar border in up under prohibition law",
+        [bihar_case, bnss],
+    )
+    assert [c.chunk_id for c in border_context] == [2]
+
+    delhi_context = _filter_query_ineligible_sources(
+        "bihar police caught me drinking in delhi under prohibition law",
+        [bihar_case, bnss],
+    )
+    assert [c.chunk_id for c in delhi_context] == [2]
+
+    state_specific = _filter_query_ineligible_sources(
+        "police caught me drinking in bihar village prohibition law punishment",
+        [bihar_case, bnss],
+    )
+    assert [c.chunk_id for c in state_specific] == [1, 2]
+
+    bihar_act = _retrieved_chunk(
+        3,
+        rerank=0.95,
+        title="Bihar Prohibition and Excise Act 2016",
+    )
+    act_generic = _filter_query_ineligible_sources(
+        "police caught me drinking village they saying case under prohibition law what punishment",
+        [bihar_act, bnss],
+    )
+    assert [c.chunk_id for c in act_generic] == [2]
+
+
+def test_constitution_article_47_source_pack_focuses_packed_chunk_text():
+    chunk = _retrieved_chunk(
+        1,
+        rerank=0.9,
+        title="Constitution of India",
+        source_type="bare_act",
+    )
+    chunk.anchor = "constitution-india/sec-44"
+    chunk.text = (
+        "Constitution of India, Section 44\n\n"
+        "44. Uniform civil code for the citizens. Text.\n"
+        "46. Promotion of educational and economic interests of Scheduled Castes.\n"
+        "47. Duty of the State to raise the level of nutrition and the standard "
+        "of living and to improve public health.—The State shall endeavour to "
+        "bring about prohibition of intoxicating drinks."
+    )
+    pack = SourcePack(
+        id="constitution_article_47",
+        title_patterns=("Constitution of India",),
+        search_query="Constitution of India Article 47 prohibition intoxicating drinks",
+        doc_ids=("constitution-india",),
+        anchor_patterns=("/sec-44",),
+    )
+
+    _focus_required_source_pack_text(chunk, pack)
+
+    assert chunk.text.startswith("Constitution of India, Article 47")
+    assert "prohibition of intoxicating drinks" in chunk.text
+    assert "Uniform civil code" not in chunk.text
+
+
+class _StubPool:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def acquire(self):
+        conn = self.conn
+
+        class _Ctx:
+            async def __aenter__(self):
+                return conn
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        return _Ctx()
+
+
 # ---------------------------------------------------------------------------
 # Sparse retrieval — SQL + scoring semantics
 # ---------------------------------------------------------------------------
@@ -311,6 +432,91 @@ class _StubConn:
     async def fetch(self, sql, *params):
         self.fetch_calls.append((sql, params))
         return self._fetch_return
+
+
+def test_required_source_pack_with_anchor_patterns_filters_to_anchors():
+    conn = _StubConn(fetch_return=[])
+    pack = SourcePack(
+        id="rpa_1951",
+        title_patterns=("Representation of the People Act 1951",),
+        doc_ids=("rpa-1951",),
+        anchor_patterns=("/sec-62@",),
+        search_query="Representation of the People Act 1951 section 62 right to vote",
+    )
+
+    asyncio.run(
+        _fetch_source_pack_candidates(
+            _StubPool(conn),
+            "denied vote",
+            packs=[pack],
+            limit_per_pack=4,
+        )
+    )
+
+    assert conn.fetch_calls
+    sql, params = conn.fetch_calls[0]
+    assert "cardinality($4::text[]) = 0" in sql
+    assert "c.metadata->>'section_no' = ANY($4::text[])" in sql
+    assert "c.anchor ~* ANY($5::text[])" in sql
+    assert "array_position($4::text[], c.metadata->>'section_no')" in sql
+    assert "anchor_order ASC" in sql
+    assert params[3] == ["62"]
+    assert params[4] == [
+        r"(^|/)sec-62(@|-|__|$)",
+        r"(^|[#/])sec\-62($|@|__)",
+    ]
+
+
+def test_required_source_pack_literal_anchor_patterns_are_exactly_bounded():
+    conn = _StubConn(fetch_return=[])
+    pack = SourcePack(
+        id="deptpub_name_change_adult_formalities",
+        title_patterns=("Department of Publication Guidelines for Change of Name",),
+        doc_ids=("deptpub-name-change-adult-guidelines",),
+        anchor_patterns=("adult-formalities",),
+        search_query="Department of Publication name change adult formalities",
+        source_types=("circular",),
+    )
+
+    asyncio.run(
+        _fetch_source_pack_candidates(
+            _StubPool(conn),
+            "change surname after marriage",
+            packs=[pack],
+            limit_per_pack=4,
+        )
+    )
+
+    assert conn.fetch_calls
+    _, params = conn.fetch_calls[0]
+    assert params[3] == []
+    assert params[4] == [r"(^|[#/])adult\-formalities($|@|__)"]
+
+
+def test_source_pack_anchor_patterns_use_exact_section_boundaries():
+    section_nos = _section_numbers_from_anchor_patterns((
+        "/sec-3",
+        "/sec-33A@",
+        "/sec-13-b",
+        "sec-71-a",
+        "surrogacy-2021/sec-4-",
+    ))
+
+    assert section_nos == ["3", "33A", "13B", "71A", "4"]
+    assert _anchor_boundary_regexes(["3"]) == [r"(^|/)sec-3(@|-|__|$)"]
+
+
+def test_source_pack_anchor_patterns_allow_literal_non_section_anchors():
+    anchor_regexes = _anchor_regexes_from_patterns((
+        "adult-required-documents",
+        "/sec-3",
+    ))
+
+    assert anchor_regexes == [
+        r"(^|/)sec-3(@|-|__|$)",
+        r"(^|[#/])adult\-required\-documents($|@|__)",
+        r"(^|[#/])sec\-3($|@|__)",
+    ]
 
 
 def test_sparse_retrieve_empty_query_returns_nothing():

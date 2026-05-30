@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     # citing. 14b is the better trade-off until we see a query class
     # where 32b clearly wins.
     llm_model: str = "qwen3:14b"
-    llm_max_tokens: int = 768
+    llm_max_tokens: int = 384
 
     @property
     def resolved_ollama_api_host(self) -> str:

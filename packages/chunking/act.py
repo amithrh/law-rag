@@ -54,11 +54,90 @@ from .types import Chunk, ChunkStrategy, estimate_tokens
 # `_is_real_section_head` second-stage filter throws out TOC entries
 # (no body follows) and Schedule entries (no `(1)` and < 200 chars body).
 #
+# IndiaCode consolidated Acts sometimes prefix amended section headings
+# with a footnote marker, e.g. `2[23. Inclusion of names...` or
+# `8[33. Presentation of nomination paper...`. That marker is not part of
+# the legal section number; capture the inner number as group(1).
 # Captures: group(1) = section number ("1", "12A", "234B"); group(2) = title.
 _SECTION_HEAD_CANDIDATE_RE = re.compile(
-    r"^[ \t]*(\d{1,4}[A-Z]{0,2})\.[ \t]+([A-Z][^\n]{0,300}?)[\.—–]",
+    r"^[ \t]*(?:\d+\[)?(\d{1,4}[A-Z]{0,2})\.[ \t]*(?:\d+\[)?([A-Z][^\n]{0,300}?)[\.—–]",
     re.MULTILINE,
 )
+
+# Some official Gazette PDFs render section titles as marginal notes in a
+# separate text column. The body line then starts directly as either
+# "12. (1) ..." or "14. Every State Government shall ...", with no inline
+# title terminator for the main regex above to latch onto.
+_BARE_SECTION_HEAD_CANDIDATE_RE = re.compile(
+    r"^[ \t]*(?:\d+\[)?(\d{1,4}[A-Z]{0,2})\.[ \t]*(?:\d+\[)?((?:\(\s*1\s*\)|[A-Z])[^\n]{0,300})",
+    re.MULTILINE,
+)
+
+
+def _candidate_section_heads(text: str) -> list[re.Match[str]]:
+    """Return section-heading candidates from all supported PDF layouts."""
+    by_start: dict[int, re.Match[str]] = {}
+    for pattern in (_SECTION_HEAD_CANDIDATE_RE, _BARE_SECTION_HEAD_CANDIDATE_RE):
+        for match in pattern.finditer(text):
+            by_start.setdefault(match.start(), match)
+    return [by_start[start] for start in sorted(by_start)]
+
+
+_FRONT_MATTER_ZONE_MARKERS = (
+    "LIST OF AMENDING ACTS",
+    "LIST OF ABBREVIATIONS",
+    "ARRANGEMENT OF SECTIONS",
+    "STATEMENT OF OBJECTS",
+    "NOTES ON CLAUSES",
+)
+
+_BODY_ZONE_MARKERS = (
+    "BE IT ENACTED",
+    "IT IS HEREBY ENACTED",
+)
+
+
+def _in_front_matter_zone(text: str, pos: int) -> bool:
+    """Return True when a candidate sits inside pre-body lists/TOCs.
+
+    IndiaCode-style consolidated PDFs often start with long numbered lists
+    of amending Acts and an "Arrangement of Sections". Those lines can look
+    exactly like legal section headings, so candidate validation must reject
+    them before considering body-length heuristics.
+    """
+    prefix = text[:pos]
+    upper = prefix.upper()
+    last_front = max((upper.rfind(marker) for marker in _FRONT_MATTER_ZONE_MARKERS), default=-1)
+    if last_front < 0:
+        return False
+    last_body = max((upper.rfind(marker) for marker in _BODY_ZONE_MARKERS), default=-1)
+    if last_front <= last_body:
+        return False
+    # If a real enactment marker is still ahead, we are definitely in
+    # pre-body material. Synthetic/minimal fixtures often omit the marker;
+    # let the normal TOC/body heuristics handle those.
+    return any(marker in text[pos:].upper() for marker in _BODY_ZONE_MARKERS)
+
+
+def _plausible_section_no(sec_no: str) -> bool:
+    """Reject obvious OCR/footnote-glued fake section numbers.
+
+    Real Indian central Acts in this corpus stay well below section 600.
+    OCR artifacts like `3[14B.` can become `3114B.`; accepting those creates
+    fake citations such as "Section 3114B".
+    """
+    m = re.match(r"(\d{1,4})", sec_no)
+    if not m:
+        return False
+    return int(m.group(1)) <= 600
+
+
+def _looks_like_substantive_bare_body(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        f" {word} " in f" {lowered} "
+        for word in ("shall", "may", "means", "includes", "applies", "extends")
+    )
 
 # Real section body marker: anywhere near the heading, we expect a `(1)`
 # sub-section marker within the next ~500 chars. Used both to:
@@ -82,7 +161,7 @@ def _is_real_section_head(text: str, head_match: re.Match[str], lookahead: int =
           intervening section head, we tie it back to this heading.
 
       (b) Or: no `(1)` marker exists in the window, but the body
-          between this heading and the next section heading is ≥ 200
+          between this heading and the next section heading is ≥ 80
           chars (catches short, non-subsectioned sections like
           "4. Punishments.—The punishments to which offenders are
           liable under this Sanhita are—(a) Death. (b) …").
@@ -98,11 +177,18 @@ def _is_real_section_head(text: str, head_match: re.Match[str], lookahead: int =
     window = text[end:end + lookahead]
 
     # Find positions of the next section head and the next (1) marker.
-    next_head_m = _SECTION_HEAD_CANDIDATE_RE.search(window)
+    next_heads = _candidate_section_heads(window)
+    next_head_m = next_heads[0] if next_heads else None
     next_subsec_m = _SUBSECTION_MARKER_RE.search(window)
 
     next_head_pos = next_head_m.start() if next_head_m else len(window) + 1
     next_subsec_pos = next_subsec_m.start() if next_subsec_m else len(window) + 1
+
+    matched_text = head_match.group(2).strip()
+    if matched_text.startswith("("):
+        return True
+    if _looks_like_substantive_bare_body(matched_text):
+        return True
 
     # (a) `(1)` marker belongs to THIS heading (no intervening section head)
     if next_subsec_pos < next_head_pos:
@@ -110,7 +196,7 @@ def _is_real_section_head(text: str, head_match: re.Match[str], lookahead: int =
 
     # (b) Substantial body before the next section heading
     body_text = window[:next_head_pos].strip()
-    return len(body_text) >= 200
+    return len(body_text) >= 80
 
 
 def _find_section_heads(text: str) -> list[re.Match[str]]:
@@ -120,7 +206,11 @@ def _find_section_heads(text: str) -> list[re.Match[str]]:
     "Subs" / "Omitted" that the title check doesn't catch).
     """
     out: list[re.Match[str]] = []
-    for m in _SECTION_HEAD_CANDIDATE_RE.finditer(text):
+    for m in _candidate_section_heads(text):
+        if _in_front_matter_zone(text, m.start()):
+            continue
+        if not _plausible_section_no(m.group(1)):
+            continue
         if _is_footnote_title(m.group(2)):
             continue
         if _looks_like_footnote(text, m):
@@ -134,7 +224,7 @@ def _find_section_heads(text: str) -> list[re.Match[str]]:
 # Real section body marker: heading immediately followed by em-dash + (1).
 # Used to detect where the act body begins (vs TOC front-matter).
 _REAL_BODY_START_RE = re.compile(
-    r"^[ \t]*(\d{1,4}[A-Z]{0,2})\.[ \t]+[A-Z][^\n]{0,400}?\.[—–\-]+[ \t]*\(\s*1\s*\)",
+    r"^[ \t]*(?:\d+\[)?(\d{1,4}[A-Z]{0,2})\.[ \t]+[A-Z][^\n]{0,400}?\.[—–\-]+[ \t]*\(\s*1\s*\)",
     re.MULTILINE,
 )
 
@@ -216,6 +306,27 @@ def _looks_like_footnote(text: str, head_match: re.Match[str]) -> bool:
         return False
     post = text[head_match.end():head_match.end() + 80]
     return any(m in post for m in _FOOTNOTE_BODY_MARKERS)
+
+
+def _strip_section_heading_footnote_marker(section_body: str) -> str:
+    """Remove IndiaCode footnote markers before section headings.
+
+    A heading extracted as `8[33. Presentation...` should be anchored and
+    displayed as section 33. Leaving the prefix in the chunk body makes later
+    citation checks think the body starts with section 8/32/20, which is the
+    exact class of RPA citation drift this guard fixes.
+    """
+    return re.sub(
+        r"^([ \t]*)\d+\[(\d{1,4}[A-Z]{0,2})\.",
+        r"\1\2.",
+        re.sub(
+            r"^([ \t]*\d{1,4}[A-Z]{0,2}\.[ \t]*)\d+\[",
+            r"\1",
+            section_body,
+            count=1,
+        ),
+        count=1,
+    )
 
 
 # --- as_at -------------------------------------------------------------------
@@ -493,6 +604,7 @@ def chunk_act(
         section_body = body[body_text_start:body_text_end].strip()
         if not section_body:
             continue
+        section_body = _strip_section_heading_footnote_marker(section_body)
 
         # TOC quarantine — if the body looks like a table-of-contents
         # (≥3 distinct section headings naming OTHER sections), skip

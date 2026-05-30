@@ -41,7 +41,6 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-API_URL = "http://localhost:8000/search"
 SEED = 42
 
 
@@ -60,9 +59,9 @@ def load_corpus(folder: Path) -> list[dict]:
     return rows
 
 
-def search(q: str, top_k: int = 5, timeout_s: int = 30) -> dict:
+def search(api_url: str, q: str, top_k: int = 5, timeout_s: int = 30) -> dict:
     qs = urllib.parse.urlencode({"q": q, "top_k": top_k})
-    req = urllib.request.Request(f"{API_URL}?{qs}")
+    req = urllib.request.Request(f"{api_url.rstrip('/')}?{qs}")
     t0 = time.time()
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as f:
@@ -118,8 +117,10 @@ def act_hint_in_hits(hint: str, hits: list[dict]) -> bool:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--queries-dir", default=str(ROOT / "data/eval_500"))
+    ap.add_argument("--api", default="http://localhost:8000/search")
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--top-k", type=int, default=5)
+    ap.add_argument("--timeout-s", type=int, default=90)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -147,7 +148,7 @@ def main() -> None:
             q = qrow["query"]
             persona = qrow.get("persona", "?")
             hint = qrow.get("expected_act_hint") or ""
-            r = search(q, top_k=args.top_k)
+            r = search(args.api, q, top_k=args.top_k, timeout_s=args.timeout_s)
             persona_total[persona] += 1
             if r.get("error"):
                 n_error += 1

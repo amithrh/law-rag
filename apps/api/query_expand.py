@@ -177,10 +177,11 @@ _SYSTEM_PROMPT = (
     "  'thekedar took advance / cannot leave site / 18000 advance' → "
     "Bonded Labour System (Abolition) Act 1976 s.4 s.21 + ISMW Act 1979 + "
     "Code on Wages 2019\n"
-    "  'principal employer ran with wages / contractor disappeared / "
-    "displacement allowance' → Contract Labour (Regulation and Abolition) "
-    "Act 1970 s.21 (principal-employer liability) + Inter-State Migrant "
-    "Workmen Act 1979 s.14 s.15\n"
+    "  'principal employer ran with wages / contractor disappeared' → "
+    "Contract Labour (Regulation and Abolition) Act 1970 s.21 "
+    "(principal-employer liability); add Inter-State Migrant Workmen Act "
+    "1979 only when inter-state recruitment / displacement allowance facts "
+    "appear\n"
     "  'no payment 6 months / munshi keeps saying next week' → Payment of "
     "Wages Act 1936 s.4 s.5 + Code on Wages 2019 (after 1 Apr 2026 "
     "consolidation) + state labour court\n"
@@ -388,6 +389,10 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
         "e-Daakhil District Consumer Disputes Redressal Commission refund",
     ],
     "social_welfare_identity": [
+        "Constitution of India Article 341 Scheduled Castes Article 342 Scheduled Tribes caste certificate rejection appeal",
+        "Mukhyamantri Kanya Vivah Yojana service delivery eligibility marriage certificate income proof",
+        "National Food Security Act 2013 targeted public distribution system ration card grievance redressal",
+        "One Nation One Ration Card portability fair price shop food security allowance",
         "Aadhaar Act 2016 identity authentication correction benefit denial",
         "RTI Act 2005 welfare scheme scholarship pension rejection reasons",
     ],
@@ -418,22 +423,61 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
     "senior_citizen": [
         "Maintenance and Welfare of Parents and Senior Citizens Act 2007 section 4",
         "Senior Citizens Act 2007 section 23 transfer property cancellation",
+        "Transfer of Property Act 1882 section 126 revocation gift deed senior citizen",
     ],
     "family_domestic": [
         "Protection of Women from Domestic Violence Act 2005 section 12",
+        "Protection of Women from Domestic Violence Act 2005 section 19 residence order shared household",
+        "BNSS 2023 section 144 CrPC 1973 section 125 maintenance child support",
         "BNS 2023 section 85 cruelty husband dowry harassment",
     ],
+    "child_marriage_protection": [
+        "Prohibition of Child Marriage Act 2006 section 3 section 13 injunction annulment child marriage",
+        "Child Marriage Prohibition Officer Child Welfare Committee police prevention under PCMA 2006",
+    ],
+    "arrest_custody_safeguard": [
+        "BNSS 2023 section 57 section 58 arrest produced before magistrate twenty four hours",
+        "CrPC 1973 section 56 section 57 arrest production before magistrate 24 hours",
+    ],
+    "undertrial_review_release": [
+        "BNSS 2023 section 479 maximum period undertrial prisoner detention release",
+        "CrPC 1973 section 436A undertrial prisoner maximum detention release",
+    ],
+    "bonded_labour_rescue": [
+        "Bonded Labour System Abolition Act 1976 section 4 section 10 release certificate district magistrate",
+        "forced labour debt bondage document retention hostage labour commissioner police rehabilitation",
+    ],
+    "disability_access": [
+        "Rights of Persons with Disabilities Act 2016 disability certificate certifying authority UDID",
+        "RPwD Act 2016 reasonable accommodation state disability commissioner certificate denial",
+    ],
     "employment_wages": [
+        "Code on Social Security 2020 section 112 section 113 section 114 gig worker platform worker social security",
         "Payment of Wages Act unpaid salary labour commissioner complaint",
         "Code on Wages 2019 wage theft employer contractor",
+        "Industrial Disputes Act 1947 section 25F section 25G section 25H retrenchment",
+        "Indian Contract Act 1872 notice period employment contract breach compensation",
+    ],
+    "labour_compliance": [
+        "Employees State Insurance Act 1948 section 40 contribution section 45A determination section 75 ESI Court",
+        "Code on Social Security 2020 social security contribution employer inspection",
+        "Maharashtra Shops and Establishments Act 2017 section 15 overtime section 25 registers records section 28 facilitator inspection",
+        "Building and Other Construction Workers Act 1996 employer registration construction worker welfare board compliance",
+    ],
+    "manual_scavenging_safety": [
+        "Prohibition of Employment as Manual Scavengers and their Rehabilitation Act 2013 hazardous cleaning sewer septic tank",
+        "Employees Compensation Act 1923 death injury accident arising out of employment compensation",
     ],
     "labour_exploitation_discrimination": [
         "Bonded Labour System Abolition Act 1976 document retention contractor",
         "MGNREGA Act 2005 wage delay grievance compensation",
+        "Juvenile Justice Act 2015 child in need of care and protection child labour rescue",
+        "Building and Other Construction Workers Act 1996 registration welfare board benefits",
     ],
     "workplace_injury_compensation": [
         "Employees Compensation Act 1923 workplace injury accident compensation",
         "BOCW Act 1996 construction worker injury welfare board",
+        "Motor Vehicles Act 1988 accident insurance claims tribunal compensation",
     ],
     "criminal_defence_bail": [
         "BNSS 2023 section 482 anticipatory bail criminal defence",
@@ -445,9 +489,12 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
     ],
     "tax_gst_compliance": [
         "CGST Act 2017 GST registration threshold service provider",
-        "Income Tax Act 1961 TDS Form 26AS not deposited",
+        "CGST Act 2017 section 29 cancellation registration section 30 revocation section 107 appeal",
+        "Income Tax Act 1961 return filing TDS Form 26AS tax compliance",
     ],
     "ibc_nclt": [
+        "Companies Act 2013 annual return MGT-7 financial statement AOC-4 director disqualification",
+        "Companies Act 2013 section 252 company restoration strike off NCLT",
         "Insolvency and Bankruptcy Code 2016 section 9 operational creditor",
         "NCLT insolvency application demand notice default debt",
     ],
@@ -456,26 +503,38 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
         "Indian Partnership Act 1932 retirement partner liability notice",
     ],
     "business_license_compliance": [
+        "Food Safety and Standards Act 2006 FSSAI licence registration renewal category upgrade",
+        "FSSAI licensing registration regulation FoSCoS state central licence notice",
         "state Shops and Establishments Act shop license renewal penalty",
         "municipal trade license renewal delay RTI grievance",
     ],
     "child_custody_adoption": [
+        "Guardians and Wards Act 1890 custody welfare of minor child",
+        "Hindu Marriage Act 1955 section 26 custody of children",
         "Juvenile Justice Act 2015 adoption procedure missing papers",
-        "child custody habeas corpus international child return writ",
     ],
     "education_rights": [
         "Right to Education Act 2009 admission transfer certificate school",
         "RTE Act section 12 25 percent quota private school",
     ],
     "environment_compensation": [
+        "Water Prevention and Control of Pollution Act 1974 state pollution control board effluent complaint",
         "Environment Protection Act 1986 compensation pollution blasting damage",
         "National Green Tribunal Act environmental damage compensation",
+        "RFCTLARR Act 2013 compensation award payment deposit reference Authority land acquired for highway",
+    ],
+    "land_acquisition_compensation": [
+        "RFCTLARR Act 2013 section 77 payment compensation deposit Authority",
+        "RFCTLARR Act 2013 section 64 reference to Authority award compensation objection",
+        "Right to Fair Compensation land acquisition highway road widening award payment deposit",
     ],
     "pmla_ed": [
         "PMLA 2002 section 45 twin conditions bail",
         "Prevention of Money Laundering Act arrest attachment ED summons",
     ],
     "banking_credit_dispute": [
+        "Banking Regulation Act 1949 cooperative bank fixed deposit nominee depositor",
+        "Consumer Protection Act 2019 banking service deficiency fixed deposit nominee complaint",
         "RBI Integrated Ombudsman Scheme bank wrong debit complaint",
         "Credit Information Companies Act CIBIL correction loan closed NOC",
     ],
@@ -485,6 +544,7 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
     ],
     "tribal_caste_atrocity": [
         "SC ST Prevention of Atrocities Act 1989 caste abuse violence",
+        "Constitution of India Article 17 abolition of untouchability Protection of Civil Rights Act 1955 temple well water access",
         "PESA Act 1996 Forest Rights Act 2006 gram sabha tribal rights",
     ],
     "land_revenue_records": [
@@ -492,7 +552,7 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
         "Right to Information Act 2005 land records revenue office delay",
     ],
     "court_procedure": [
-        "district court practice directions court etiquette addressing judge",
+        "Code of Civil Procedure 1908 civil court procedure filing appeal",
         "Legal Services Authorities Act 1987 court help desk legal aid",
     ],
     "criminal_procedure_notice": [
@@ -512,12 +572,31 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
         "Negotiable Instruments Act 1881 section 142 limitation complaint one month",
     ],
     "property_tenancy": [
+        "Transfer of Property Act 1882 gift deed joint ownership section 45 section 126 revocation",
         "Transfer of Property Act 1882 tenancy lease possession deposit",
+        "Registration Act 1908 compulsory registration gift deed sale deed",
+        "Indian Contract Act 1872 consent coercion undue influence fraud property document",
         "state rent control act landlord tenant security deposit eviction",
     ],
     "succession_inheritance": [
         "Indian Succession Act 1925 will intestate succession property share",
         "Muslim personal law inheritance share wife daughter mother",
+    ],
+    "family_marriage_status": [
+        "personal law second marriage first marriage valid protection maintenance",
+        "BNS 2023 IPC 1860 bigamy cruelty marriage status family court",
+    ],
+    "election_voter_rights": [
+        "Representation of the People Act 1950 section 19 section 22 section 23 electoral roll correction voter ID EPIC",
+        "Representation of the People Act 1951 section 62 right to vote polling booth denial",
+    ],
+    "election_candidate_dispute": [
+        "Representation of the People Act 1951 candidate nomination disqualification election petition",
+        "Election Commission returning officer nomination scrutiny corrupt practice counting procedure",
+    ],
+    "surrogacy_parenthood": [
+        "Surrogacy Regulation Act 2021 section 4 eligibility intending couple intending woman certificate",
+        "Surrogacy Regulation Act 2021 appropriate authority registered clinic surrogate mother consent",
     ],
     "street_vendor_municipal": [
         "Street Vendors Act 2014 seizure goods vending certificate",
@@ -552,6 +631,14 @@ def _route_variants(query: str, route: MatterRoute, max_variants: int) -> list[s
     q = query.lower()
     if route.category == "criminal_defence_bail":
         return _criminal_defence_bail_variants(q, route)[:max_variants]
+    if route.category == "arrest_custody_safeguard":
+        return _arrest_custody_variants(route)[:max_variants]
+    if route.action_pack and route.action_pack.id == "name_change_identity":
+        return [
+            "Department of Publication Guidelines for Change of Name adult Gazette of India Part IV eGazette identity record required documents formalities",
+            "eGazette name change surname change marriage certificate identity record update Aadhaar PAN passport",
+            "name change after marriage government press gazette publication newspaper undertaking proforma witnesses",
+        ][:max_variants]
 
     variants = _ROUTE_EXPANSIONS.get(route.category, [])
     if route.category == "employment_wages" and re.search(r"\b(epf|pf|provident fund)\b", q):
@@ -559,19 +646,467 @@ def _route_variants(query: str, route: MatterRoute, max_variants: int) -> list[s
             "Employees Provident Funds Act 1952 employer contribution default",
             "EPFO grievance provident fund deducted not deposited",
         ] + variants
+    if route.category == "employment_wages" and _contains_any(q, ("esi", "esic", "employees state insurance")):
+        variants = [
+            "Employees State Insurance Act 1948 section 40 contribution employer employee",
+            "Employees State Insurance Act 1948 section 45A contribution determination section 75 ESI Court",
+        ] + variants
+    if route.category == "employment_wages" and _contains_any(q, ("notice period", "offer letter", "appointment letter", "employment contract", "full and final", "final settlement", "dues")):
+        variants = [
+            "Indian Contract Act 1872 performance breach compensation employment notice period",
+            "Code on Wages 2019 payment of wages final settlement dues wage authority",
+        ] + variants
+    if route.category == "digital_platform_account" and _contains_any(q, (
+        "dream11", "parimatch", "betting app", "betting site",
+        "online betting", "online gambling", "online rummy", "rummy app",
+        "fantasy app", "gaming app", "real money game", "real-money game",
+    )):
+        variants = [
+            "Public Gambling Act 1867 section 12 game of mere skill online gambling betting rummy",
+            "Tamil Nadu Prohibition of Online Gambling and Regulation of Online Games Act 2022 sections 7 14 online gambling online game of chance",
+        ] + variants
     if route.category == "succession_inheritance" and re.search(r"\b(muslim|shariat|islamic)\b", q):
         variants = [
             "Muslim Personal Law Shariat Application Act 1937 inheritance",
             "Muslim law succession property share heirs",
         ] + variants
-    if route.category == "cyber_fraud_or_harassment" and _contains_any(q, ("sex video", "intimate", "nudes", "upload", "recorded")):
+    if route.category == "succession_inheritance" and re.search(r"\b(parsi|christian)\b", q):
+        variants = [
+            "Indian Succession Act 1925 Parsi intestate succession sections 50 51 54 Schedule II",
+            "Indian Succession Act 1925 Christian intestate succession sections 32 33",
+        ] + variants
+    if route.category == "employment_wages" and _contains_any(q, ("urban company", "gig", "platform worker", "service partner", "beautician", "delivery partner", "driver partner")):
+        variants = [
+            "Code on Social Security 2020 section 112 section 113 section 114 gig worker platform worker social security",
+            "Industrial Disputes Act 1947 workman retrenchment section 25F termination labour court",
+        ] + variants
+    if route.category == "employment_wages" and re.search(r"\b(retrench|retrenched|retrenchment|layoff|lay off)\b", q):
+        variants = [
+            "Industrial Disputes Act 1947 section 25F retrenchment compensation notice",
+            "Industrial Disputes Act 1947 section 25G last come first go section 25H re employment retrenched workmen",
+            "Industrial Disputes Act 1947 section 25N prior permission retrenchment 100 workmen",
+        ] + variants
+    if route.category == "employment_wages" and _contains_any(q, ("labour department", "labor department", "overtime register", "register not maintained", "raid", "raided")):
+        variants = [
+            "Maharashtra Shops and Establishments Act 2017 section 15 overtime wages section 25 registers records section 28 facilitator inspection",
+            "Building and Other Construction Workers Act 1996 registration employer compliance inspection construction worker",
+        ] + variants
+    if route.category == "labour_compliance":
+        variants = [
+            "Employees State Insurance Act 1948 section 40 section 45A contribution determination casual worker",
+            "Employees State Insurance Act 1948 section 75 Employees Insurance Court contribution dispute",
+        ] + variants
+    if route.category == "manual_scavenging_safety":
+        variants = [
+            "Prohibition of Employment as Manual Scavengers and their Rehabilitation Act 2013 hazardous cleaning sewer septic tank death compensation",
+            "Employees Compensation Act 1923 death injury accident arising out of employment dependant compensation",
+            "BNS 2023 death negligence hurt criminal law sewer septic tank no safety",
+        ] + variants
+    if route.category == "labour_exploitation_discrimination":
+        if _contains_any(q, ("asha worker", "asha", "honorarium", "nhm", "nrhm")):
+            variants = [
+                "National Health Mission ASHA incentives guidelines honorarium payment grievance ASHA worker",
+                "NRHM ASHA worker incentive payment state health society grievance",
+            ] + variants
+        if _contains_any(q, ("principal employer", "contract labour", "contract labor", "workmen")) and _contains_any(q, ("wage", "wages", "not paid", "unpaid", "dues", "workers")):
+            contract_variants = [
+                "Contract Labour Regulation and Abolition Act 1970 section 21 responsibility for payment of wages principal employer contractor workmen",
+            ]
+            if _contains_interstate_migrant_context(q):
+                contract_variants.append(
+                    "Inter-State Migrant Workmen Act 1979 contractor principal employer wages displacement allowance journey allowance"
+                )
+            variants = contract_variants + variants
+        if _contains_any(q, ("child", "minor", "girl child", "boy child", "girl 15", "boy 15", "15 working", "16 working", "17 working", "under 18", "domestic work")) or _contains_child_age(q):
+            variants = [
+                "Child and Adolescent Labour Prohibition Regulation Act 1986 prohibition child labour adolescent domestic work hazardous occupation",
+                "Juvenile Justice Act 2015 child in need of care and protection Child Welfare Committee rescue",
+                "Code on Wages 2019 child labour wage employer records",
+            ] + variants
+        if _contains_any(q, ("bocw", "construction worker", "construction 8 years", "building worker", "mason")):
+            variants = [
+                "Building and Other Construction Workers Act 1996 section 12 registration section 13 identity card section 14 cessation",
+                "Building and Other Construction Workers welfare board registration fake register cess construction worker benefits",
+            ] + variants
+            if _contains_any(q, ("cess", "levy", "collection")):
+                variants = [
+                    "Building and Other Construction Workers Welfare Cess Act 1996 section 3 levy and collection of cess",
+                ] + variants
+        if _contains_interstate_migrant_context(q):
+            variants = [
+                "Inter-State Migrant Workmen Act 1979 section 4 registration section 6 contractor licence section 12 duties",
+                "Code on Wages 2019 migrant worker wage register contractor employee records",
+            ] + variants
+        if _contains_any(q, ("nrega", "mgnrega", "muster roll", "bdo", "mukhiya", "job card")):
+            variants = [
+                "Mahatma Gandhi National Rural Employment Guarantee Act 2005 section 3 wage employment section 17 social audit section 19 grievance",
+            ] + variants
+        elif _contains_any(q, ("domestic worker", "madam not paying", "factory deducted", "wage deducted", "uniform never given", "shoes uniform", "no payment", "munshi", "minimum wage", "minimum wages", "state rate", "unskilled")):
+            variants = [
+                "Code on Wages 2019 section 17 payment of wages section 18 deductions section 45 claims",
+                "Code on Wages 2019 minimum wages floor wage employee unskilled worker",
+            ] + variants
+    if route.category == "ibc_nclt":
+        if _contains_any(q, ("nclat", "appeal", "days limit", "limitation", "against nclt order")):
+            variants = [
+                "Insolvency and Bankruptcy Code 2016 section 61 appeal NCLAT thirty days fifteen days condonation NCLT order",
+            ] + variants
+        if _contains_any(q, ("company", "private limited", "pvt ltd", "mgt", "aoc", "roc", "director", "disqualified", "strike off", "revive")):
+            variants = [
+                "Companies Act 2013 section 92 annual return MGT-7 section 137 financial statement AOC-4",
+                "Companies Act 2013 section 164 director disqualification section 252 restoration NCLT",
+            ] + variants
+    if route.category == "business_license_compliance" and _contains_any(q, ("fssai", "food", "snack", "foscos")):
+        variants = [
+            "Food Safety and Standards Act 2006 FSSAI licence registration renewal category upgrade",
+            "FSSAI Licensing and Registration Regulations state central licence manufacturing turnover capacity",
+        ] + variants
+    if route.category == "business_license_compliance" and _contains_any(q, ("auto permit", "taxi permit", "cab permit", "transport permit", "permit renewal", "permit expired")):
+        variants = [
+            "Motor Vehicles Act 1988 section 74 contract carriage permit renewal Regional Transport Authority",
+            "Motor Vehicles Act 1988 section 80 permit renewal replacement appeal transport authority",
+        ] + variants
+    if route.category == "business_license_compliance" and _contains_any(q, ("traffic police", "challan", "license invalid", "licence invalid", "auto driver", "driving license", "driving licence")):
+        variants = [
+            "Motor Vehicles Act 1988 driving licence validity traffic challan penalty enforcement",
+            "Prevention of Corruption Act 1988 section 7 public servant taking gratification bribe",
+        ] + variants
+    if route.category == "workplace_injury_compensation" and _contains_any(q, ("zomato", "swiggy", "uber", "ola", "rider", "driver", "gig", "platform worker", "delivery partner", "bike accident")):
+        variants = [
+            "Code on Social Security 2020 section 113 section 114 gig worker platform worker social security",
+            "Motor Vehicles Act 1988 section 147 insurance section 165 section 166 motor accident claims tribunal",
+        ] + variants
+    if route.category == "workplace_injury_compensation" and _contains_any(q, ("beat", "beaten", "assault", "head injury", "mukadam", "contractor beat")):
+        variants = [
+            "BNS 2023 section 115 section 117 hurt grievous hurt assault workplace contractor beat head injury",
+            "BNSS 2023 FIR police complaint hurt assault workplace injury",
+        ] + variants
+    if route.category == "business_contract_partnership":
+        if _contains_any(q, ("delivery", "vendor", "seller", "recover advance", "advance", "cancel and recover")):
+            variants = [
+                "Indian Contract Act 1872 section 39 refusal to perform section 73 compensation breach delivery advance",
+                "Sale of Goods Act 1930 delivery of goods seller buyer damages price section 55",
+            ] + variants
+        if _contains_any(q, ("invoice", "client not paying", "not paying invoice", "saas work", "buyer deducting payment", "quality issue", "formal rejection", "lakh stuck")):
+            variants = [
+                "MSMED Act 2006 section 15 buyer delayed payment section 16 interest section 18 Facilitation Council",
+                "Indian Contract Act 1872 breach of contract compensation unpaid invoice section 73",
+                "Indian Contract Act 1872 performance of promise payment due buyer quality rejection",
+            ] + variants
+            if _contains_any(q, ("dubai", "foreign", "export", "saas")):
+                variants = [
+                    "Foreign Exchange Management Act 1999 export services foreign exchange realisation India",
+                ] + variants
+        if _contains_any(q, ("co founder", "co-founder", "equity", "esop", "shareholder", "registers", "board")):
+            variants = [
+                "Companies Act 2013 section 62 share capital ESOP section 94 registers section 241 section 242 oppression mismanagement",
+            ] + variants
+        if _contains_any(q, ("principal agent", "principal-agent", "agent took", "agent absconded")):
+            variants = [
+                "Indian Contract Act 1872 agency principal agent duty accounts compensation",
+            ] + variants
+    if route.category == "social_welfare_identity" and _contains_any(q, ("army", "defence", "defense", "service pension", "family pension")):
+        variants = [
+            "Pension Regulations for the Army 2008 Part I family pension widow eligibility",
+            "Pension Regulations for the Army 2008 Part II initial grant family pension claims documents procedure",
+        ] + variants
+    if route.category == "social_welfare_identity" and _contains_any(q, ("rti", "pension not", "pension nahi", "nahi aayi", "not received pension", "not paid pension")):
+        variants = [
+            "Right to Information Act 2005 section 6 application section 7 time limit section 19 appeal pension status reasons",
+        ] + variants
+    if route.category == "social_welfare_identity" and _contains_any(q, ("caste certificate", "community certificate", "sc certificate", "st certificate", "tehsildar", "tahsildar")):
+        variants = [
+            "Constitution of India Article 341 Scheduled Castes Article 342 Scheduled Tribes caste certificate state list",
+            "Right to Information Act 2005 section 6 section 7 section 19 rejection reasons first appeal",
+        ] + variants
+    if route.category == "court_procedure" and _contains_any(q, ("cognizance", "private complaint", "156(3)", "156 3", "section 200", "magistrate complaint")):
+        variants = [
+            "BNSS 2023 Bharatiya Nagarik Suraksha Sanhita section 175 section 223 Magistrate complaint police inaction investigation",
+            "Code of Criminal Procedure 1973 section 156(3) section 190 section 200 Magistrate complaint cognizance",
+        ] + variants
+    if route.category == "court_procedure" and _contains_any(q, ("order 21", "order xxi", "execution", "decree holder")):
+        variants = [
+            "Code of Civil Procedure 1908 execution of decrees Order XXI",
+            "Code of Civil Procedure 1908 section 47 execution decree questions",
+        ] + variants
+    if route.category == "court_procedure" and _contains_any(q, ("affidavit", "notarised", "notarized", "notary")):
+        variants = [
+            "court affidavit notarised notary oath affirmation filing procedure",
+            "Code of Civil Procedure 1908 affidavit evidence court filing",
+        ] + variants
+    if route.category == "court_procedure" and _contains_any(q, ("second appeal", "substantial question", "section 100")):
+        variants = [
+            "Code of Civil Procedure 1908 section 100 second appeal substantial question of law",
+            "CPC second appeal High Court substantial question of law procedure",
+        ] + variants
+    if route.category == "court_procedure" and _contains_any(q, ("transfer of case", "case transfer", "section 24")):
+        variants = [
+            "Code of Civil Procedure 1908 section 24 transfer of suit appeal proceeding",
+        ] + variants
+    if route.category == "child_custody_adoption" and _contains_any(q, ("not letting me meet", "took our", "not bringing back", "return")):
+        variants = [
+            "Guardians and Wards Act 1890 section 25 custody return of minor",
+            "habeas corpus child custody urgent child return High Court",
+        ] + variants
+    if route.category == "family_domestic" and _contains_any(q, ("mutual consent", "13b", "both agree divorce")):
+        if _contains_any(q, ("special marriage", "special marriage act", "interfaith", "inter-faith", "court marriage")):
+            variants = [
+                "Special Marriage Act 1954 section 28 divorce by mutual consent",
+                "Family Courts Act 1984 jurisdiction divorce mutual consent petition",
+            ] + variants
+        elif _contains_any(q, ("muslim", "shariat", "nikah")):
+            variants = [
+                "Muslim Personal Law Shariat Application Act 1937 divorce personal law",
+                "Dissolution of Muslim Marriages Act 1939 Muslim wife divorce grounds",
+                "Family Courts Act 1984 jurisdiction divorce petition",
+            ] + variants
+        elif _contains_any(q, ("christian", "church marriage")):
+            variants = [
+                "Divorce Act 1869 Christian divorce mutual consent family court",
+                "Family Courts Act 1984 jurisdiction divorce petition",
+            ] + variants
+        else:
+            variants = [
+                "Hindu Marriage Act 1955 section 13B mutual consent divorce",
+                "Family Courts Act 1984 jurisdiction divorce mutual consent petition",
+            ] + variants
+    if route.category == "family_domestic" and _contains_any(q, ("residence", "shared household", "ghar se nikal", "threw me out", "sasural", "kicked me out")):
+        variants = [
+            "Protection of Women from Domestic Violence Act 2005 section 19 residence order shared household",
+            "Protection of Women from Domestic Violence Act 2005 section 17 right to reside shared household",
+        ] + variants
+    if route.category == "family_domestic" and _contains_any(q, ("salary", "atm card", "groceries", "breadwinner", "economic abuse", "not giving money")):
+        variants = [
+            "Protection of Women from Domestic Violence Act 2005 section 3 economic abuse",
+            "Protection of Women from Domestic Violence Act 2005 section 20 monetary relief",
+        ] + variants
+    if route.category == "family_domestic" and _contains_any(q, ("child support", "child maintenance", "maintenance order", "not paying", "arrears")):
+        variants = [
+            "BNSS 2023 section 144 maintenance wife child parents enforcement",
+            "CrPC 1973 section 125 maintenance child support enforcement",
+            "Family Courts Act 1984 jurisdiction maintenance child support",
+        ] + variants
+    if route.category == "surrogacy_parenthood":
+        variants = [
+            "Surrogacy Regulation Act 2021 section 4 eligibility intending couple intending woman certificate",
+            "Surrogacy Regulation Act 2021 section 6 surrogate mother written informed consent",
+        ] + variants
+        if _contains_any(q, ("clinic", "registration", "registered")):
+            variants = [
+                "Surrogacy Regulation Act 2021 section 3 section 11 registration surrogacy clinic",
+            ] + variants
+        if _contains_any(q, ("abandon", "abandoned", "child rights", "abortion", "terminate")):
+            variants = [
+                "Surrogacy Regulation Act 2021 section 7 section 8 section 10 abandon child rights abortion + Medical Termination of Pregnancy Act 1971 termination pregnancy consent registered medical practitioner",
+            ] + variants
+    if route.category == "election_candidate_dispute":
+        if _contains_any(q, ("convicted", "conviction", "disqualified", "disqualification", "two years", "2 years")):
+            variants = [
+                "Representation of the People Act 1951 section 8 disqualification on conviction candidate",
+                "Representation of the People Act 1951 section 8A disqualification corrupt practices",
+            ] + variants
+        elif _contains_any(q, (
+            "false affidavit", "affidavit false", "false assets", "hid assets",
+            "hide assets", "hidden assets", "wrong affidavit", "fake affidavit",
+            "suppressed criminal case", "concealed criminal case",
+            "hid criminal case", "hide criminal case", "hidden criminal case",
+        )):
+            variants = [
+                "Representation of the People Act 1951 section 33A section 125A false affidavit assets criminal cases + section 80 section 81 section 83 section 100 election petition",
+            ] + variants
+            if _contains_any(q, ("corrupt practice", "bribe", "booth capturing", "religion appeal", "hate speech")):
+                variants = [
+                    "Representation of the People Act 1951 section 33A section 125A false affidavit assets + section 123 corrupt practices + section 80 section 81 section 83 section 100 election petition",
+                ] + variants[1:]
+        elif _contains_any(q, ("corrupt practice", "bribe", "booth capturing", "religion appeal", "hate speech")):
+            variants = [
+                "Representation of the People Act 1951 section 123 corrupt practices election + section 80 section 81 section 100 election petition",
+            ] + variants
+        elif _contains_any(q, ("nomination", "returning officer", "affidavit")):
+            variants = [
+                "Representation of the People Act 1951 section 33 section 36 nomination scrutiny returning officer",
+                "Representation of the People Act 1951 candidate affidavit nomination rejection remedy",
+            ] + variants
+        elif _contains_any(q, ("petition", "recount", "counting", "set aside")):
+            variants = [
+                "Representation of the People Act 1951 section 80 section 81 election petition",
+                "Representation of the People Act 1951 section 100 grounds for declaring election void",
+            ] + variants
+    if route.category == "tax_gst_compliance":
+        variants = []
+        if _contains_any(q, ("gst", "cgst", "gstr")):
+            if _contains_any(q, ("sealed", "seal", "search", "inspection", "godown")):
+                variants += [
+                    "Central Goods and Services Tax Act 2017 section 67 inspection search seizure",
+                    "CGST Act 2017 section 83 provisional attachment tax proceedings",
+                ]
+            elif _contains_any(q, ("cancellation", "cancelled", "cancelled registration", "registration cancelled", "nil returns", "nil return", "revocation")):
+                variants += [
+                    "Central Goods and Services Tax Act 2017 section 29 cancellation of registration",
+                    "Central Goods and Services Tax Act 2017 section 30 revocation of cancellation registration",
+                    "Central Goods and Services Tax Act 2017 section 107 appeal order cancellation",
+                ]
+            elif _contains_any(q, ("late return", "late fee", "penalty", "notice")):
+                variants += [
+                    "Central Goods and Services Tax Act 2017 section 47 late fee delayed return",
+                    "CGST Act 2017 section 73 section 74 tax demand penalty notice",
+                ]
+            elif _contains_any(q, ("appeal", "assessment order", "adjudication order")):
+                variants += [
+                    "Central Goods and Services Tax Act 2017 section 107 appeal adjudication order",
+                ]
+            else:
+                variants += [
+                    "CGST Act 2017 GST registration threshold service provider",
+                    "Central Goods and Services Tax Act 2017 section 22 registration threshold",
+                ]
+        if _contains_any(q, ("customs", "icegate", "bill of entry", "shipping bill", "drawback", "import duty", "customs duty", "duty demand", "classification dispute", "shipment held at port")):
+            if _contains_any(q, ("refund", "drawback")):
+                variants += [
+                    "Customs Act 1962 section 27 refund of duty",
+                    "Customs Act 1962 section 74 section 75 drawback",
+                ]
+            else:
+                variants += [
+                    "Customs Act 1962 bill of entry assessment classification duty appeal",
+                    "Customs Act 1962 section 128 appeal against customs decision",
+                ]
+        if _contains_any(q, ("cit(a)", "commissioner appeals")):
+            variants += [
+                "Income Tax Act 1961 section 246A appeal Commissioner Appeals assessment order",
+                "Income Tax Act 1961 section 249 limitation Commissioner Appeals",
+            ]
+        elif _contains_any(q, ("itat", "appellate tribunal")):
+            variants += [
+                "Income Tax Act 1961 section 253 appeal Appellate Tribunal ITAT",
+                "Income Tax Act 1961 section 254 orders of Appellate Tribunal",
+            ]
+        elif _contains_any(q, ("income tax refund", "refund stuck", "processed no refund")):
+            variants += [
+                "Income Tax Act 1961 section 237 refund of tax",
+                "Income Tax Act 1961 section 244A interest on refund",
+            ]
+        elif _contains_any(q, ("80c", "80ccd", "nps")):
+            variants += [
+                "Income Tax Act 1961 section 80C deduction limit",
+                "Income Tax Act 1961 section 80CCD National Pension System additional deduction",
+            ]
+        elif _contains_any(q, ("capital gains", "54f", "sale of flat")):
+            variants += [
+                "Income Tax Act 1961 section 45 capital gains",
+                "Income Tax Act 1961 section 54F exemption sale of capital asset residential house",
+            ]
+        elif _contains_any(q, ("143(2)", "section 143(2)")):
+            variants += [
+                "Income Tax Act 1961 section 143 notice scrutiny assessment",
+            ]
+        elif (
+            _contains_any(q, ("itr", "assessment year", "234f", "belated return"))
+            or bool(re.search(r"\bay\s*\d{4}", q))
+            or ("income tax" in q and not _contains_any(q, ("assessment order", "appeal")))
+        ):
+            variants += [
+                "Income Tax Act 1961 section 234F late filing fee belated ITR",
+                "Income Tax Act 1961 section 139 belated revised return assessment year",
+            ]
+    if route.category == "property_tenancy":
+        if _contains_any(q, ("gift deed", "gift", "registered gift", "not caring", "cancel", "revocation")):
+            variants = [
+                "Transfer of Property Act 1882 section 126 revocation suspension of gift deed",
+                "Transfer of Property Act 1882 section 122 section 123 gift transfer registered instrument",
+            ] + variants
+        if _contains_any(q, ("joint name", "half share", "claims half", "house", "flat")):
+            variants = [
+                "Transfer of Property Act 1882 section 45 joint transfer consideration co owner share",
+                "Transfer of Property Act 1882 joint ownership house flat share",
+            ] + variants
+        if _contains_any(q, ("thumb impression", "blank paper", "under pressure", "coercion", "undue influence", "fraud", "didn't sign", "did not sign")):
+            variants = [
+                "Indian Contract Act 1872 consent coercion undue influence fraud voidable agreement",
+                "Registration Act 1908 registered gift deed sale deed validity",
+            ] + variants
+    if route.category == "sexual_offence_survivor" and (
+        _contains_any(q, ("child", "minor", "pocso", "under 18", "since i was", "when i was"))
+        or _contains_child_age(q)
+    ):
+        variants = [
+            "POCSO Act 2012 child sexual offence reporting special court survivor support",
+            "BNSS 2023 CrPC 1973 child sexual offence FIR statement medical examination",
+        ] + variants
+    if route.category == "cyber_fraud_or_harassment" and _contains_any(q, (
+        "sex video", "porn video", "intimate", "nudes", "upload", "recorded",
+        "morphed", "deepfake", "lookalike", "reddit", "nude", "leaked",
+    )):
         variants = [
             "Information Technology Act 2000 section 66E 67 intimate video",
             "BNS 2023 voyeurism criminal intimidation intimate image threat",
         ] + variants
+        if _contains_any(q, ("election", "candidate", "campaign")):
+            variants = [
+                "Representation of the People Act 1951 false statement corrupt practice election campaign candidate party",
+            ] + variants
+        if _contains_child_age(q) or (not _contains_adult_age(q) and _contains_any(q, ("minor", "child", "under 18"))):
+            variants = [
+                "POCSO Act 2012 child sexual image reporting special court + Information Technology Act 2000 section 66E 67 intimate image",
+            ] + variants
+    if route.category == "cyber_fraud_or_harassment" and _contains_any(q, ("stalker", "stalking", "dm daily", "direct message", "dms", "after blocking")):
+        variants = [
+            "BNS 2023 section 78 stalking section 351 criminal intimidation",
+            "Information Technology Act 2000 section 66E privacy electronic communication cyber complaint",
+        ] + variants
+    if route.category == "cyber_fraud_or_harassment" and _contains_any(q, ("tinder", "extortion", "gang", "took my phone")):
+        variants = [
+            "BNS 2023 section 308 extortion section 309 robbery section 310 gang",
+            "Information Technology Act 2000 section 66D cheating by personation cyber complaint",
+        ] + variants
+    if route.category == "cyber_fraud_or_harassment" and _contains_any(q, ("privacy", "personal data", "therapist", "mental health", "leaked chat")):
+        variants = [
+            "Digital Personal Data Protection Act 2023 personal data breach consent grievance data fiduciary",
+            "Information Technology Act 2000 privacy breach electronic record cyber complaint",
+        ] + variants
+    if route.category == "banking_credit_dispute" and _contains_any(q, ("sarfaesi", "13(2)", "home loan default", "possession notice")):
+        variants = [
+            "SARFAESI Act 2002 section 13(2) demand notice section 13(4) possession",
+            "SARFAESI Act 2002 section 17 Debts Recovery Tribunal appeal borrower",
+        ] + variants
+    if route.category == "banking_credit_dispute" and _contains_any(q, ("recovery agent", "recovery agents", "nbfc", "loan recovery", "shouted")):
+        variants = [
+            "Reserve Bank Integrated Ombudsman Scheme 2021 NBFC recovery agent harassment complaint",
+            "RBI fair practices code recovery agents customer harassment NBFC lender complaint",
+        ] + variants
+    if route.category == "banking_credit_dispute" and _contains_any(q, ("emi", "bank error", "bounced", "bajaj finserv", "penalty", "cibil", "nbfc")):
+        variants = [
+            "Reserve Bank Integrated Ombudsman Scheme 2021 NBFC bank complaint deficiency in service EMI penalty CIBIL",
+            "Credit Information Companies Regulation Act 2005 CIBIL credit report correction dispute",
+        ] + variants
+    if route.category == "legal_aid" and _contains_any(q, ("lok adalat", "lokadalat", "traffic challan", "e-challan")):
+        variants = [
+            "Legal Services Authorities Act 1987 section 19 organisation of Lok Adalats section 20 cognizance of cases section 21 award",
+            "Lok Adalat pending traffic challan settlement District Legal Services Authority",
+        ] + variants
+    if route.category in {"police_fir", "criminal_general"} and (
+        _contains_any(q, ("stalker", "stalking", "follows", "following"))
+        or _contains_any(q, ("promised marriage", "promise marriage", "deceitful", "live in"))
+        or _contains_any(q, ("dowry", "body had marks", "khap", "love jihad", "minor"))
+    ):
+        variants = [
+            "BNS 2023 section 78 stalking section 69 deceitful promise to marry section 80 dowry death",
+            "BNSS 2023 section 173 FIR police complaint investigation",
+        ] + variants
+        if _contains_child_age(q) or _contains_any(q, ("minor", "under 18", "pocso")):
+            variants = [
+                "POCSO Act 2012 child sexual offence reporting police special court",
+            ] + variants
+    if _contains_any(q, ("daayan", "dayan", "witch", "tonhi", "daini")):
+        variants = [
+            "state Witch Hunting Prohibition Act daayan witch branding assault police complaint",
+            "BNS 2023 hurt criminal intimidation wrongful restraint witch branding violence",
+        ] + variants
     if route.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident":
         variants = [
-            v.replace("BNSS 2023", "CrPC 1973").replace("BNS 2023", "IPC 1860")
+            v.replace("BNSS 2023 section 479", "CrPC 1973 section 436A")
+            .replace("BNSS 2023", "CrPC 1973")
+            .replace("BNS 2023", "IPC 1860")
             for v in variants
         ]
     return variants[:max_variants]
@@ -582,10 +1117,31 @@ def _criminal_defence_bail_variants(query: str, route: MatterRoute) -> list[str]
     current = route.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident"
     date_unclear = route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
 
-    if _contains_any(query, ("default bail", "no chargesheet", "charge sheet", "60 days", "90 days")):
+    if _contains_any(query, ("slap", "slapped", "hit", "pushed", "assault")):
+        return [
+            "Bharatiya Nyaya Sanhita 2023 section 115 voluntarily causing hurt section 351 criminal intimidation",
+            "BNSS 2023 notice bail accused rights simple hurt assault complaint",
+        ]
+
+    default_bail_context = _contains_any(query, ("default bail", "no chargesheet", "charge sheet", "60 days", "90 days"))
+    if _contains_any(query, ("cbd", "vape cartridge", "cannabis", "weed", "hash", "ganja", "charas", "ndps", "narcotic")) and not default_bail_context:
+        return [
+            "NDPS Act 1985 narcotic drug cannabis psychotropic substance possession small quantity bail seizure",
+            "BNSS 2023 search seizure arrest bail criminal procedure NDPS case",
+            "CrPC 1973 search seizure arrest bail criminal procedure NDPS case",
+        ]
+
+    if _contains_any(query, ("prohibition law", "excise act", "liquor case", "caught me drinking", "drinking village", "sharab", "desi daru")):
+        return [
+            "state prohibition excise act alcohol drinking offence punishment bail procedure",
+            "BNSS 2023 arrest notice bail accused criminal court procedure",
+            "CrPC 1973 arrest bail accused criminal court procedure",
+        ]
+
+    if default_bail_context:
         special = []
-        if _contains_any(query, ("ndps", "narcotic", "ganja", "charas", "mdma", "heroin")):
-            special.append("NDPS Act 1985 section 36A section 37 default bail extended custody")
+        if _contains_any(query, ("ndps", "narcotic", "ganja", "charas", "mdma", "heroin", "cannabis", "weed", "hash", "cbd", "vape cartridge")):
+            special.append("NDPS Act 1985 section 36A one hundred eighty days custody chargesheet default bail commercial quantity section 37")
         if legacy:
             return special + [
                 "CrPC 1973 section 167 default bail no chargesheet 60 days 90 days",
@@ -624,8 +1180,61 @@ def _criminal_defence_bail_variants(query: str, route: MatterRoute) -> list[str]
     ]
 
 
+def _arrest_custody_variants(route: MatterRoute) -> list[str]:
+    if route.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident":
+        return [
+            "CrPC 1973 section 56 section 57 arrest production before magistrate 24 hours",
+            "Article 22 Constitution arrest informed grounds produced before magistrate",
+        ]
+    if route.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident":
+        return [
+            "BNSS 2023 section 57 section 58 arrest produced before magistrate twenty four hours",
+            "Article 22 Constitution arrest informed grounds produced before magistrate",
+        ]
+    return [
+        "BNSS 2023 section 57 section 58 arrest produced before magistrate twenty four hours",
+        "CrPC 1973 section 56 section 57 arrest production before magistrate 24 hours",
+    ]
+
+
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _contains_interstate_migrant_context(text: str) -> bool:
+    if re.search(r"\bfrom\s+[a-z ]{2,30}\s+to\s+[a-z ]{2,30}\b", text):
+        return True
+    return _contains_any(text, (
+        "ismw", "inter-state migrant workmen", "inter state migrant workmen",
+        "migrant registration", "migrant worker", "inter state migrant",
+        "inter-state migrant", "displacement allowance", "came together",
+        "brought from", "return ticket", "go back home", "walked from",
+        "journey allowance", "other state", "another state",
+        "from bihar", "from odisha", "from orissa", "from bengal",
+        "from jharkhand", "from up ", "from uttar pradesh",
+        "from chhattisgarh", "from rajasthan", "to gujarat",
+        "to maharashtra", "to delhi", "to karnataka", "to tamil nadu",
+    ))
+
+
+def _contains_child_age(text: str) -> bool:
+    patterns = (
+        r"\b(?:age|aged|is|was)\s+([1-9]|1[0-7])\b",
+        r"\b([1-9]|1[0-7])\s*(?:year|years|yr|yrs)\s*old\b",
+        r"\b([1-9]|1[0-7])\s*(?:year|years|yr|yrs)\s+(?:daughter|son|girl|boy|child|minor)\b",
+        r"\b([1-9]|1[0-7])\s*(?:yo|saal)\b",
+    )
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _contains_adult_age(text: str) -> bool:
+    patterns = (
+        r"\b(?:age|aged|is|was)\s+(1[8-9]|[2-9][0-9])\b",
+        r"\b(1[8-9]|[2-9][0-9])\s*(?:year|years|yr|yrs)\s*old\b",
+        r"\b(1[8-9]|[2-9][0-9])\s*(?:year|years|yr|yrs)\s+(?:daughter|son|girl|boy|child)\b",
+        r"\b(1[8-9]|[2-9][0-9])\s*(?:yo|saal)\b",
+    )
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:

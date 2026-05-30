@@ -154,6 +154,31 @@ class TestVerifySentence:
         v = verify_sentence(s, self.idx_map, skip_nli=True)
         assert v.status == SentenceStatus.META
 
+    @pytest.mark.parametrize("text", [
+        "The provided passages do not state how this applies to your exact facts.",
+        "The provided passages do not state a concrete next step.",
+        "The provided passages do not state enough to apply the rule to your exact facts.",
+        "The provided passages do not state a concrete punishment for the prohibition offence.",
+    ])
+    def test_prompt_fallback_lines_are_meta(self, text: str) -> None:
+        v = verify_sentence(text, self.idx_map, skip_nli=True)
+        assert v.status == SentenceStatus.META
+
+    def test_prompt_fallback_line_with_extra_claim_is_not_meta(self) -> None:
+        s = "The provided passages do not state a concrete next step, but you can file an appeal within 30 days."
+        v = verify_sentence(s, self.idx_map, skip_nli=True)
+        assert v.status == SentenceStatus.UNSUPPORTED
+
+    @pytest.mark.parametrize("text", [
+        "The sources I have don't cover this clearly, but you can file an appeal within 30 days.",
+        "This is general legal information, but bail is guaranteed tomorrow.",
+        "Talk to a lawyer for your specific situation, but you can ignore the summons.",
+        "For decisions that affect your rights, consult a qualified lawyer or the relevant court / forum, but limitation is 30 days.",
+    ])
+    def test_meta_lines_with_extra_claims_are_not_meta(self, text: str) -> None:
+        v = verify_sentence(text, self.idx_map, skip_nli=True)
+        assert v.status == SentenceStatus.UNSUPPORTED
+
     def test_refusal_line_is_meta(self) -> None:
         s = "The sources I have don't cover this clearly. I won't guess."
         v = verify_sentence(s, self.idx_map, skip_nli=True)
@@ -163,6 +188,19 @@ class TestVerifySentence:
         s = "Talk to a lawyer for your specific situation."
         v = verify_sentence(s, self.idx_map, skip_nli=True)
         assert v.status == SentenceStatus.META
+
+    def test_server_criminal_regime_caveat_is_meta(self) -> None:
+        s = "The incident date decides whether BNS/BNSS/BSA or IPC/CrPC/Evidence Act applies."
+        v = verify_sentence(s, self.idx_map, skip_nli=True)
+        assert v.status == SentenceStatus.META
+
+    def test_criminal_regime_caveat_with_extra_claim_is_not_meta(self) -> None:
+        s = (
+            "The incident date decides whether BNS/BNSS/BSA or IPC/CrPC/Evidence Act "
+            "applies, and bail is guaranteed tomorrow."
+        )
+        v = verify_sentence(s, self.idx_map, skip_nli=True)
+        assert v.status == SentenceStatus.UNSUPPORTED
 
     def test_multiple_citations_resolve(self) -> None:
         s = "The court awarded costs and reaffirmed the timeline [2][3]."
@@ -179,11 +217,21 @@ class TestVerifySentence:
     def test_preamble_source_framing_is_meta(self) -> None:
         """Narrow whitelist (post round-2 Codex review): only sentences that
         explicitly frame as drawn from sources qualify as preamble META."""
-        s = "Based on the provided passages, here are the key points regarding FIR registration."
+        s = "Based on the provided passages, here are the key points."
         v = verify_sentence(s, self.idx_map, skip_nli=True)
         assert v.status == SentenceStatus.META, (
             f"expected META preamble, got {v.status} ({v.reason})"
         )
+
+    @pytest.mark.parametrize("text", [
+        "Based on the provided passages, here are the key points: you can file an appeal within 30 days.",
+        "Based on the provided sources here are the main points: bail is guaranteed tomorrow.",
+        "Based on the provided passages, here are the key points regarding appeal within 30 days.",
+        "Based on the provided sources here are the main points regarding bail guaranteed tomorrow.",
+    ])
+    def test_preamble_with_extra_claim_is_not_meta(self, text: str) -> None:
+        v = verify_sentence(text, self.idx_map, skip_nli=True)
+        assert v.status == SentenceStatus.UNSUPPORTED
 
     def test_preamble_does_NOT_match_generic_according_to(self) -> None:
         """Codex round-2 #1: 'According to Section 154(3), you can complain'

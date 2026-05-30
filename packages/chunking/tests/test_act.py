@@ -139,6 +139,103 @@ class TestFindBodyStart:
         # Body should start at section 2, not in TOC
         assert text[bs.offset:bs.offset + 5].startswith("2.")
 
+    def test_gazette_bare_section_body_layout(self) -> None:
+        """NFSA-style Gazette extraction: section titles are marginal notes, so
+        substantive body lines can start as `3. (1) ...` or `14. Every ...`.
+        Those still need section anchors; otherwise source-pack anchor filters
+        silently miss required procedural law.
+        """
+        text = """
+CHAPTER II
+PROVISIONS FOR FOOD SECURITY
+3. (1) Every person belonging to priority households shall be entitled to receive foodgrains.
+(2) The entitlements shall be implemented under the Targeted Public Distribution System.
+Right to receive foodgrains.
+
+CHAPTER V
+REFORMS IN TARGETED PUBLIC DISTRIBUTION SYSTEM
+12. (1) The Central and State Governments shall endeavour to progressively undertake reforms.
+(2) The reforms shall, inter alia, include doorstep delivery and transparent recording.
+Reforms in Targeted Public Distribution System.
+
+CHAPTER VII
+GRIEVANCE REDRESSAL MECHANISM
+14. Every State Government shall put in place an internal grievance redressal mechanism.
+Internal grievance redressal mechanism.
+
+15. (1) The State Government shall appoint or designate, for each district, an officer to be the District Grievance Redressal Officer.
+(2) The qualifications and powers shall be such as may be prescribed.
+District Grievance Redressal Officer.
+"""
+        chunks = list(chunk_act("nfsa-2013", text))
+        anchors = [c.anchor for c in chunks]
+        assert any(a.startswith("nfsa-2013/sec-3") for a in anchors)
+        assert any(a.startswith("nfsa-2013/sec-12") for a in anchors)
+        assert any(a.startswith("nfsa-2013/sec-14") for a in anchors)
+        assert any(a.startswith("nfsa-2013/sec-15") for a in anchors)
+
+    def test_long_front_matter_entries_do_not_become_sections(self) -> None:
+        text = """The X Banking Act, 1949
+[As on the 20th December, 2025]
+
+LIST OF AMENDING ACTS
+10. The Banking Companies (Amendment) Act, 1960 (23 of 1960).
+16. The Banking Law (Application to Co-operative Societies) Act, 1965 (23 of 1965).
+
+THE X BANKING ACT, 1949
+ARRANGEMENT OF SECTIONS
+10B. Banking company to be managed by whole time chairman.
+10BB. Power of Reserve Bank to appoint chairman of the Board of directors appointed on a whole-time basis or a managing director of a banking company.
+
+THE X BANKING ACT, 1949
+An Act to regulate banking companies.
+BE it enacted by Parliament as follows:—
+10B. Banking company to be managed by whole time chairman.—(1) Every banking company shall have a chairman.
+(2) The chairman shall be appointed in the prescribed manner.
+10BB. Power of Reserve Bank to appoint chairman.—(1) Where the office is vacant, the Reserve Bank may appoint a chairman.
+"""
+        chunks = list(chunk_act("banking-x", text, act_title="X Banking Act 1949"))
+        anchors = [c.anchor for c in chunks]
+        assert not any("/sec-16" in a for a in anchors)
+        assert not any("__2" in a for a in anchors)
+        sec_10b = next(c for c in chunks if c.anchor.startswith("banking-x/sec-10B@") or c.anchor.startswith("banking-x/sec-10B-a@") or c.anchor == "banking-x/sec-10B")
+        assert "Every banking company shall have a chairman" in sec_10b.text
+        assert "ARRANGEMENT OF SECTIONS" not in sec_10b.text
+
+    def test_ocr_glued_footnote_section_numbers_are_rejected(self) -> None:
+        text = """The Child Labour Act
+BE it enacted by Parliament as follows:—
+14A. Offences to be cognizable.—(1) An offence under section 3 shall be cognizable.
+3114B. Child and Adolescent Labour Rehabilitation Fund.—(1) The appropriate Government shall constitute a Fund.
+15. Modified application of certain laws.—(1) The provisions shall apply as prescribed.
+"""
+        chunks = list(chunk_act("child-labour", text))
+        anchors = [c.anchor for c in chunks]
+        assert not any("/sec-3114B" in a for a in anchors)
+        assert any(a.startswith("child-labour/sec-14A") for a in anchors)
+        assert any(a.startswith("child-labour/sec-15") for a in anchors)
+
+    def test_title_prefixed_footnote_marker_after_section_number_is_kept(self) -> None:
+        text = """The SARFAESI Act, 2002
+ARRANGEMENT OF SECTIONS
+16. No compensation to directors for loss of office.
+17. Application against measures to recover secured debts.
+18. Appeal to Appellate Tribunal.
+
+BE it enacted by Parliament as follows:—
+16. No compensation to directors for loss of office.—(1) No managing director shall be entitled to compensation.
+
+17. 2[Application against measures to recover secured debts].—(1) Any person aggrieved by any of the measures referred to in sub-section (4) of section 13 taken by the secured creditor may make an application to the Debts Recovery Tribunal.
+(2) The Debts Recovery Tribunal shall consider whether the measures are in accordance with this Act.
+
+18. Appeal to Appellate Tribunal.—(1) Any person aggrieved by any order made by the Debts Recovery Tribunal may prefer an appeal.
+"""
+        chunks = list(chunk_act("sarfaesi-2002", text, act_title="SARFAESI Act 2002"))
+        sec_17 = next(c for c in chunks if c.anchor.startswith("sarfaesi-2002/sec-17"))
+        assert "17. Application against measures" in sec_17.text
+        assert "2[Application" not in sec_17.text
+        assert sec_17.metadata["section_no"] == "17"
+
 
 # -------------------- TOC isolation (the core defect) -----------------------
 
@@ -232,6 +329,80 @@ PRELIMINARY
             assert " " not in c.anchor, f"space in anchor: {c.anchor}"
             assert "\n" not in c.anchor
             assert c.anchor.isascii() or all(ord(ch) >= 32 for ch in c.anchor)
+
+    def test_footnote_prefixed_section_headings_keep_true_section_numbers(self) -> None:
+        text = """The Representation of the People Act, 1950
+[As on the 22nd July, 2025]
+
+ARRANGEMENT OF SECTIONS
+20. Meaning of ordinarily resident.
+21. Preparation and revision of electoral rolls.
+22. Correction of entries in electoral rolls.
+23. Inclusion of names in electoral rolls.
+
+20. Meaning of ordinarily resident.—(1) A person shall not be deemed to be ordinarily resident merely by reason of owning a house.
+
+1[21. Preparation and revision of electoral rolls.—(1) The electoral roll shall be prepared in the prescribed manner.
+(2) The electoral roll shall be revised with reference to qualifying dates.
+
+3[22. Correction of entries in electoral rolls.—If the electoral registration officer is satisfied that an entry is erroneous, he may amend the entry.
+Provided that the person concerned shall be given a reasonable opportunity of being heard.
+The officer may also transpose or delete the entry after proper verification of facts in the prescribed manner before the roll is used.
+
+2[23. Inclusion of names in electoral rolls.—(1) Any person whose name is not included may apply to the electoral registration officer.
+(2) The electoral registration officer shall direct his name to be included if satisfied.
+"""
+        chunks = list(chunk_act("rpa-1950", text))
+        anchors = [c.anchor for c in chunks]
+        assert any(a.startswith("rpa-1950/sec-21@") for a in anchors)
+        assert any(a.startswith("rpa-1950/sec-22@") for a in anchors)
+        assert any(a.startswith("rpa-1950/sec-23@") for a in anchors)
+        assert not any(a.startswith("rpa-1950/sec-20-") for a in anchors)
+        sec_23 = next(c for c in chunks if c.anchor.startswith("rpa-1950/sec-23@"))
+        assert "23. Inclusion of names" in sec_23.text
+        assert "2[23." not in sec_23.text
+
+    def test_short_non_subsectioned_section_is_not_dropped(self) -> None:
+        text = """The Representation of the People Act, 1951
+[As on the 25th August, 2025]
+
+ARRANGEMENT OF SECTIONS
+80. Election petitions.
+80A. High Court to try election petitions.
+81. Presentation of petitions.
+
+80. Election petitions.—No election shall be called in question except by an election petition presented in accordance with the provisions of this Part.
+
+80A. High Court to try election petitions.—(1) The Court having jurisdiction to try an election petition shall be the High Court.
+
+81. Presentation of petitions.—(1) An election petition calling in question any election may be presented on one or more grounds.
+"""
+        chunks = list(chunk_act("rpa-1951", text))
+        anchors = [c.anchor for c in chunks]
+        assert any(a.startswith("rpa-1951/sec-80@") for a in anchors)
+        sec_80 = next(c for c in chunks if c.anchor.startswith("rpa-1951/sec-80@"))
+        assert "No election shall be called in question except by an election petition" in sec_80.text
+
+    def test_no_space_after_section_number_is_not_dropped(self) -> None:
+        text = """The Industrial Disputes Act, 1947
+[As on the 1st January, 2025]
+
+ARRANGEMENT OF SECTIONS
+25F. Conditions precedent to retrenchment of workmen
+25G. Procedure for retrenchment
+25H. Re-employment of retrenched workmen
+
+25F. Conditions precedent to retrenchment of workmen.—No workman employed in any industry shall be retrenched until notice and compensation conditions are met.
+
+25G.Procedure for retrenchment.—Where any workman in an industrial establishment is to be retrenched, the employer shall ordinarily retrench the workman who was the last person to be employed in that category, unless reasons are recorded.
+
+25H. Re-employment of retrenched workmen.—Where any workmen are retrenched, the employer shall give an opportunity to retrenched workmen to offer themselves for re-employment.
+"""
+        chunks = list(chunk_act("industrial-disputes-1947", text))
+        anchors = [c.anchor for c in chunks]
+        assert any(a.startswith("industrial-disputes-1947/sec-25G@") for a in anchors)
+        sec_25g = next(c for c in chunks if c.anchor.startswith("industrial-disputes-1947/sec-25G@"))
+        assert "last person to be employed" in sec_25g.text
 
 
 # -------------------- duplicate-section handling ---------------------------

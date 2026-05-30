@@ -1,0 +1,10 @@
+{"query": "how to refer industrial dispute to labour court under section 10", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 10 Industrial Disputes Act 1947"}
+{"query": "time limit and Form 35 for filing appeal to CIT Appeals income tax", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 246A / 249 Income Tax Act 1961"}
+{"query": "is pre-litigation mediation mandatory before filing commercial suit", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 12A Commercial Courts Act / Mediation Act 2023"}
+{"query": "judgment debtor not paying money decree how to attach property", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Order XXI CPC"}
+{"query": "what should I wear to court as litigant in person appearing first time", "persona": "procedural", "expected_category": "procedure"}
+{"query": "decree holder how to file execution petition Order 21 CPC", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Order XXI CPC"}
+{"query": "court fee for filing writ petition in high court fixed or ad valorem", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Court Fees Act 1870"}
+{"query": "process to file 482 CrPC quashing petition in high court", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 482 CrPC / BNSS 528"}
+{"query": "police refused to register FIR for theft of my bike where do I go next", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Section 154 CrPC / BNSS 173"}
+{"query": "how to initiate mediation under Mediation Act 2023 without going to court", "persona": "procedural", "expected_category": "procedure", "expected_act_hint": "Mediation Act 2023"}

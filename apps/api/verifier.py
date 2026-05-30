@@ -47,12 +47,19 @@ class SentenceStatus(StrEnum):
 # the canonical refusal. Citation check skipped regardless of [N] presence.
 _META_PATTERNS = [
     re.compile(r"^\s*\*\*[A-Z][A-Za-z ()/-]{1,40}\*\*\s*:?\s*$"),                # **Section header**
-    re.compile(r"the sources i have don'?t cover this", re.IGNORECASE),         # refusal
-    re.compile(r"information, not legal advice", re.IGNORECASE),                # disclaimer line
-    re.compile(r"general legal information", re.IGNORECASE),
-    re.compile(r"consult a (qualified )?lawyer", re.IGNORECASE),
-    re.compile(r"talk to a lawyer for your specific situation", re.IGNORECASE),
-    re.compile(r"laws and (their|the) interpretation change", re.IGNORECASE),    # second sentence of the disclaimer block
+    re.compile(r"^\s*the sources i have don'?t cover this clearly\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*the sources i have don'?t cover this clearly\.\s*i won'?t guess\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*i won'?t guess\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*the provided passages do not state how this applies to your exact facts\.\s*$", re.IGNORECASE),
+    re.compile(r"^\s*the provided passages do not state a concrete next step\.\s*$", re.IGNORECASE),
+    re.compile(r"^\s*the provided passages do not state enough to apply the rule to your exact facts\.\s*$", re.IGNORECASE),
+    re.compile(r"^\s*the provided passages do not state a concrete punishment for the prohibition offence\.\s*$", re.IGNORECASE),
+    re.compile(r"^\s*this is general legal information, not legal advice for your specific situation\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*you should talk to a lawyer for your specific situation\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*talk to a lawyer for your specific situation\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*laws and (their|the) interpretation change\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*for decisions that affect your rights, consult a qualified lawyer or the relevant court / forum\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*the incident date decides whether bns/bnss/bsa or ipc/crpc/evidence act applies\.?\s*$", re.IGNORECASE),
     # NOTE: bullet-line exemption removed per Codex review #4. Bullets in
     # "What you can do next" make procedural claims ("file within 30 days",
     # "appeal to magistrate") that need citations too. With the suppress
@@ -81,12 +88,9 @@ _META_PATTERNS = [
 _PREAMBLE_PATTERNS = [
     re.compile(
         r"^\s*("
-        r"based on (the )?(provided|retrieved) (passages|cases|sources)"
-        r"|according to (the )?(provided|retrieved) (passages|cases|sources)"
-        r"|from (the )?(provided|retrieved) (passages|cases|sources)"
-        r"|the (provided|retrieved) (passages|cases|sources)"
+        r"based on (the )?(provided|retrieved) (passages|cases|sources),?\s+here (are|is) (the )?(key |main )?(points|highlights)"
         r"|here (are|is) (the )?(key |main )?(points|highlights) (from|in) (the )?(passages|cases|sources)"
-        r")\b",
+        r")\.?\s*$",
         re.IGNORECASE,
     ),
 ]

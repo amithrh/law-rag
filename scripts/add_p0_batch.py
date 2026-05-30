@@ -28,6 +28,7 @@ those failure modes.
 from __future__ import annotations
 
 import asyncio
+import argparse
 import hashlib
 import json
 import re
@@ -79,6 +80,10 @@ P0: list[dict[str, Any]] = [
     # CrPC: h=15272 has the right meta title but on close inspection also
     # serves no bitstream. Same de-listing pattern as IPC/IEA. Deferred
     # along with them.
+    {"slug": "crpc-1973",
+     "title": "Code of Criminal Procedure 1973",
+     "cached_pdf": "data/raw/acts/crpc-1973__ccp1973.pdf",
+     "subject_area": "criminal"},
 
     {"slug": "cpc-1908", "title": "Code of Civil Procedure 1908",
      "handle_id": "2191", "min_size": 300_000,
@@ -102,6 +107,14 @@ P0: list[dict[str, Any]] = [
     {"slug": "hindu-adoptions-maintenance-1956",
      "title": "Hindu Adoptions and Maintenance Act 1956",
      "handle_id": "1638", "subject_area": "family"},
+    {"slug": "hindu-marriage-1955",
+     "title": "Hindu Marriage Act 1955",
+     "cached_pdf": "data/raw/acts/hindu-marriage-1955__A1955-25Eng.pdf",
+     "subject_area": "family"},
+    {"slug": "special-marriage-1954",
+     "title": "Special Marriage Act 1954",
+     "cached_pdf": "data/raw/acts/special-marriage-1954__A1954-43E.pdf",
+     "subject_area": "family"},
     {"slug": "shariat-1937",
      "title": "Muslim Personal Law (Shariat) Application Act 1937",
      "handle_id": "2303", "subject_area": "family"},
@@ -154,7 +167,9 @@ P0: list[dict[str, Any]] = [
     # h=12697 has the right title but no PDF on its page. h=7771 hosts the
     # actual cgst-act.pdf bitstream.
     {"slug": "cgst-2017", "title": "Central Goods and Services Tax Act 2017",
-     "handle_id": "7771", "subject_area": "tax"},
+     "handle_id": "7771",
+     "cached_pdf": "data/raw/acts/cgst-2017__cgst-act.pdf",
+     "subject_area": "tax"},
     {"slug": "rera-2016", "title": "Real Estate (Regulation and Development) Act 2016",
      "handle_id": "2158", "subject_area": "property"},
 
@@ -178,6 +193,69 @@ P0: list[dict[str, Any]] = [
      "handle_id": "12883", "subject_area": "civil_general"},
     {"slug": "mediation-2023", "title": "Mediation Act 2023",
      "handle_id": "19637", "subject_area": "civil_general"},
+
+    # --- P2 high-value official-law catch-up (2026-05-27) ------------
+    # IndiaCode handle pages for these sometimes time out from the local
+    # runner, but the official bitstreams are stable and were verified
+    # from docs/ACTS_GAP_ANALYSIS.md + IndiaCode search results.
+    {"slug": "rpa-1950",
+     "title": "Representation of the People Act 1950",
+     "handle_id": "1663",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/1663/1/A1950-43.pdf",
+     "min_size": 300_000,
+     "subject_area": "constitutional"},
+    {"slug": "rpa-1951",
+     "title": "Representation of the People Act 1951",
+     "handle_id": "2096",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/1941/1/195143.pdf",
+     "min_size": 700_000,
+     "subject_area": "constitutional"},
+    {"slug": "surrogacy-2021",
+     "title": "Surrogacy (Regulation) Act 2021",
+     "handle_id": "17046",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/17046/1/aaA2021-47.pdf",
+     "min_size": 300_000,
+     "subject_area": "family"},
+
+    # --- P0 production-readiness gap closure (2026-05-27) ------------
+    # Verified against official government sources after final-100 failures
+    # around FSSAI, PDS portability, water pollution, child labour, bonded
+    # labour, and cooperative/banking service disputes. Prefer IndiaCode
+    # bitstreams where stable; otherwise use official department/institute
+    # PDFs with strict size checks.
+    {"slug": "food-safety-standards-2006",
+     "title": "Food Safety and Standards Act 2006",
+     "pdf_url": "https://www.fssai.gov.in/upload/uploadfiles/files/FOOD-ACT.pdf",
+     "min_size": 300_000,
+     "subject_area": "consumer"},
+    {"slug": "water-pollution-1974",
+     "title": "Water (Prevention and Control of Pollution) Act 1974",
+     "handle_id": "1612",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/1612/1/AAA1974-06.pdf",
+     "min_size": 200_000,
+     "subject_area": "environment"},
+    {"slug": "child-labour-1986",
+     "title": "Child and Adolescent Labour (Prohibition and Regulation) Act 1986",
+     "pdf_url": "https://vvgnli.gov.in/sites/default/files/2023-12/The_Child_and_Adolescent_0.pdf",
+     "min_size": 100_000,
+     "subject_area": "service_employment"},
+    {"slug": "bonded-labour-1976",
+     "title": "Bonded Labour System (Abolition) Act 1976",
+     "handle_id": "1491",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/1491/1/197619.pdf",
+     "min_size": 100_000,
+     "subject_area": "service_employment"},
+    {"slug": "national-food-security-2013",
+     "title": "National Food Security Act 2013",
+     "pdf_url": "https://dfpd.gov.in/WriteReadData/Other/nfsa_1.pdf",
+     "min_size": 100_000,
+     "subject_area": "constitutional"},
+    {"slug": "banking-regulation-1949",
+     "title": "Banking Regulation Act 1949",
+     "handle_id": "1885",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/1885/1/aa1949-10.pdf",
+     "min_size": 300_000,
+     "subject_area": "civil_general"},
 
     # --- P1 add-ons: user-reported gaps from UI testing 2026-05-19 -----
     # "school not admitting my child" → RTE Act 2009. h=19908 (CENT 2505)
@@ -236,7 +314,8 @@ P0: list[dict[str, Any]] = [
     # SARFAESI — bank repossession; MSME/home-loan disputes
     {"slug": "sarfaesi-2002",
      "title": "Securitisation and Reconstruction of Financial Assets and Enforcement of Security Interest Act 2002",
-     "handle_id": "2006", "subject_area": "property"},
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/2006/1/A2002-54.pdf",
+     "subject_area": "property"},
 
     # Arbitration — alternate dispute resolution
     {"slug": "arbitration-1996",
@@ -286,7 +365,9 @@ P0: list[dict[str, Any]] = [
     # POCSO/JJ/PCMA already in corpus; add Prevention of Corruption (1988)
     {"slug": "prevention-of-corruption-1988",
      "title": "Prevention of Corruption Act 1988",
-     "handle_id": "1558", "subject_area": "criminal"},
+     "handle_id": "1558",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/1558/1/A1988-49.pdf",
+     "subject_area": "criminal"},
 
     # --- P1 expansion round 3 (2026-05-19): labour predecessors + IDs ---
     # The four labour-code predecessor Acts are still in partial force
@@ -294,7 +375,9 @@ P0: list[dict[str, Any]] = [
     # OSH Code 2020 completes. Heavily queried standalone.
     {"slug": "industrial-disputes-1947",
      "title": "Industrial Disputes Act 1947",
-     "handle_id": "20952", "subject_area": "service_employment"},
+     "handle_id": "20952",
+     "cached_pdf": "data/raw/acts/industrial-disputes-1947__the_industrial_disputes_act%2c_1947.pdf",
+     "subject_area": "service_employment"},
     {"slug": "factories-1948",
      "title": "Factories Act 1948",
      "handle_id": "20951", "subject_area": "service_employment"},
@@ -304,9 +387,6 @@ P0: list[dict[str, Any]] = [
     {"slug": "esi-1948",
      "title": "Employees' State Insurance Act 1948",
      "handle_id": "20349", "subject_area": "service_employment"},
-    {"slug": "gratuity-1972",
-     "title": "Payment of Gratuity Act 1972",
-     "handle_id": "22091", "subject_area": "service_employment"},
     {"slug": "maternity-benefit-1961",
      "title": "Maternity Benefit Act 1961",
      "handle_id": "20954", "subject_area": "service_employment"},
@@ -316,6 +396,22 @@ P0: list[dict[str, Any]] = [
     {"slug": "equal-remuneration-1976",
      "title": "Equal Remuneration Act 1976",
      "handle_id": "20950", "subject_area": "service_employment"},
+    {"slug": "bocw-1996",
+     "title": "Building and Other Construction Workers (Regulation of Employment and Conditions of Service) Act 1996",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/11098/1/building-and-other-construction-workers-act-1996.pdf",
+     "subject_area": "service_employment"},
+    {"slug": "bocw-cess-1996",
+     "title": "Building and Other Construction Workers Welfare Cess Act 1996",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/21040/2/the_building_and_other_construction_workers%E2%80%99_welfare_cess_act%2C_1996.pdf",
+     "subject_area": "service_employment"},
+    {"slug": "ismw-1979",
+     "title": "Inter-State Migrant Workmen (Regulation of Employment and Conditions of Service) Act 1979",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/13209/1/the_inter-state_migrant_workmen_regulation_of_employment_and_conditions__of_service_act_1979.pdf",
+     "subject_area": "service_employment"},
+    {"slug": "msmed-2006",
+     "title": "Micro, Small and Medium Enterprises Development Act 2006",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/2013/3/A2006-27.pdf",
+     "subject_area": "civil_general"},
 
     # ID / cyber
     {"slug": "aadhaar-2016",
@@ -350,7 +446,15 @@ P0: list[dict[str, Any]] = [
     # SC/ST Prevention of Atrocities
     {"slug": "sc-st-poa-1989",
      "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989",
-     "handle_id": "1920", "subject_area": "criminal"},
+     "handle_id": "1920",
+     "cached_pdf": "data/raw/acts/sc-st-poa-1989__aA1989-33.pdf",
+     "subject_area": "criminal"},
+    {"slug": "protection-civil-rights-1955",
+     "title": "Protection of Civil Rights Act 1955",
+     "handle_id": "1544",
+     "pdf_url": "https://ncst.gov.in/uploads-dev/protection-of-civil-righta-act-1955.pdf",
+     "cached_pdf": "data/raw/acts/protection-civil-rights-1955__ncst.pdf",
+     "subject_area": "criminal"},
 
     # Immigration (replaces Foreigners Act 1946 + 3 others; effective 1 Sep 2025)
     {"slug": "immigration-foreigners-2025",
@@ -466,12 +570,143 @@ P0: list[dict[str, Any]] = [
      "cached_pdf": "data/raw/acts/motor-vehicles-1988__aA1988-59.pdf",
      "subject_area": "civil_general"},
 
+    # --- Sewer/septic-tank death + workplace compensation gaps surfaced
+    # by the Stage-3 100-prompt production gate.
+    {"slug": "manual-scavenging-2013",
+     "title": "Prohibition of Employment as Manual Scavengers and their "
+              "Rehabilitation Act 2013",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/2119/1/201325.pdf",
+     "min_size": 300_000,
+     "subject_area": "service_employment"},
+    {"slug": "employees-compensation-1923",
+     "title": "Employees' Compensation Act 1923",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/20347/1/a1923-08.pdf",
+     "min_size": 300_000,
+     "subject_area": "service_employment"},
+
     # --- Payment of Gratuity 1972 — retirement/separation benefit;
     # surfaced by elderly persona queries about gratuity delays.
     {"slug": "gratuity-1972",
      "title": "Payment of Gratuity Act 1972",
      "cached_pdf": "data/raw/acts/gratuity-1972__a1972-39.pdf",
      "subject_area": "service_employment"},
+
+    # --- Stage-7 production gate source gaps (2026-05-28) ------------
+    # These are source-coverage blockers from the timed 100-prompt gate:
+    # the router can identify the matter, but retrieval cannot ground the
+    # answer when the governing Act/rule is not indexed locally.
+    {"slug": "uapa-1967",
+     "title": "Unlawful Activities (Prevention) Act 1967",
+     "handle_id": "1470",
+     "pdf_url": "https://www.mha.gov.in/sites/default/files/A1967-37.pdf",
+     "subject_area": "criminal"},
+    {"slug": "prisons-1894",
+     "title": "Prisons Act 1894",
+     "handle_id": "2325",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/2325/1/AA1894___09.pdf",
+     "subject_area": "criminal"},
+    {"slug": "commercial-courts-2015",
+     "title": "Commercial Courts Act 2015",
+     "handle_id": "2156",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/2156/1/a2016-04.pdf",
+     "subject_area": "civil_general"},
+    {"slug": "mmdr-1957",
+     "title": "Mines and Minerals (Development and Regulation) Act 1957",
+     "handle_id": "1421",
+     "pdf_url": "https://mines.gov.in/admin/download/666a9ae9e4af51718262505.pdf",
+     "subject_area": "environment"},
+    {"slug": "forest-conservation-1980",
+     "title": "Forest (Conservation) Act 1980",
+     "handle_id": "6195",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/6195/1/the_forest_%28conservation%29_act%2C_1980.pdf",
+     "subject_area": "environment"},
+    {"slug": "environment-protection-1986",
+     "title": "Environment (Protection) Act 1986",
+     "handle_id": "1876",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/1876/4/A1986-29.pdf",
+     "subject_area": "environment"},
+    {"slug": "ngt-2010",
+     "title": "National Green Tribunal Act 2010",
+     "handle_id": "2025",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/2025/1/AA2010__19green.pdf",
+     "subject_area": "environment"},
+    {"slug": "cgst-rules-2017",
+     "title": "Central Goods and Services Tax Rules 2017",
+     "pdf_url": "https://cbic-gst.gov.in/pdf/01062021-CGST-Rules-2017-Part-A-Rules.pdf",
+     "subject_area": "tax"},
+    {"slug": "insurance-ombudsman-rules-2017",
+     "title": "Insurance Ombudsman Rules 2017",
+     "pdf_url": "https://irdai.gov.in/documents/37343/366405/The%2BInsurance%2BOmbudsman%2BRules%2C2017.pdf/fd6d6c11-1fed-8c55-8f0e-ac4b616a7ade?download=true&t=1635917388416&version=1.1",
+     "cached_pdf": "data/raw/acts/insurance-ombudsman-rules-2017__official.pdf",
+     "subject_area": "consumer"},
+    {"slug": "rbi-integrated-ombudsman-2021",
+     "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+     "html_url": "https://www.rbi.org.in/scripts/NotificationUser.aspx?Id=12192",
+     "cached_html": "data/raw/acts/rbi-integrated-ombudsman-2021__official.html",
+     "subject_area": "consumer"},
+    {"slug": "credit-information-companies-2005",
+     "title": "Credit Information Companies (Regulation) Act 2005",
+     "handle_id": "2057",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/2057/2/A200530.pdf",
+     "subject_area": "consumer"},
+    {"slug": "protection-human-rights-1993",
+     "title": "Protection of Human Rights Act 1993",
+     "handle_id": "15709",
+     "pdf_url": "https://www.mha.gov.in/sites/default/files/Protection%20of%20HR%20Act1993.pdf",
+     "min_size": 30_000,
+     "subject_area": "constitutional"},
+    {"slug": "assam-witch-hunting-2015",
+     "title": "Assam Witch Hunting (Prohibition, Prevention and Protection) Act 2015",
+     "handle_id": "14889",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/14889/1/the_assam_witch_hunting_prohibition%2C_prevention_and_protection__act%2C_2015_act_no.pdf",
+     "subject_area": "criminal"},
+    {"slug": "chota-nagpur-tenancy-1908",
+     "title": "Chota Nagpur Tenancy Act 1908",
+     "handle_id": "7796",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/7796/1/the_chota_nagpur_tenancy_act%2C1908.pdf",
+     "subject_area": "property"},
+    {"slug": "santhal-parganas-tenancy-1949",
+     "title": "Santhal Parganas Tenancy Act 1949",
+     "handle_id": "8120",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/8120/1/santhal_parganas_tenancy_laws_full.pdf",
+     "subject_area": "property"},
+    {"slug": "nhm-asha-incentives-2025",
+     "title": "National Health Mission ASHA Incentives Guidelines 2025",
+     "pdf_url": "https://nhm.gov.in/New-Update-2023-24/ASHA/Orders_and_guidelines/ASHA-INCENTIVES.pdf",
+     "subject_area": "constitutional"},
+    {"slug": "contract-labour-1970",
+     "title": "Contract Labour (Regulation and Abolition) Act 1970",
+     "handle_id": "13223",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/13223/1/the_contract_labour_regulation_and_abolition_act_1970.pdf",
+     "subject_area": "service_employment"},
+    {"slug": "bihar-kanya-vivah-service",
+     "title": "Bihar Mukhyamantri Kanya Vivah Yojana Service Description",
+     "html_url": "https://serviceonline.bihar.gov.in/getServiceDesc.html?serviceId=8930002",
+     "subject_area": "constitutional"},
+    {"slug": "sale-of-goods-1930",
+     "title": "Sale of Goods Act 1930",
+     "handle_id": "2390",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/2390/1/193003.pdf",
+     "subject_area": "business"},
+    {"slug": "pension-regulations-army-2008-part-i",
+     "title": "Pension Regulations for the Army 2008 Part I",
+     "pdf_url": "https://www.cgda.nic.in/audit/Part-I.pdf",
+     "subject_area": "service_employment"},
+    {"slug": "pension-regulations-army-2008-part-ii",
+     "title": "Pension Regulations for the Army 2008 Part II",
+     "pdf_url": "https://www.cgda.nic.in/audit/Part-II.pdf",
+     "subject_area": "service_employment"},
+    {"slug": "bihar-prohibition-excise-2016",
+     "title": "Bihar Prohibition and Excise Act 2016",
+     "handle_id": "4693",
+     "pdf_url": "https://www.indiacode.nic.in/bitstream/123456789/4693/1/20-2016.pdf",
+     "min_size": 100_000,
+     "subject_area": "criminal"},
+    {"slug": "nsap-guidelines-2014",
+     "title": "National Social Assistance Programme Guidelines 2014",
+     "pdf_url": "https://nsap.dord.gov.in/Guidelines/nsap_guidelines_oct2014.pdf",
+     "min_size": 100_000,
+     "subject_area": "constitutional"},
 ]
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -507,6 +742,37 @@ def fetch_bytes(url: str, out_path: Path, min_size: int = 50_000) -> int:
             f"fetch failed for {url} — got {sz}B (need ≥{min_size}B), HTTP={http_code}"
         )
     return out_path.stat().st_size
+
+
+def html_document_text(html: str, *, title: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    raw_lines = soup.get_text("\n").splitlines()
+    lines = [re.sub(r"\s+", " ", line).strip() for line in raw_lines]
+    lines = [line for line in lines if line]
+
+    start = 0
+    def key(s: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+    title_key = key(title)
+    for i, line in enumerate(lines):
+        norm = key(line)
+        if title_key in norm or "reserve bank integrated ombudsman scheme 2021" in norm:
+            start = i
+            break
+
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i] == "2026" or lines[i].lower().startswith("website policies"):
+            end = i
+            break
+
+    body = "\n".join(lines[start:end]).strip()
+    if title.lower() not in body.lower():
+        body = f"{title}\n\n{body}"
+    return body
 
 
 def find_pdf_link(handle_id: str) -> str | None:
@@ -565,10 +831,97 @@ def load_env(p: str = ".env") -> dict[str, str]:
     return out
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Ingest selected high-priority bare Acts into Postgres."
+    )
+    parser.add_argument(
+        "--slug",
+        action="append",
+        default=[],
+        help="Only ingest this slug. Repeat for multiple slugs.",
+    )
+    parser.add_argument(
+        "--force-reingest",
+        action="store_true",
+        help="For selected slugs, delete existing chunks and reinsert using the current chunker.",
+    )
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Continue after resolve/parse failures instead of failing the batch.",
+    )
+    return parser.parse_args(argv)
+
+
+def assert_unique_slugs(entries: list[dict[str, Any]]) -> None:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for entry in entries:
+        slug = entry["slug"]
+        if slug in seen:
+            duplicates.append(slug)
+        seen.add(slug)
+    if duplicates:
+        raise SystemExit(f"Duplicate P0 slug(s): {', '.join(sorted(set(duplicates)))}")
+
+
+def _registry_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if k != "text"}
+
+
+def sync_acts_registry(rows: list[dict[str, Any]], out_jsonl: Path) -> tuple[int, int]:
+    """Upsert parsed Act metadata into acts.jsonl after DB ingest succeeds.
+
+    `data/` is intentionally ignored, but local evals still use this registry
+    as a corpus availability signal. Keep it idempotent and deduped by slug so
+    a failed embedding/DB step never leaves a false-positive registry row.
+    """
+    out_jsonl.parent.mkdir(parents=True, exist_ok=True)
+
+    by_slug: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    if out_jsonl.exists():
+        with out_jsonl.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                slug = data.get("slug")
+                if not isinstance(slug, str) or not slug:
+                    continue
+                if slug not in by_slug:
+                    order.append(slug)
+                by_slug[slug] = data
+
+    added = 0
+    updated = 0
+    for row in rows:
+        clean = _registry_row(row)
+        slug = clean["slug"]
+        if slug not in by_slug:
+            order.append(slug)
+            added += 1
+        elif by_slug[slug] != clean:
+            updated += 1
+        by_slug[slug] = clean
+
+    tmp = out_jsonl.with_suffix(out_jsonl.suffix + ".tmp")
+    with tmp.open("w") as f:
+        for slug in order:
+            f.write(json.dumps(by_slug[slug], ensure_ascii=False) + "\n")
+    tmp.replace(out_jsonl)
+    return added, updated
+
+
 def resolve_pdf(entry: dict[str, Any]) -> tuple[Path, str, str]:
     """Resolve an entry to (local_pdf_path, source_url, handle_url).
 
-    handle_url is empty for off-IndiaCode entries.
+    handle_url is empty only for non-IndiaCode entries.
     """
     slug = entry["slug"]
     raw_dir = ROOT / "data" / "raw" / "acts"
@@ -588,6 +941,10 @@ def resolve_pdf(entry: dict[str, Any]) -> tuple[Path, str, str]:
     # Pattern 2: direct PDF URL override (off-IndiaCode)
     if "pdf_url" in entry:
         pdf_url = entry["pdf_url"]
+        handle_url = (
+            f"https://www.indiacode.nic.in/handle/123456789/{entry['handle_id']}"
+            if entry.get("handle_id") else ""
+        )
         fname = Path(pdf_url.split("?")[0]).name or f"{slug}.pdf"
         local = raw_dir / f"{slug}__{fname}"
         if not local.exists() or local.stat().st_size < min_size:
@@ -595,7 +952,7 @@ def resolve_pdf(entry: dict[str, Any]) -> tuple[Path, str, str]:
             print(f"  ↓ {slug}: {sz/1024:.0f} KB (direct URL)")
         else:
             print(f"  ✓ {slug}: cached ({local.stat().st_size/1024:.0f} KB)")
-        return local, pdf_url, ""
+        return local, pdf_url, handle_url
 
     # Pattern 3: IndiaCode handle
     handle_id = entry["handle_id"]
@@ -615,31 +972,106 @@ def resolve_pdf(entry: dict[str, Any]) -> tuple[Path, str, str]:
     return local, pdf_url, handle_url
 
 
-async def main() -> None:
+async def ensure_source_row(conn, slug: str, meta: dict[str, Any]) -> int:
+    url_for_src = meta["handle_url"] or meta["pdf_url"]
+    url_hash = hashlib.sha256(url_for_src.encode()).hexdigest()
+    source_metadata = {
+        "slug": slug,
+        "handle_id": meta.get("handle_id", ""),
+        "pdf_url": meta.get("pdf_url", ""),
+    }
+    return await conn.fetchval(
+        """INSERT INTO sources (source_type, origin, url,
+                                canonical_url_hash, metadata)
+           VALUES ('bare_act', $1, $2, $3, $4)
+           ON CONFLICT (canonical_url_hash) DO UPDATE
+             SET source_type = EXCLUDED.source_type,
+                 origin = EXCLUDED.origin,
+                 url = EXCLUDED.url,
+                 metadata = sources.metadata || EXCLUDED.metadata
+           RETURNING id""",
+        "indiacode" if meta["handle_url"] else "direct",
+        url_for_src, url_hash,
+        json.dumps(source_metadata),
+    )
+
+
+async def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    assert_unique_slugs(P0)
+    if args.force_reingest and not args.slug:
+        raise SystemExit("--force-reingest requires one or more explicit --slug values")
     env = load_env()
     out_jsonl = ROOT / "data" / "processed" / "acts.jsonl"
+    entries = P0
+    if args.slug:
+        wanted = set(args.slug)
+        known = {entry["slug"] for entry in P0}
+        unknown = sorted(wanted - known)
+        if unknown:
+            raise SystemExit(f"Unknown slug(s): {', '.join(unknown)}")
+        entries = [entry for entry in P0 if entry["slug"] in wanted]
 
-    print(f"=== P0 batch — {len(P0)} acts ===\n")
+    print(f"=== P0 batch — {len(entries)} acts ===\n")
 
     # ---- Step 1: resolve + parse all PDFs ---------------------------
     print("Step 1: resolve + extract + redact")
     new_rows: list[dict[str, Any]] = []
-    for entry in P0:
+    failures: list[str] = []
+    for entry in entries:
         slug = entry["slug"]
-        try:
-            local, src_url, handle_url = resolve_pdf(entry)
-        except Exception as e:
-            print(f"  ✗ {slug}: resolve failed — {e}")
-            continue
-        try:
-            pdf_bytes = local.read_bytes()
-            doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-            n_pages = doc.page_count
-            text = "\n\n".join(p.get_text("text") for p in doc)
-            doc.close()
-        except Exception as e:
-            print(f"  ✗ {slug}: PDF parse failed — {e}")
-            continue
+        if "html_url" in entry:
+            try:
+                raw_dir = ROOT / "data" / "raw" / "acts"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                local = (
+                    ROOT / entry["cached_html"]
+                    if "cached_html" in entry
+                    else raw_dir / f"{slug}__official.html"
+                )
+                min_size = entry.get("min_size", 1_000)
+                if "cached_html" in entry:
+                    if not local.exists():
+                        raise FileNotFoundError(f"{slug}: cached_html missing: {local}")
+                    if local.stat().st_size < min_size:
+                        raise RuntimeError(f"{slug}: cached_html only {local.stat().st_size}B")
+                    html = local.read_text(encoding="utf-8", errors="replace")
+                    print(f"  ✓ {slug}: cached HTML ({local.stat().st_size/1024:.0f} KB)")
+                elif not local.exists() or local.stat().st_size < min_size:
+                    html = fetch_text(entry["html_url"])
+                    if len(html.encode("utf-8")) < min_size:
+                        raise RuntimeError(f"HTML fetch returned only {len(html)} chars")
+                    local.write_text(html, encoding="utf-8")
+                    print(f"  ↓ {slug}: {local.stat().st_size/1024:.0f} KB (HTML URL)")
+                else:
+                    html = local.read_text(encoding="utf-8", errors="replace")
+                    print(f"  ✓ {slug}: cached HTML ({local.stat().st_size/1024:.0f} KB)")
+                src_url = entry["html_url"]
+                handle_url = ""
+                text = html_document_text(html, title=entry["title"])
+                n_pages = 1
+                pdf_bytes = html.encode("utf-8")
+            except Exception as e:
+                print(f"  ✗ {slug}: HTML parse failed — {e}")
+                failures.append(f"{slug}: HTML parse failed — {e}")
+                continue
+        else:
+            try:
+                local, src_url, handle_url = resolve_pdf(entry)
+            except Exception as e:
+                print(f"  ✗ {slug}: resolve failed — {e}")
+                failures.append(f"{slug}: resolve failed — {e}")
+                continue
+            try:
+                pdf_bytes = local.read_bytes()
+                doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+                n_pages = doc.page_count
+                text = "\n\n".join(p.get_text("text") for p in doc)
+                doc.close()
+            except Exception as e:
+                print(f"  ✗ {slug}: PDF parse failed — {e}")
+                failures.append(f"{slug}: PDF parse failed — {e}")
+                continue
         red = redact(text)
         new_rows.append({
             "slug": slug,
@@ -661,16 +1093,13 @@ async def main() -> None:
         if "handle_id" in entry:
             time.sleep(1.0)  # be polite to IndiaCode
 
+    if failures and not args.allow_partial:
+        detail = "\n".join(f"  - {failure}" for failure in failures)
+        raise SystemExit(f"P0 batch failed closed after {len(failures)} failure(s):\n{detail}")
+
     if not new_rows:
         print("\nNo acts could be resolved.")
         return
-
-    # Append to acts.jsonl (idempotent: dedup on slug at the end)
-    print(f"\n  appended {len(new_rows)} new rows to {out_jsonl}")
-    with out_jsonl.open("a") as f:
-        for r in new_rows:
-            f.write(json.dumps({k: v for k, v in r.items()
-                                if k != "text"}, ensure_ascii=False) + "\n")
 
     # ---- Step 2: chunk all texts ------------------------------------
     print("\nStep 2: chunk")
@@ -719,6 +1148,7 @@ async def main() -> None:
     skipped_total = 0
     new_docs = 0
     reused_docs = 0
+    successful_registry_rows: list[dict[str, Any]] = []
     for slug, (meta, chunks) in by_slug.items():
         # Idempotency: skip if document exists AND has chunks; reuse if orphan
         existing = await conn.fetchrow(
@@ -727,110 +1157,111 @@ async def main() -> None:
                FROM documents d WHERE d.doc_id = $1""",
             slug,
         )
-        if existing and existing["n_chunks"] > 0:
+        if existing and existing["n_chunks"] > 0 and not args.force_reingest:
             print(f"  - {slug}: already has {existing['n_chunks']} chunks — skipping")
             skipped_total += len(chunks)
+            successful_registry_rows.append(meta)
             continue
 
-        # Resolve/create source
-        url_for_src = meta["handle_url"] or meta["pdf_url"]
-        url_hash = hashlib.sha256(url_for_src.encode()).hexdigest()
-        src_id = await conn.fetchval(
-            """INSERT INTO sources (source_type, origin, url,
-                                    canonical_url_hash, metadata)
-               VALUES ('bare_act', $1, $2, $3, $4)
-               ON CONFLICT (canonical_url_hash) DO UPDATE
-                 SET source_type = EXCLUDED.source_type
-               RETURNING id""",
-            "indiacode" if meta["handle_url"] else "direct",
-            url_for_src, url_hash,
-            json.dumps({"slug": slug, "handle_id": meta.get("handle_id", "")}),
-        )
+        async with conn.transaction():
+            if existing and existing["n_chunks"] > 0:
+                await conn.execute("DELETE FROM chunks WHERE document_id = $1", existing["id"])
+                print(f"  ↻ {slug}: deleted {existing['n_chunks']} existing chunks for reingest")
+                existing = {"id": existing["id"], "n_chunks": 0}
 
-        # Subject area: explicit hint > inferred from text
-        subject = meta.get("subject_area_hint")
-        if not subject:
-            subject = infer_subject_area(meta["text"], title=meta["title"])
+            # Resolve/create source
+            src_id = await ensure_source_row(conn, slug, meta)
 
-        # Statute year (best-effort from slug suffix)
-        slug_year = slug.rsplit("-", 1)[-1]
-        statute_year = int(slug_year) if slug_year.isdigit() else None
+            # Subject area: explicit hint > inferred from text
+            subject = meta.get("subject_area_hint")
+            if not subject:
+                subject = infer_subject_area(meta["text"], title=meta["title"])
 
-        # Use entry-provided as_at, else fall back to first chunk's as_at
-        as_at = meta.get("as_at")
-        if as_at is None and chunks:
-            as_at = chunks[0].as_at
+            # Statute year (best-effort from slug suffix)
+            slug_year = slug.rsplit("-", 1)[-1]
+            statute_year = int(slug_year) if slug_year.isdigit() else None
 
-        if existing and existing["n_chunks"] == 0:
-            # Orphan: reuse the row, update title/subject in case they changed
-            doc_pk = existing["id"]
-            await conn.execute(
-                """UPDATE documents
-                   SET title = $1, statute_short = $2, statute_year = $3,
-                       as_at = $4, subject_area = $5,
-                       metadata = jsonb_set(metadata,
-                                            '{handle_id}',
-                                            to_jsonb($6::text), true)
-                   WHERE id = $7""",
-                meta["title"], meta["title"], statute_year,
-                as_at, subject, meta.get("handle_id", ""), doc_pk,
-            )
-            print(f"  ⚠ {slug}: reusing orphan doc_pk={doc_pk}")
-            reused_docs += 1
-        else:
-            doc_pk = await conn.fetchval(
-                """INSERT INTO documents (source_id, doc_id, title, statute_short,
-                                          statute_year, as_at, subject_area, metadata)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                   RETURNING id""",
-                src_id, slug, meta["title"], meta["title"],
-                statute_year, as_at, subject,
-                json.dumps({"handle_id": meta.get("handle_id", "")}),
-            )
-            new_docs += 1
+            # Use entry-provided as_at, else fall back to first chunk's as_at
+            as_at = meta.get("as_at")
+            if as_at is None and chunks:
+                as_at = chunks[0].as_at
 
-        # Find embeddings for this slug's chunks
-        global_indices = [
-            i for i, (rr, _) in enumerate(all_chunks) if rr["slug"] == slug
-        ]
-        # Build chunk→global-index map for fast lookup
-        chunk_to_global: dict[int, int] = {}
-        for gi in global_indices:
-            chunk_to_global[id(all_chunks[gi][1])] = gi
+            if existing and existing["n_chunks"] == 0:
+                # Orphan: reuse the row, update title/subject in case they changed
+                doc_pk = existing["id"]
+                await conn.execute(
+                    """UPDATE documents
+                       SET source_id = $1,
+                           title = $2, statute_short = $3, statute_year = $4,
+                           as_at = $5, subject_area = $6,
+                           metadata = jsonb_set(metadata,
+                                                '{handle_id}',
+                                                to_jsonb($7::text), true)
+                       WHERE id = $8""",
+                    src_id, meta["title"], meta["title"], statute_year,
+                    as_at, subject, meta.get("handle_id", ""), doc_pk,
+                )
+                print(f"  ⚠ {slug}: reusing orphan doc_pk={doc_pk}")
+                reused_docs += 1
+            else:
+                doc_pk = await conn.fetchval(
+                    """INSERT INTO documents (source_id, doc_id, title, statute_short,
+                                              statute_year, as_at, subject_area, metadata)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                       RETURNING id""",
+                    src_id, slug, meta["title"], meta["title"],
+                    statute_year, as_at, subject,
+                    json.dumps({"handle_id": meta.get("handle_id", "")}),
+                )
+                new_docs += 1
 
-        seen_anchors: set[str] = set()
-        inserted = 0
-        for c in chunks:
-            if c.anchor in seen_anchors:
-                continue
-            seen_anchors.add(c.anchor)
-            gi = chunk_to_global.get(id(c))
-            if gi is None:
-                continue
-            emb = embeddings[gi].astype(np.float32)
-            emb_str = "[" + ",".join(f"{x:.7f}" for x in emb) + "]"
-            await conn.execute(
-                """
-                INSERT INTO chunks (document_id, source_type, subject_area,
-                                    anchor, token_count, text, embedding,
-                                    chunk_strategy, as_at, metadata)
-                VALUES ($1, 'bare_act', $2, $3, $4, $5, $6::halfvec, $7, $8, $9)
-                ON CONFLICT (document_id, anchor, as_at) DO NOTHING
-                """,
-                doc_pk, subject, c.anchor, c.token_count, c.text, emb_str,
-                c.chunk_strategy.value, c.as_at,
-                json.dumps(c.metadata),
-            )
-            inserted += 1
+            # Find embeddings for this slug's chunks
+            global_indices = [
+                i for i, (rr, _) in enumerate(all_chunks) if rr["slug"] == slug
+            ]
+            # Build chunk→global-index map for fast lookup
+            chunk_to_global: dict[int, int] = {}
+            for gi in global_indices:
+                chunk_to_global[id(all_chunks[gi][1])] = gi
+
+            seen_anchors: set[str] = set()
+            inserted = 0
+            for c in chunks:
+                if c.anchor in seen_anchors:
+                    continue
+                seen_anchors.add(c.anchor)
+                gi = chunk_to_global.get(id(c))
+                if gi is None:
+                    continue
+                emb = embeddings[gi].astype(np.float32)
+                emb_str = "[" + ",".join(f"{x:.7f}" for x in emb) + "]"
+                await conn.execute(
+                    """
+                    INSERT INTO chunks (document_id, source_type, subject_area,
+                                        anchor, token_count, text, embedding,
+                                        chunk_strategy, as_at, metadata)
+                    VALUES ($1, 'bare_act', $2, $3, $4, $5, $6::halfvec, $7, $8, $9)
+                    ON CONFLICT (document_id, anchor, as_at) DO NOTHING
+                    """,
+                    doc_pk, subject, c.anchor, c.token_count, c.text, emb_str,
+                    c.chunk_strategy.value, c.as_at,
+                    json.dumps(c.metadata),
+                )
+                inserted += 1
         inserted_total += inserted
         print(f"  ✓ {slug}: inserted {inserted} chunks (subject={subject})")
+        if inserted > 0:
+            successful_registry_rows.append(meta)
 
     await conn.close()
+    added_registry_rows, updated_registry_rows = sync_acts_registry(successful_registry_rows, out_jsonl)
     print(f"\n=== Done ===")
     print(f"  new documents     : {new_docs}")
     print(f"  reused orphan docs: {reused_docs}")
     print(f"  chunks inserted   : {inserted_total}")
     print(f"  chunks skipped    : {skipped_total} (already in DB)")
+    print(f"  registry added    : {added_registry_rows}")
+    print(f"  registry updated  : {updated_registry_rows}")
     print(f"  Note: sparse vectors will populate as the backfill script runs")
     print(f"        (filters on embedding_sparse IS NULL).")
 
