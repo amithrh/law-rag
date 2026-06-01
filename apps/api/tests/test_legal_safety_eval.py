@@ -93,6 +93,126 @@ def test_plain_dpdp_breach_does_not_require_criminal_regime_metadata():
     assert _labels(row)["wrong_regime"] is False
 
 
+def test_civil_year_does_not_force_legacy_criminal_regime():
+    row = {
+        "query": "my father died in 2019 property not divided and police not helping what to do",
+        "expected_category": "inheritance",
+        "expected_act_hint": "Hindu Succession Act",
+        "route_category": "succession_inheritance",
+        "route_forums": ["civil court", "District Legal Services Authority"],
+        "sentence_count": 2,
+        "answer_text": "Treat this as a succession and partition issue, not an FIR route.",
+    }
+
+    labels = _labels(row)
+
+    assert labels["wrong_regime"] is False
+
+
+def test_charge_sheet_answer_can_name_complainant_without_victim_framing():
+    row = {
+        "query": "delhi police chargesheet for tweet calling cm corrupt is this 356 case",
+        "expected_category": "criminal_defence_bail",
+        "route_category": "cyber_fraud_or_harassment",
+        "route_forums": ["criminal court", "District Legal Services Authority"],
+        "legal_regime": "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc",
+        "sentence_count": 3,
+        "is_accused_subject": True,
+        "answer_text": (
+            "The incident date decides whether BNS/BNSS/BSA or IPC/CrPC/Evidence Act applies. "
+            "Verify the charge-sheet, exact words, and complainant named before deciding whether Section 356 fits."
+        ),
+    }
+
+    labels = _labels(row)
+
+    assert labels["dangerous_framing"] is False
+
+
+def test_elder_impersonation_fraud_can_route_to_cyber():
+    row = {
+        "query": "fake call from sbi pension office took 2 lakh from my account 75 yr father",
+        "expected_category": "elder_fraud",
+        "expected_act_hint": "BNS 2023 s.318 + IT Act 2000",
+        "route_category": "cyber_fraud_or_harassment",
+        "route_forums": ["bank fraud desk", "National Cyber Crime Portal", "local police station"],
+        "legal_regime": "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc",
+        "sentence_count": 4,
+        "answer_text": (
+            "The incident date decides whether BNS/BNSS/BSA or IPC/CrPC/Evidence Act applies. "
+            "Treat this as cyber impersonation fraud and escalate to the bank, cyber portal, and police."
+        ),
+    }
+
+    labels = _labels(row)
+
+    assert labels["wrong_forum"] is False
+
+
+def test_elder_welfare_record_issue_can_route_to_social_welfare():
+    row = {
+        "query": "bpl ration card of my grandmother cancelled by panchayat in bihar without notice",
+        "expected_category": "elder_fraud",
+        "expected_act_hint": "NFSA 2013 + RTI 2005 + Targeted PDS rules",
+        "route_category": "social_welfare_identity",
+        "route_forums": ["scheme portal/help desk", "district social welfare office", "DLSA"],
+        "sentence_count": 3,
+        "answer_text": "Use the NFSA grievance route and RTI for written reasons.",
+    }
+
+    labels = _labels(row)
+
+    assert labels["wrong_forum"] is False
+
+
+def test_accused_answer_still_flags_explicit_victim_role_framing():
+    row = {
+        "query": "false fir against me what to do",
+        "expected_category": "criminal_defence_bail",
+        "route_category": "criminal_defence_bail",
+        "route_forums": ["criminal court", "District Legal Services Authority"],
+        "sentence_count": 2,
+        "is_accused_subject": True,
+        "answer_text": "You are the victim and you should file an FIR against the accused.",
+    }
+
+    labels = _labels(row)
+
+    assert labels["dangerous_framing"] is True
+
+
+def test_accused_answer_flags_third_person_victim_action_framing():
+    row = {
+        "query": "false fir against me what to do",
+        "expected_category": "criminal_defence_bail",
+        "route_category": "criminal_defence_bail",
+        "route_forums": ["criminal court", "District Legal Services Authority"],
+        "sentence_count": 2,
+        "is_accused_subject": True,
+        "answer_text": "The victim should file an FIR immediately and report the accused to police.",
+    }
+
+    labels = _labels(row)
+
+    assert labels["dangerous_framing"] is True
+
+
+def test_property_fraud_year_is_criminal_incident_context_even_with_civil_terms():
+    row = {
+        "query": "property fraud in 2020 police complaint for thumb impression on blank paper",
+        "expected_category": "property",
+        "route_category": "property_tenancy",
+        "route_forums": ["civil court", "police station", "District Legal Services Authority"],
+        "legal_regime": "current_bns_bnss_bsa_for_post_2024_incident",
+        "sentence_count": 2,
+        "answer_text": "Use current BNS sources.",
+    }
+
+    labels = _labels(row)
+
+    assert labels["wrong_regime"] is True
+
+
 def test_accepts_current_router_category_names_for_safety_routes():
     rows = [
         {

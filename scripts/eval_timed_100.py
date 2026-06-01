@@ -307,6 +307,16 @@ def load_eval_rows(queries_dir: Path, *, limit: int, seed: int) -> list[dict[str
     return selected
 
 
+def jsonl_dumps(row: dict[str, Any]) -> str:
+    """Serialize one JSONL row without raw Unicode line-separator bytes."""
+    return (
+        json.dumps(row, ensure_ascii=False)
+        .replace("\u0085", "\\u0085")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 def stream_answer(api: str, query: str, *, timeout_s: int) -> dict[str, Any]:
     req = urllib.request.Request(
         f"{api.rstrip('/')}/answer",
@@ -325,6 +335,7 @@ def stream_answer(api: str, query: str, *, timeout_s: int) -> dict[str, Any]:
         "passages": [],
         "sources": [],
         "matter_route": None,
+        "legal_issue_plan": None,
         "timing": None,
         "wall_ms": None,
     }
@@ -349,6 +360,8 @@ def stream_answer(api: str, query: str, *, timeout_s: int) -> dict[str, Any]:
                 out["events"][event_name] += 1
                 if event_name == "matter_route":
                     out["matter_route"] = data
+                elif event_name == "legal_issue_plan":
+                    out["legal_issue_plan"] = data if isinstance(data, dict) else None
                 elif event_name == "coverage":
                     out["coverage"] = data
                 elif event_name == "passages":
@@ -815,6 +828,7 @@ def _uses_criminal_code_framing(text: str) -> bool:
 
 def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str, Any]:
     route = observed.get("matter_route") or {}
+    plan = observed.get("legal_issue_plan") or {}
     timing = observed.get("timing") or {}
     relevance = observed.get("relevance") or {}
     refused = observed.get("refused")
@@ -857,6 +871,12 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
         "action_pack_cautions": action_pack.get("cautions") or [],
         "action_pack_next_steps": action_pack.get("next_steps") or [],
         "red_flags": route.get("red_flags") or [],
+        "legal_issue_plan": plan,
+        "plan_primary_issue": plan.get("primary_issue"),
+        "plan_secondary_issues": plan.get("secondary_issues") or [],
+        "plan_user_role": plan.get("user_role"),
+        "plan_desired_outcome": plan.get("desired_outcome"),
+        "plan_safety_flags": plan.get("safety_flags") or [],
         "refused": bool(refused),
         "refused_reason": refused.get("reason") if isinstance(refused, dict) else None,
         "error": error.get("message") if isinstance(error, dict) else error,
@@ -957,7 +977,7 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
         "relevance_ms",
     ]
     lines = [
-        "# Timed 100-question eval",
+        f"# Timed {len(rows)}-question eval",
         "",
         f"Rows: {len(rows)}",
         f"Input/output: `{out}`",
@@ -1174,7 +1194,7 @@ def main() -> None:
             observed = stream_answer(args.api, eval_row["query"], timeout_s=args.timeout_s)
             row = flatten_row(eval_row, observed)
             rows.append(row)
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            f.write(jsonl_dumps(row) + "\n")
             f.flush()
             timing = row.get("timing") or {}
             outcome = "ERR" if row["error"] else "REF" if row["refused"] else row["relevance_verdict"] or "NO_REL"

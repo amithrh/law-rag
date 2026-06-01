@@ -9,6 +9,7 @@ from scripts.eval_timed_100 import (
     expected_act_hit,
     expected_act_keys,
     expected_procedure_anchor_coverage,
+    jsonl_dumps,
     load_eval_rows,
 )
 
@@ -49,6 +50,19 @@ def test_load_eval_rows_keeps_unicode_next_line_inside_json_string(tmp_path):
     assert len(rows) == 1
     assert rows[0]["persona"] == "procedural"
     assert rows[0]["query"] == "section marker sec-88-\u0085 anchor should stay in one record"
+
+
+def test_jsonl_dumps_escapes_unicode_line_separators():
+    dumped = jsonl_dumps({
+        "query": "section marker sec-88-\u0085 and line\u2028paragraph\u2029",
+    })
+
+    assert "\u0085" not in dumped
+    assert "\u2028" not in dumped
+    assert "\u2029" not in dumped
+    assert "\\u0085" in dumped
+    assert "\\u2028" in dumped
+    assert "\\u2029" in dumped
 
 
 def test_expected_act_aliases_cover_human_like_mixed_hints():

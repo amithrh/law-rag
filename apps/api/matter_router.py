@@ -67,7 +67,14 @@ _CYBER_WORDS = (
     "mental health privacy", "privacy leak", "insta", "dm daily",
         "after blocking", "stalker", "stalking", "tinder", "extortion",
     "tweet", "twitter", "x.com", "online post", "social media post",
-    "rugpull", "rugpulled",
+    "rugpull", "rugpulled", "csam", "ai csam",
+    "child sexual abuse material", "child sexual image",
+    "child sexual images", "child porn", "child pornography",
+)
+_CSAM_WORDS = (
+    "csam", "ai csam", "child sexual abuse material",
+    "child sexual image", "child sexual images",
+    "child porn", "child pornography",
 )
 _INTIMATE_IMAGE_WORDS = (
     "private photo", "private photos", "private picture", "private pictures",
@@ -77,7 +84,7 @@ _INTIMATE_IMAGE_WORDS = (
     "leaked photos", "deepfake", "sex video", "porn video",
     "morphed image", "morphed images", "morphed pic", "morphed pics",
     "morphed group photo", "morphed group photos", "ai porn",
-    "onlyfans content",
+    "onlyfans content", *_CSAM_WORDS,
 )
 _IMAGE_ABUSE_CONTEXT_WORDS = (
     "send to", "send it to", "send my", "send our", "send her", "send his",
@@ -107,7 +114,8 @@ _CONSUMER_WORDS = (
     "closing complaint", "deactivate", "service complaint",
     "medical negligence", "hospital negligence", "wrong injection",
     "doctor gave", "patient died compensation", "hospital bill",
-    "icu", "without consent", "refused to treat",
+    "wrong surgery", "wrong operation", "wrong leg", "wrong limb",
+    "operated wrong", "surgical negligence", "icu", "refused to treat",
 )
 _OFF_TOPIC_WORDS = (
     "weather", "recipe", "python", "javascript", "cricket score",
@@ -133,7 +141,7 @@ _TRIBAL_CASTE_WORDS = (
     "not allowed temple", "prevented temple",
     "forest rights", "forest department", "fra 2006", "fra claim",
     "gram sabha", "pesa", "st certificate", "gond",
-    "munda", "agency village",
+    "munda", "agency village", "agency area",
     "ifr title", "ifr claim", "cfr title", "community forest", "minor forest produce",
     "tendu", "scheduled area",
 )
@@ -166,7 +174,7 @@ _BAIL_WORDS = (
 _NDPS_PERSONAL_USE_WORDS = (
     "ndps", "narcotic", "narcotics", "ganja", "charas", "mdma",
     "heroin", "cannabis", "weed", "hash", "cbd", "thc", "thc oil",
-    "vape", "vape pen", "vape cartridge",
+    "vape", "vape pen", "vape cartridge", "bhang", "bhang lassi",
 )
 _SOCIAL_WELFARE_WORDS = (
     "aadhaar", "aadhar", "pension", "scholarship", "ration card",
@@ -247,6 +255,7 @@ _TAX_GST_WORDS = (
     "drawback", "import duty", "customs duty", "duty demand",
     "classification dispute", "reclassified", "shipment held at port",
     "capital gains", "54f", "80c", "80ccd", "nps",
+    "tax applies", "tax on sale", "tax on property sale", "property sale tax",
     "tcs", "foreign remittance", "remittance", "206c",
     "rule 86b", "86b", "1% cash", "1 percent cash", "one percent cash",
 )
@@ -281,6 +290,10 @@ _FAMILY_MARRIAGE_STATUS_WORDS = (
     "second wife", "second marriage", "without divorcing me", "first marriage",
     "bigamy", "another wife", "took second wife", "triple talaq",
     "talaq-e-biddat", "instant talaq", "talaq on whatsapp",
+    "lied before marriage", "lie before marriage", "lies before marriage",
+    "false before marriage", "fraud before marriage", "misrepresented before marriage",
+    "misrepresentation before marriage", "hid before marriage", "concealed before marriage",
+    "job before marriage", "salary before marriage", "job and salary",
 )
 _IBC_WORDS = (
     "ibc", "insolvency", "nclt", "operational creditor",
@@ -306,7 +319,10 @@ _BUSINESS_CONTRACT_WORDS = (
     "pre-litigation mediation", "vendor agreed", "recover advance",
     "cancel and recover", "delivery in 30 days", "supplier failed",
     "failed to deliver", "did not deliver", "machinery", "equipment",
-    "goods delivery",
+    "goods delivery", "supplier delivered", "defective material",
+    "defective materials", "supplier refusing refund", "refusing refund",
+    "defective goods", "damaged goods", "poor quality goods",
+    "supplier refund", "supplier replace", "supplier replacement",
     "fanvue payment", "creator payment", "creator payout",
     "platform payout", "usd payment", "foreign platform payment",
     "payment frozen", "release fund",
@@ -416,6 +432,9 @@ _BANKING_CREDIT_WORDS = (
     "cibil", "credit score", "loan tenure", "banking ombudsman",
     "bank kyc", "bank account frozen", "bank account froze",
     "savings account frozen", "current account frozen", "nbfc kyc",
+    "bank account is frozen", "bank account freeze",
+    "bank account blocked", "bank account lien",
+    "lien marked by bank",
     "rbi ombudsman", "bank account kyc",
     "fd", "fixed deposit", "nominee", "loan against my house",
     "didn't sign", "did not sign", "sarfaesi", "13(2) notice",
@@ -923,6 +942,23 @@ def route_matter(query: str) -> MatterRoute:
             action_pack=_social_welfare_pack(),
         )
 
+    if _is_pan_aadhaar_mismatch_issue(q):
+        return MatterRoute(
+            category="social_welfare_identity",
+            label="PAN/Aadhaar mismatch / identity linking",
+            confidence=0.78,
+            urgency="medium",
+            required_sources=[
+                "Income-tax Act / PAN procedure where PAN record or PAN-Aadhaar linking is involved",
+                "Aadhaar Act 2016 where Aadhaar authentication or demographic data is involved",
+                "Right to Information Act 2005 or public grievance route for written status/reasons",
+            ],
+            forums=["Income Tax e-filing / PAN service provider", "Aadhaar Seva Kendra / UIDAI grievance", "public grievance or RTI route where official reasons are withheld", "District Legal Services Authority"],
+            missing_facts=["exact name/date-of-birth mismatch", "PAN/Aadhaar last four digits", "portal or bank/scheme where rejected", "error screenshot", "which record needs correction", "complaints already filed"],
+            red_flags=[],
+            action_pack=_pan_aadhaar_identity_pack(),
+        )
+
     if _has_any(q, _SOCIAL_WELFARE_WORDS) and not (
         _has_any(q, _EDUCATION_WORDS) and not _has_any(q, ("scholarship",))
     ):
@@ -1137,6 +1173,23 @@ def route_matter(query: str) -> MatterRoute:
             legal_regime=_criminal_regime(q),
         )
 
+    if _is_minor_mineral_gram_sabha_issue(q):
+        return MatterRoute(
+            category="environment_compensation",
+            label="Minor mineral / Gram Sabha recommendation",
+            confidence=0.82,
+            urgency="high",
+            required_sources=[
+                "PESA Act 1996 section 4(c) Gram Sabha recommendation for minor minerals in Scheduled Areas",
+                "Mines and Minerals (Development and Regulation) Act 1957 mining lease and mineral-concession approval record",
+                "Forest Conservation Act 1980 where forest land or forest clearance is involved",
+            ],
+            forums=["Collector / District Magistrate", "mining department", "Gram Sabha / Panchayat channel where Scheduled Area rights apply", "tribal welfare authority", "District Legal Services Authority"],
+            missing_facts=["state/district and Scheduled Area status", "mineral or quarry type", "lease/NOC number if known", "Gram Sabha/Palli Sabha notice or minutes", "forest or pollution clearance papers if any"],
+            red_flags=_red_flags(q),
+            action_pack=_minor_mineral_gram_sabha_pack(),
+        )
+
     if _is_tribal_project_displacement_issue(q):
         return MatterRoute(
             category="environment_compensation",
@@ -1169,7 +1222,24 @@ def route_matter(query: str) -> MatterRoute:
                 forums=["Deputy Commissioner / Collector or revenue authority", "tribal welfare authority", "civil court where title is disputed", "District Legal Services Authority"],
                 missing_facts=["state and district", "land record/khata details", "tribal status documents", "sale/transfer deed date", "who signed and whether permission was taken"],
                 red_flags=_red_flags(q),
-                action_pack=_tribal_caste_pack(),
+                action_pack=_tribal_land_transfer_pack(),
+                legal_regime=None,
+            )
+        if _is_fra_forest_rights_issue(q):
+            return MatterRoute(
+                category="tribal_caste_atrocity",
+                label="Forest rights / FRA claim or forest produce",
+                confidence=0.82,
+                urgency="high",
+                required_sources=[
+                    "Forest Rights Act 2006 recognition, title, minor forest produce, and Gram Sabha/SDLC/DLC procedure",
+                    "PESA Act 1996 Gram Sabha provisions where the village is in a Scheduled Area",
+                    "state forest/revenue records only to identify the claim, patta, or official refusal",
+                ],
+                forums=["Gram Sabha / Forest Rights Committee", "Sub-Divisional Level Committee", "District Level Committee / Collector", "tribal welfare authority", "District Legal Services Authority"],
+                missing_facts=["state/district and village", "IFR/CFR/MFP claim type", "Gram Sabha resolution", "SDLC/DLC order or refusal reason", "patta/title papers", "forest-guard action or seizure details"],
+                red_flags=_red_flags(q),
+                action_pack=_forest_rights_fra_pack(),
                 legal_regime=None,
             )
         if _is_untouchability_civil_rights_issue(q):
@@ -1375,6 +1445,23 @@ def route_matter(query: str) -> MatterRoute:
             action_pack=_business_contract_pack(),
         )
 
+    if _is_municipal_shop_sealing_issue(q):
+        return MatterRoute(
+            category="business_license_compliance",
+            label="Municipal sealing / shop closure notice",
+            confidence=0.80,
+            urgency="high",
+            required_sources=[
+                "state municipal corporation/municipality law and trade-licence by-laws for sealing or closure power",
+                "state Shops and Establishments / trade-licence rules where shop registration is involved",
+                "Right to Information Act 2005 for order copy, inspection file, status, and reasons if not supplied",
+            ],
+            forums=["municipal ward/licensing office", "Municipal Commissioner or appellate authority named in the order", "local court/High Court only after checking the written order", "District Legal Services Authority"],
+            missing_facts=["city/municipality", "sealing order or notice date", "reason stated for sealing", "shop/trade licence or registration", "ownership/lease papers", "hearing/appeal date if any"],
+            red_flags=_red_flags(q),
+            action_pack=_municipal_shop_sealing_pack(),
+        )
+
     if _is_business_license_issue(q):
         return MatterRoute(
             category="business_license_compliance",
@@ -1569,6 +1656,25 @@ def route_matter(query: str) -> MatterRoute:
             legal_regime=_criminal_regime(q) if _has_any(q, ("second wife", "second marriage", "bigamy", "without divorcing", "cruelty", "threat", "beat", "beaten")) else None,
         )
 
+    if _is_spouse_civil_property_or_maintenance_issue(q):
+        return MatterRoute(
+            category="family_marriage_status",
+            label="Matrimonial property / maintenance response",
+            confidence=0.76,
+            urgency="medium",
+            required_sources=[
+                "personal marriage law based on religion and form of marriage",
+                "Hindu Marriage Act 1955 / Special Marriage Act 1954 maintenance or matrimonial-relief provisions where applicable",
+                "Family Courts Act 1984 for family-court jurisdiction",
+                "property title and civil-court route where ownership/title is disputed",
+            ],
+            forums=["Family Court", "District Legal Services Authority", "family-law lawyer/legal-aid desk", "civil court where title is directly disputed"],
+            missing_facts=["religion/personal law or Special Marriage Act registration", "marriage date", "pending divorce/maintenance case status", "whose name the property is in", "income and dependants", "what notice or petition has been received"],
+            red_flags=[],
+            action_pack=_marriage_breakdown_pack(),
+            legal_regime=None,
+        )
+
     if _is_acid_chemical_attack_issue(q):
         return MatterRoute(
             category="police_fir",
@@ -1678,16 +1784,29 @@ def route_matter(query: str) -> MatterRoute:
         )
 
     if _has_any(q, _PRISON_RELEASE_WORDS) or (_has_any(q, ("jail", "prison")) and _has_any(q, ("eligible", "release", "leave", "visit"))):
+        prison_visit = _has_any(q, ("mulaqat", "mulakat", "interview", "visit", "visitation", "meet"))
         return MatterRoute(
             category="prison_parole_furlough",
-            label="Prison parole / furlough / remission",
+            label="Prison mulaqat / interview access" if prison_visit else "Prison parole / furlough / remission",
             confidence=0.74,
             urgency="medium",
-            required_sources=["state prison/parole/furlough rules", "prison manual", "Article 21 constitutional safeguards where custody conditions are involved"],
-            forums=["prison superintendent", "state parole/furlough authority", "District Legal Services Authority", "High Court writ jurisdiction where needed"],
-            missing_facts=["state/prison", "conviction or undertrial status", "sentence/offence details", "time already served", "reason for parole/furlough"],
+            required_sources=(
+                ["state prison rules / prison manual for interviews and visits", "Prisons Act 1894 where applicable", "Article 21 constitutional safeguards where custody conditions are arbitrary"]
+                if prison_visit
+                else ["state prison/parole/furlough rules", "prison manual", "Article 21 constitutional safeguards where custody conditions are involved"]
+            ),
+            forums=(
+                ["prison superintendent", "District Legal Services Authority", "prison visitors board where available", "High Court writ jurisdiction where needed"]
+                if prison_visit
+                else ["prison superintendent", "state parole/furlough authority", "District Legal Services Authority", "High Court writ jurisdiction where needed"]
+            ),
+            missing_facts=(
+                ["state/prison", "undertrial or convicted status", "relationship to prisoner", "current mulaqat rule/order", "refusal or restriction reason"]
+                if prison_visit
+                else ["state/prison", "conviction or undertrial status", "sentence/offence details", "time already served", "reason for parole/furlough"]
+            ),
             red_flags=_red_flags(q),
-            action_pack=_prison_release_pack(),
+            action_pack=_prison_mulaqat_pack() if prison_visit else _prison_release_pack(),
         )
 
     if _has_any(q, _EDUCATION_WORDS):
@@ -1761,7 +1880,7 @@ def route_matter(query: str) -> MatterRoute:
     if _has_any(q, (
         "landlord", "tenant", "rent", "deposit", "lease", "property",
         "land", "ancestral", "sale deed", "gift deed", "possession",
-        "house", "flat", "joint name",
+        "house", "flat", "joint name", "plot",
     )):
         return MatterRoute(
             category="property_tenancy",
@@ -1855,6 +1974,93 @@ def route_matter(query: str) -> MatterRoute:
 
 
 def _specific_high_risk_surface_route(q: str) -> MatterRoute | None:
+    if _is_medical_negligence_consumer_issue(q):
+        return MatterRoute(
+            category="consumer",
+            label="Medical negligence / hospital service deficiency",
+            confidence=0.84,
+            urgency="high" if _has_any(q, ("death", "died", "wrong leg", "wrong limb", "wrong surgery", "wrong operation")) else "medium",
+            required_sources=[
+                "Consumer Protection Act 2019 for medical service deficiency and consumer-forum complaint",
+                "hospital records, consent form, discharge summary, and independent medical opinion",
+                "BNS/BNSS or IPC/CrPC only if criminal negligence, assault, or police FIR facts are actually alleged",
+            ],
+            forums=["hospital grievance desk", "District Consumer Disputes Redressal Commission", "State Medical Council where professional misconduct is alleged", "police only for clear criminal-negligence facts", "District Legal Services Authority"],
+            missing_facts=["patient age and condition", "hospital/doctor name", "date of procedure/treatment", "what went wrong", "medical records and consent form", "bill/payment proof", "complaints already filed"],
+            red_flags=_red_flags(q),
+            action_pack=_consumer_pack(),
+        )
+
+    if _is_bank_debit_service_dispute(q):
+        return MatterRoute(
+            category="banking_credit_dispute",
+            label="Bank debit / RBI Ombudsman complaint",
+            confidence=0.82,
+            urgency="medium",
+            required_sources=[
+                "RBI Integrated Ombudsman Scheme for regulated-entity complaint route",
+                "Consumer Protection Act 2019 where bank service deficiency is alleged",
+                "bank statement, transaction reference, card/forex dispute record, and written bank grievance",
+            ],
+            forums=["bank grievance officer", "RBI Ombudsman", "consumer forum where needed", "District Legal Services Authority"],
+            missing_facts=["bank name", "account/card details", "transaction date and amount", "forex/card network reference", "complaint number and bank reply", "whether OTP/phishing/scam facts exist"],
+            red_flags=_red_flags(q),
+            action_pack=_banking_credit_pack(),
+        )
+
+    if _is_bank_account_freeze_issue(q):
+        return MatterRoute(
+            category="banking_credit_dispute",
+            label="Bank account freeze / lien / KYC hold",
+            confidence=0.80,
+            urgency="high",
+            required_sources=[
+                "RBI Integrated Ombudsman Scheme for bank/NBFC grievance escalation",
+                "Banking Regulation Act / regulated-entity records for bank account service issues",
+                "police/cyber/ED/court order only if the bank says the freeze is due to a legal hold",
+            ],
+            forums=["bank branch/grievance officer", "RBI Ombudsman", "cyber police/local police only if a legal hold or fraud is stated", "District Legal Services Authority"],
+            missing_facts=["bank name and branch", "account type/number suffix", "freeze/lien date", "written reason or SMS/email", "KYC status", "complaint number", "whether police/cyber/court/ED hold is mentioned"],
+            red_flags=_red_flags(q),
+            action_pack=_bank_account_freeze_pack(),
+        )
+
+    if _is_loan_app_harassment_issue(q):
+        return MatterRoute(
+            category="banking_credit_dispute",
+            label="Loan-app / recovery harassment",
+            confidence=0.82,
+            urgency="high",
+            required_sources=[
+                "RBI Integrated Ombudsman Scheme / RBI recovery-agent and digital-lending grievance route for regulated lenders",
+                "Digital Personal Data Protection Act / Information Technology Act where contacts or phone data are misused",
+                "BNS/BNSS or IPC/CrPC only where threats, extortion, obscene messages, or police complaint facts are alleged",
+            ],
+            forums=["lender or loan-app grievance officer", "RBI Ombudsman where the lender/RE is covered", "cyber police/local police for threats or contact-data abuse", "District Legal Services Authority"],
+            missing_facts=["loan app/lender name", "amount and repayment status", "messages/call logs sent to contacts", "permissions/screenshots", "complaint number", "whether threats/extortion/private-image abuse occurred"],
+            red_flags=_red_flags(q),
+            action_pack=_loan_app_harassment_pack(),
+            legal_regime=_criminal_regime(q),
+        )
+
+    if _is_itpa_call_handling_issue(q):
+        return MatterRoute(
+            category="criminal_defence_bail",
+            label="ITPA call-handling / accused-risk clarification",
+            confidence=0.82,
+            urgency="high",
+            required_sources=[
+                "Immoral Traffic (Prevention) Act 1956 sections 4, 5, 7, or 8 as applicable to the alleged facts",
+                "BNSS 2023 / CrPC 1973 arrest, notice, statement, and bail procedure based on incident date",
+                "phone records, chats, payment trail, and FIR/notice sections to identify witness versus accused status",
+            ],
+            forums=["police station/investigating officer for notice or FIR sections", "criminal court or legal-aid lawyer if accused or summoned", "District Legal Services Authority"],
+            missing_facts=["FIR/notice sections", "whether arrested, summoned, or only questioned", "exact phone/chat/payment role alleged", "incident date", "next police/court date"],
+            red_flags=_red_flags(q),
+            action_pack=_bail_pack(),
+            legal_regime=_criminal_regime(q),
+        )
+
     if _is_online_gambling_issue(q):
         tn_context = _has_tamil_nadu_context(q)
         required_sources = [
@@ -1952,6 +2158,177 @@ def _specific_high_risk_surface_route(q: str) -> MatterRoute | None:
 
 def _priority_route(q: str) -> MatterRoute | None:
     """High-risk and high-conflict routes before the broad keyword chain."""
+    if _is_writ_constitution_procedure_issue(q):
+        return MatterRoute(
+            category="court_procedure",
+            label="Writ / constitutional remedy procedure",
+            confidence=0.82,
+            urgency="medium",
+            required_sources=[
+                "Constitution of India Article 226 for High Court writ jurisdiction",
+                "Constitution of India Article 32 for Supreme Court fundamental-right enforcement where applicable",
+                "Legal Services Authorities Act 1987 where filing help or legal aid is needed",
+            ],
+            forums=["High Court writ jurisdiction", "Supreme Court only for Article 32 fundamental-right enforcement", "District Legal Services Authority", "lawyer/legal-aid desk"],
+            missing_facts=["which government authority/officer", "written order or refusal", "date of representation/complaint", "public duty or fundamental right involved", "state/city"],
+            red_flags=[],
+            action_pack=_writ_constitution_pack(),
+        )
+
+    if _is_senior_maintenance_order_enforcement(q):
+        return MatterRoute(
+            category="senior_citizen",
+            label="Senior citizen maintenance order enforcement",
+            confidence=0.84,
+            urgency="medium",
+            required_sources=[
+                "Maintenance and Welfare of Parents and Senior Citizens Act 2007 enforcement and deposit provisions",
+                "state maintenance tribunal rules based on state and district",
+                "tribunal order, arrears ledger, and payment proof to identify enforcement route",
+            ],
+            forums=["Maintenance Tribunal / District Magistrate", "District Legal Services Authority", "local lawyer/legal-aid desk"],
+            missing_facts=["state/district", "tribunal order date", "arrears amount", "payments missed", "copy of tribunal order", "son/relative details"],
+            red_flags=_red_flags(q),
+            action_pack=_senior_pack(),
+        )
+
+    if _is_ancestral_land_sale_issue(q):
+        return MatterRoute(
+            category="property_tenancy",
+            label="Ancestral land sale / heir share dispute",
+            confidence=0.82,
+            urgency="medium",
+            required_sources=[
+                "Hindu Succession Act 1956 where Hindu coparcenary/intestate heirship or ancestral share is involved",
+                "Transfer of Property Act 1882 for co-owner or heir transfer of share/interest",
+                "Specific Relief Act 1963 for cancellation, declaration, or injunction where a sale deed affects your right",
+            ],
+            forums=["civil court", "revenue/mutation office for certified records", "sub-registrar for sale deed copy", "District Legal Services Authority"],
+            missing_facts=["state/district", "whose name the land is recorded in", "death/family tree facts", "sale deed or mutation copy", "possession status", "your claimed share"],
+            red_flags=[],
+            action_pack=_property_pack(),
+        )
+
+    if _is_joint_property_sale_issue(q):
+        return MatterRoute(
+            category="property_tenancy",
+            label="Joint property sale / co-owner dispute",
+            confidence=0.82,
+            urgency="medium",
+            required_sources=[
+                "Transfer of Property Act 1882 for co-owner transfer and joint purchase/share framing",
+                "Specific Relief Act 1963 for cancellation, declaration, or injunction where a sale deed affects your right",
+                "Registration Act / sale deed and mutation records to identify what was actually transferred",
+            ],
+            forums=["civil court", "sub-registrar/revenue office for deed and mutation copies", "District Legal Services Authority"],
+            missing_facts=["whose name is on the sale deed", "payment contribution proof", "share written in the deed", "whether the whole plot or only his share was sold", "possession and mutation status"],
+            red_flags=[],
+            action_pack=_property_pack(),
+        )
+
+    if _is_tenant_nonpayment_possession_issue(q):
+        return MatterRoute(
+            category="property_tenancy",
+            label="Tenant not vacating / rent arrears",
+            confidence=0.82,
+            urgency="medium",
+            required_sources=[
+                "Transfer of Property Act 1882 lease, notice, and termination provisions where state rent law does not displace them",
+                "state rent-control/tenancy law based on state and city",
+                "rent agreement, rent receipts, notices, and arrears ledger",
+            ],
+            forums=["rent authority or civil court depending on state law", "District Legal Services Authority", "local lawyer/legal-aid desk"],
+            missing_facts=["state/city", "rent agreement term", "monthly rent and arrears", "notice already sent", "tenant possession status", "property use residential/commercial"],
+            red_flags=[],
+            action_pack=_tenancy_pack(),
+        )
+
+    if _is_pre_marriage_health_disclosure_issue(q):
+        return MatterRoute(
+            category="family_marriage_status",
+            label="Pre-marriage health disclosure / cancelled wedding",
+            confidence=0.80,
+            urgency="medium",
+            required_sources=[
+                "personal marriage law only if a marriage has already occurred or later validity is in issue",
+                "Hindu Marriage Act 1955 / Special Marriage Act 1954 where applicable for voidable-marriage analysis after marriage",
+                "Dowry Prohibition Act 1961 or civil recovery route where gifts, dowry, or wedding expenses are disputed",
+                "medical privacy and non-discrimination law must be verified from primary sources before disclosing HIV/health status publicly",
+            ],
+            forums=["District Legal Services Authority", "family-law lawyer/legal-aid desk", "Family Court only if matrimonial proceedings become necessary", "civil/police route only for coercion, threats, or property return facts"],
+            missing_facts=["whether the marriage has already happened", "religion/personal law or Special Marriage Act context", "what was disclosed and when", "proof of messages/biodata", "gifts/dowry/wedding-expense records", "threats or pressure if any"],
+            red_flags=_red_flags(q),
+            action_pack=_pre_marriage_disclosure_pack(),
+        )
+
+    if _is_marriage_misrepresentation_issue(q):
+        return MatterRoute(
+            category="family_marriage_status",
+            label="Marriage misrepresentation / family-law options",
+            confidence=0.80,
+            urgency="medium",
+            required_sources=[
+                "personal marriage law based on religion and form of marriage",
+                "Hindu Marriage Act 1955 / Special Marriage Act 1954 where applicable for voidable marriage or matrimonial relief",
+                "Family Courts Act 1984 for family-court jurisdiction",
+            ],
+            forums=["Family Court", "District Legal Services Authority", "family-law lawyer/legal-aid desk"],
+            missing_facts=["religion/personal law or Special Marriage Act registration", "marriage date", "what exactly was represented", "proof of the statement", "when the truth was discovered", "whether you want annulment, divorce, maintenance, or counselling"],
+            red_flags=[],
+            action_pack=_marriage_misrepresentation_pack(),
+        )
+
+    if _is_marital_intimacy_breakdown_issue(q):
+        return MatterRoute(
+            category="family_marriage_status",
+            label="Marriage breakdown / family-law options",
+            confidence=0.70,
+            urgency="medium",
+            required_sources=[
+                "personal marriage law based on religion and form of marriage",
+                "Family Courts Act 1984 for matrimonial jurisdiction",
+                "domestic-violence or criminal law only if there is force, threat, or abuse",
+            ],
+            forums=["Family Court", "District Legal Services Authority", "counselling/mediation service where safe and voluntary"],
+            missing_facts=["religion/personal law or Special Marriage Act registration", "marriage date", "whether there is violence, threat, or coercion", "children/maintenance/residence concerns", "what remedy you want"],
+            red_flags=_red_flags(q),
+            action_pack=_marriage_breakdown_pack(),
+        )
+
+    if _is_minor_mineral_gram_sabha_issue(q):
+        return MatterRoute(
+            category="environment_compensation",
+            label="Minor mineral / Gram Sabha recommendation",
+            confidence=0.82,
+            urgency="high",
+            required_sources=[
+                "PESA Act 1996 section 4(c) Gram Sabha recommendation for minor minerals in Scheduled Areas",
+                "Mines and Minerals (Development and Regulation) Act 1957 mining lease and mineral-concession approval record",
+                "Forest Conservation Act 1980 where forest land or forest clearance is involved",
+            ],
+            forums=["Collector / District Magistrate", "mining department", "Gram Sabha / Panchayat channel where Scheduled Area rights apply", "tribal welfare authority", "District Legal Services Authority"],
+            missing_facts=["state/district and Scheduled Area status", "mineral or quarry type", "lease/NOC number if known", "Gram Sabha/Palli Sabha notice or minutes", "forest or pollution clearance papers if any"],
+            red_flags=_red_flags(q),
+            action_pack=_minor_mineral_gram_sabha_pack(),
+        )
+
+    if _is_tribal_project_displacement_issue(q):
+        return MatterRoute(
+            category="environment_compensation",
+            label="Tribal project displacement / Gram Sabha consent",
+            confidence=0.82,
+            urgency="high",
+            required_sources=[
+                "PESA Act 1996 Gram Sabha consultation/consent provisions where the villages are in Scheduled Areas",
+                "RFCTLARR Act 2013 rehabilitation, resettlement, compensation, and Scheduled Area safeguards",
+                "project/acquisition notices only to identify the operator, land, and displacement record",
+            ],
+            forums=["Collector / R&R authority", "district rehabilitation office", "Gram Sabha / Panchayat channel where Scheduled Area rights apply", "tribal welfare authority", "District Legal Services Authority"],
+            missing_facts=["state/district and Scheduled Area status", "project/acquisition notice", "affected village/family list", "Gram Sabha notice/minutes or absence of consent", "rehabilitation/compensation award status"],
+            red_flags=_red_flags(q),
+            action_pack=_tribal_project_displacement_pack(),
+        )
+
     if _is_land_acquisition_compensation_issue(q):
         return MatterRoute(
             category="land_acquisition_compensation",
@@ -2579,6 +2956,29 @@ def _priority_route(q: str) -> MatterRoute | None:
             legal_regime=_criminal_regime(q),
         )
 
+    if _is_wife_as_aggressor_issue(q):
+        sexual_coercion = _is_wife_as_aggressor_sexual_coercion(q)
+        return MatterRoute(
+            category="criminal_general",
+            label="Spousal sexual coercion / safety support" if sexual_coercion else "Spousal assault / financial-control complaint",
+            confidence=0.76,
+            urgency="high" if sexual_coercion or _has_any(q, ("slap", "slapped", "hit", "beat", "threat", "threw me out", "kicked me out", "locked me out")) else "medium",
+            required_sources=([
+                "BNSS 2023 / CrPC 1973 complaint and investigation procedure based on incident date",
+                "BNS 2023 / IPC 1860 force, hurt, threat, restraint, or other offence provisions only after checking exact gendered/fact-specific fit",
+                "medical, counselling, DLSA, and safety-support route without assuming a women-protection domestic-violence frame",
+            ] if sexual_coercion else [
+                "BNS 2023 / IPC 1860 hurt, threat, theft, or breach-of-trust provisions based on incident date where criminal facts fit",
+                "BNSS 2023 / CrPC 1973 complaint and investigation procedure based on incident date",
+                "family/civil remedy only after identifying the exact marital, property, or financial facts",
+            ]),
+            forums=(["emergency medical care or crisis support if unsafe", "police station or senior police where force, threat, injury, or confinement is alleged", "District Legal Services Authority", "lawyer/legal-aid desk for exact offence fit"] if sexual_coercion else ["police station or senior police where assault, threats, or card misuse are alleged", "District Legal Services Authority", "Family Court or civil court where matrimonial/financial relief is sought"]),
+            missing_facts=(["incident date and place", "current safety", "force/threat/injury details", "medical or counselling support needed", "messages/witnesses", "whether any police complaint or medical record exists"] if sexual_coercion else ["incident date and place", "injury/medical proof if any", "what exactly was taken or controlled", "bank/ATM transaction proof", "messages/witnesses", "current safety"]),
+            red_flags=_red_flags(q),
+            action_pack=_criminal_pack(),
+            legal_regime=_criminal_regime(q),
+        )
+
     if _is_family_economic_abuse_issue(q):
         return MatterRoute(
             category="family_domestic",
@@ -3088,6 +3488,37 @@ def _priority_route(q: str) -> MatterRoute | None:
             action_pack=_digital_platform_pack(),
         )
 
+    if _is_bank_property_document_fraud_issue(q):
+        return MatterRoute(
+            category="banking_credit_dispute",
+            label="Forged loan / bank-property document dispute",
+            confidence=0.82,
+            urgency="high",
+            required_sources=[
+                "BNS 2023 / IPC 1860 cheating, forgery, and false-document provisions based on incident date",
+                "Banking Regulation Act 1949 and RBI grievance route for the bank-service dispute",
+                "property/security documents and registration records to verify consent and charge creation",
+            ],
+            forums=[
+                "bank fraud/grievance desk",
+                "RBI Ombudsman where maintainable",
+                "police/cyber police for forged documents",
+                "civil court or DRT where the security/property record is disputed",
+                "District Legal Services Authority",
+            ],
+            missing_facts=[
+                "bank/lender name",
+                "loan account or notice number",
+                "property/security document copy",
+                "signature/thumb-impression dispute proof",
+                "complaint number",
+                "whether any SARFAESI/DRT/court step has started",
+            ],
+            red_flags=_red_flags(q),
+            action_pack=_banking_credit_pack(),
+            legal_regime=_criminal_regime(q),
+        )
+
     if _is_document_fraud_issue(q):
         return MatterRoute(
             category="criminal_general",
@@ -3116,16 +3547,23 @@ def _priority_route(q: str) -> MatterRoute | None:
         )
 
     if _is_property_transfer_document_issue(q):
+        required_sources = ["Transfer of Property Act 1882", "Indian Contract Act 1872 where consent, coercion, undue influence, or authority is disputed", "Registration Act / civil court procedure where document validity is disputed"]
+        if _has_document_forgery_or_false_document_terms(q):
+            required_sources.extend([
+                "BNS 2023 / IPC 1860 cheating, forgery, or false-document provisions based on incident date",
+                "BNSS 2023 / CrPC 1973 complaint and investigation procedure based on incident date",
+            ])
         return MatterRoute(
             category="property_tenancy",
             label="Property transfer / gift deed dispute",
             confidence=0.78,
             urgency="medium",
-            required_sources=["Transfer of Property Act 1882", "Indian Contract Act 1872 where consent, coercion, undue influence, or authority is disputed", "Registration Act / civil court procedure where document validity is disputed"],
+            required_sources=required_sources,
             forums=["civil court", "revenue/registration office where records must be checked", "District Legal Services Authority"],
             missing_facts=["state/city", "registered document type", "signing/thumb-impression date", "ownership and consideration facts", "possession status", "fraud/coercion evidence"],
             red_flags=_red_flags(q),
             action_pack=_property_pack(),
+            legal_regime=_criminal_regime(q) if _has_document_forgery_or_false_document_terms(q) else None,
         )
 
     if _is_forced_adult_or_lgbt_marriage(q):
@@ -3312,7 +3750,8 @@ def _is_tribal_project_displacement_issue(q: str) -> bool:
     project_context = _has_any(q, (
         "dam", "submerge", "submerges", "submerged", "submergence",
         "land acquisition", "land acquired", "acquired for", "project",
-        "power plant", "hydro project", "irrigation project",
+        "power plant", "thermal plant", "hydro project", "irrigation project",
+        "coal block", "coal mine", "mining", "mine", "bauxite", "bauxite project",
     ))
     community_context = _has_any(q, (
         "village", "villages", "families", "houses", "land", "forest",
@@ -3322,8 +3761,31 @@ def _is_tribal_project_displacement_issue(q: str) -> bool:
         "no consent", "without consent", "consent", "gram sabha",
         "rehabilitation", "resettlement", "compensation", "no compensation",
         "submerge", "submerged", "submergence", "displaced", "displacement",
+        "without consulting", "consulting palli sabha", "palli sabha", "noc",
     ))
     return tribal_or_scheduled_context and project_context and community_context and consent_or_rr_context
+
+
+def _is_minor_mineral_gram_sabha_issue(q: str) -> bool:
+    minor_mineral = _has_any(q, (
+        "minor mineral", "minor minerals", "sand mining", "sand lease",
+        "stone quarry", "quarry lease", "quarry",
+    ))
+    scheduled_area = _has_any(q, (
+        "gram sabha", "palli sabha", "pesa", "scheduled area",
+        "tribal village", "adivasi village",
+    ))
+    consent_or_approval = _has_any(q, (
+        "without", "no gram sabha", "not taken", "not given",
+        "consent", "consultation", "recommendation", "noc", "lease",
+        "approval", "challenge",
+    ))
+    acquisition_or_rr = _has_any(q, (
+        "land acquisition", "land acquired", "acquired for", "land taken",
+        "displacement", "displaced", "rehabilitation", "resettlement",
+        "compensation", "award", "submerge", "submerged", "submergence",
+    ))
+    return minor_mineral and scheduled_area and consent_or_approval and not acquisition_or_rr
 
 
 def _is_section_91_notice(q: str) -> bool:
@@ -3693,6 +4155,53 @@ def _is_online_gambling_issue(q: str) -> bool:
     return gambling_context and stake_context
 
 
+def _is_medical_negligence_consumer_issue(q: str) -> bool:
+    if _has_any(q, ("jail", "prison", "custody", "lockup", "arthur road", "undertrial")):
+        return False
+    if _is_esi_benefit_issue(q):
+        return False
+    medical_context = _has_any(q, (
+        "hospital", "doctor", "clinic", "nursing home", "surgeon",
+        "operation", "operated", "surgery", "icu",
+    ))
+    harm_context = _has_any(q, (
+        "wrong leg", "wrong limb", "wrong surgery", "wrong operation",
+        "operated wrong", "wrong injection", "negligence", "died",
+        "death", "compensation", "without consent", "refused to treat",
+    ))
+    return medical_context and harm_context
+
+
+def _is_bank_debit_service_dispute(q: str) -> bool:
+    if _has_any(q, ("otp", "phishing", "scam", "fake call", "fake cbi", "digital arrest", "hacked", "mule account")):
+        return False
+    bank_context = _has_any(q, (
+        "bank", "hdfc", "icici", "sbi", "axis", "kotak", "yes bank",
+        "account", "debit card", "credit card", "forex card",
+    ))
+    debit_context = _has_any(q, (
+        "bank wrongly debited", "wrongly debited", "unauthorized debit",
+        "unauthorised debit", "forex transaction", "forex debit",
+        "card transaction", "debit transaction", "debited twice",
+        "wrong charge", "chargeback", "transaction dispute",
+    ))
+    grievance_context = _has_any(q, (
+        "no response", "not resolving", "complaint", "refund", "reversal",
+        "ombudsman", "rbi", "customer care", "branch",
+    ))
+    return bank_context and debit_context and (grievance_context or "forex" in q)
+
+
+def _is_itpa_call_handling_issue(q: str) -> bool:
+    itpa_context = _has_any(q, ("itpa", "pita", "immoral traffic"))
+    role_context = _has_any(q, (
+        "phone", "call", "calls", "whatsapp", "paying clients", "client booking",
+        "clients", "booking", "bookings", "take bookings", "took bookings",
+        "only talking", "not meet", "not meeting", "did not meet",
+    ))
+    return itpa_context and role_context
+
+
 def _has_tamil_nadu_context(q: str) -> bool:
     return _has_any(q, (
         "tamil nadu", "chennai", "coimbatore", "madurai",
@@ -3709,9 +4218,27 @@ def _is_payment_refund_service_issue(q: str) -> bool:
 
 
 def _is_document_fraud_issue(q: str) -> bool:
+    if _is_bank_property_document_fraud_issue(q) or _is_property_transfer_document_issue(q):
+        return False
     document_context = _has_any(q, ("thumb impression", "blank paper", "forged", "fake signature", "didn't sign", "did not sign"))
     fraud_context = _has_any(q, ("loan", "gift deed", "moneylender", "bank", "showing", "produced", "fraud"))
     return document_context and fraud_context
+
+
+def _is_bank_property_document_fraud_issue(q: str) -> bool:
+    bank_context = _has_any(q, (
+        "bank", "lender", "nbfc", "loan", "loan against", "mortgage",
+        "secured loan", "home loan",
+    ))
+    property_context = _has_any(q, (
+        "house", "home", "flat", "property", "land", "plot",
+        "title deed", "sale deed",
+    ))
+    forged_context = _has_any(q, (
+        "didn't sign", "did not sign", "fake signature", "forged", "forgery",
+        "blank paper", "thumb impression", "without my consent",
+    ))
+    return bank_context and property_context and forged_context
 
 
 def _is_business_contract_issue(q: str) -> bool:
@@ -3753,7 +4280,9 @@ def _is_business_contract_issue(q: str) -> bool:
         return True
     business_dispute = _has_any(q, (
         "not paying", "unpaid", "deducting payment", "formal rejection",
-        "quality issue", "lakh stuck", "breach", "contract", "liability",
+        "quality issue", "defective", "damaged", "poor quality",
+        "refusing refund", "refund", "replace", "replacement",
+        "lakh stuck", "breach", "contract", "liability",
         "absconded", "invoice", "non compete", "non-compete", "nda",
         "specific performance", "exclusivity", "dilute my equity",
         "diluting my equity", "esop", "minority shareholder",
@@ -3827,6 +4356,83 @@ def _is_business_license_issue(q: str) -> bool:
         "permit", "fssai", "notice", "inspector said", "trade license",
     ))
     return registration_context
+
+
+def _is_municipal_shop_sealing_issue(q: str) -> bool:
+    shop_context = _has_any(q, (
+        "shop", "dukan", "store", "restaurant", "hotel", "clinic", "godown",
+        "warehouse", "commercial premises", "business premises", "showroom",
+        "office sealed", "factory sealed",
+    ))
+    municipal_context = _has_any(q, (
+        "municipality", "municipal", "municipal corporation", "corporation",
+        "ward office", "nagar palika", "nagarpalika", "mcd", "bmc",
+        "local body",
+    ))
+    sealing_context = _has_any(q, (
+        "sealed", "seal", "sealing", "locked", "closed my shop",
+        "shop closed", "closure notice", "demolition notice",
+    ))
+    return shop_context and municipal_context and sealing_context
+
+
+def _is_bank_account_freeze_issue(q: str) -> bool:
+    non_bank_account_context = _has_any(q, (
+        "instagram", "facebook", "meta", "youtube", "google", "gmail",
+        "twitter", "x account", "whatsapp", "telegram", "amazon seller",
+        "flipkart seller", "seller account", "merchant account",
+        "zerodha", "groww", "upstox", "demat", "trading account",
+        "binance", "crypto", "usdt", "wallet", "gaming", "dream11",
+        "parimatch", "rummy", "creator account", "payout account",
+    ))
+    explicit_bank_context = _has_any(q, (
+        "bank", "bank account", "savings account", "current account",
+        "salary account", "loan account", "jan dhan account", "upi account",
+        "sbi", "hdfc", "icici", "axis", "kotak", "pnb", "canara",
+        "bob", "bank of baroda", "union bank", "idfc", "yes bank",
+        "rbi", "nbfc",
+    ))
+    freeze_context = _has_any(q, (
+        "bank account frozen", "bank account is frozen", "bank account froze",
+        "savings account frozen", "current account frozen", "account freeze",
+        "bank account freeze", "bank account blocked",
+        "account lien", "bank account lien", "lien marked", "freeze my account",
+        "debit freeze", "credit freeze", "kyc hold",
+    ))
+    if non_bank_account_context and not explicit_bank_context:
+        return False
+    return explicit_bank_context and freeze_context
+
+
+def _is_loan_app_harassment_issue(q: str) -> bool:
+    app_context = bool(re.search(r"\bloan\s+apps?\b", q)) or _has_any(q, (
+        "instant loan app", "online loan app", "digital lending app",
+        "cash loan app", "loan recovery app", "finance app",
+    ))
+    lender_context = app_context or (
+        _has_any(q, ("nbfc", "finance company", "recovery agent", "recovery agents"))
+        and _has_any(q, ("app", "contacts", "harass", "harassing"))
+    )
+    harassment_context = _has_any(q, (
+        "harass", "harassing", "harassment", "calling my contacts",
+        "calling contacts", "contacting contacts", "harassing my contacts",
+        "harassing contacts", "sent message to contacts", "messages to contacts",
+        "contact list", "abusing contacts", "threatening contacts",
+        "recovery calls", "threatening cibil", "threaten cibil",
+        "morphed photo", "abusive message", "blackmail",
+    ))
+    return lender_context and harassment_context
+
+
+def _is_pan_aadhaar_mismatch_issue(q: str) -> bool:
+    pan_context = _has_any(q, ("pan", "pan card", "income tax portal"))
+    aadhaar_context = _has_any(q, ("aadhaar", "aadhar", "uidai"))
+    mismatch_context = _has_any(q, (
+        "mismatch", "not matching", "does not match", "doesn't match",
+        "name different", "dob different", "date of birth different",
+        "linking failed", "link failed", "cannot link", "not linking",
+    ))
+    return pan_context and aadhaar_context and mismatch_context
 
 
 def _is_labour_exploitation_issue(q: str) -> bool:
@@ -3915,6 +4521,8 @@ def _is_dowry_death_issue(q: str) -> bool:
 
 
 def _is_family_economic_abuse_issue(q: str) -> bool:
+    if _is_wife_as_aggressor_issue(q):
+        return False
     family_context = _has_any(q, ("husband", "wife", "domestic relationship", "live in partner"))
     control_context = _has_any(q, (
         "took my salary", "salary atm", "atm card", "bank card", "takes my salary",
@@ -4033,13 +4641,19 @@ def _is_esi_benefit_issue(q: str) -> bool:
 
 
 def _is_elder_financial_fraud_issue(q: str) -> bool:
+    if _is_bank_or_pension_impersonation_fraud(q):
+        return False
     elder_context = (
         _has_any(q, ("senior", "elderly", "old", "grandfather", "grandmother"))
         or _has_age_at_least(q, 60)
         or re.search(r"\b(?:6[0-9]|7[0-9]|8[0-9]|9[0-9])\s*(?:year|years|yr|yrs)\s+(?:father|mother|parent)\b", q) is not None
         or (
             _has_any(q, ("father", "mother", "parent"))
-            and _has_any(q, ("pension money", "retirement money", "ulip", "agent sold", "mis-selling", "misselling"))
+            and _has_any(q, (
+                "pension money", "retirement money", "ulip", "agent sold",
+                "mis-selling", "misselling", "policy", "insurance", "lic",
+                "guaranteed return", "matured",
+            ))
         )
     )
     financial_abuse = _has_any(q, (
@@ -4047,7 +4661,8 @@ def _is_elder_financial_fraud_issue(q: str) -> bool:
         "not returning", "charging deceased", "deactivate no response",
         "pension money", "mis-selling", "misselling", "fake call",
         "fraud call", "scam call", "pension office", "took 2 lakh",
-        "took money", "debited", "transferred",
+        "took money", "debited", "transferred", "lic", "insurance",
+        "guaranteed return", "matured", "maturity amount",
     ))
     return elder_context and financial_abuse
 
@@ -4131,9 +4746,20 @@ def _is_ndps_bail_issue(q: str) -> bool:
 
 
 def _is_marital_sexual_violence_issue(q: str) -> bool:
+    if _is_wife_as_aggressor_issue(q):
+        return False
     if _has_negated_sexual_coercion(q):
         return False
     marital_context = _has_any(q, ("husband", "wife", "married", "marriage", "sasural", "in laws", "in-laws"))
+    explicit_sexual_context = _has_any(q, (
+        "sex", "sexual", "intimacy", "physical relation", "physical relationship",
+        "touch", "touching", "rape", "marital rape", "bedroom",
+    ))
+    coercion_without_explicit_sex = _has_any(q, (
+        "when i say no", "even when i say no", "without consent",
+    ))
+    if coercion_without_explicit_sex and not explicit_sexual_context:
+        return False
     sexual_coercion = _has_any(q, (
         "forces me at night", "force me at night", "forced me at night",
         "forces sex", "force sex", "forced sex", "marital rape",
@@ -4229,13 +4855,20 @@ def _is_forest_false_charge_issue(q: str) -> bool:
 
 
 def _is_fra_forest_rights_issue(q: str) -> bool:
-    fra_context = _has_any(q, ("fra", "forest rights", "fra 2006", "fra claim", "ifr", "cfr", "community forest"))
+    fra_context = _has_any(q, (
+        "fra", "forest rights", "fra 2006", "fra claim", "ifr", "cfr",
+        "community forest", "forest rights committee", "frc", "sdlc", "dlc",
+    ))
     forest_official_context = _has_any(q, ("forest guard", "forest guards", "forest officer", "forest department", "reserved forest"))
     protected_produce_or_title = _has_any(q, (
         "patta", "title", "bamboo", "tendu", "mahua", "minor forest produce",
         "community forest rights", "gram sabha", "community forest", "cfr", "ifr",
+        "claim form", "husband signature", "joint title", "forest produce",
     ))
-    interference_context = _has_any(q, ("cutting", "stopped", "seized", "reserved", "denied", "refused"))
+    interference_context = _has_any(q, (
+        "cutting", "stopped", "seized", "reserved", "denied", "refused",
+        "rejected", "without reason", "not giving", "not issuing", "no signature",
+    ))
     return (fra_context and (protected_produce_or_title or interference_context)) or (
         forest_official_context and protected_produce_or_title and interference_context
     )
@@ -4353,14 +4986,24 @@ def _is_child_support_enforcement_issue(q: str) -> bool:
 def _is_property_transfer_document_issue(q: str) -> bool:
     property_context = _has_any(q, (
         "gift deed", "registered gift", "joint name", "house", "flat",
-        "property transfer", "transfer in hospital", "thumb impression",
+        "property transfer", "transfer in hospital", "sale deed",
     ))
     dispute_context = _has_any(q, (
         "blank paper", "under pressure", "not caring", "cancel",
         "cancelled", "claims half", "half share", "didn't sign",
         "did not sign", "produced as", "challenge", "not taking care",
+        "fake signature", "forged", "forgery", "fraudulently",
+        "false document",
     ))
     return property_context and dispute_context
+
+
+def _has_document_forgery_or_false_document_terms(q: str) -> bool:
+    return _has_any(q, (
+        "thumb impression", "blank paper", "fake signature", "forged",
+        "forgery", "didn't sign", "did not sign", "produced as",
+        "false document", "fraud deed", "fraudulent deed",
+    ))
 
 
 def _is_forced_adult_or_lgbt_marriage(q: str) -> bool:
@@ -4617,6 +5260,7 @@ def _is_tribal_land_transfer_issue(q: str) -> bool:
         "tribal", "adivasi", "scheduled tribe", "munda", "santhal",
         "oraon", "khuntkatti", "non tribal", "non-tribal",
         "cnt", "chotanagpur", "chota nagpur", "santhal parganas",
+        "scheduled area", "agency area", "agency village",
     ))
     land_noun_context = bool(re.search(
         r"\b(?:land|plot|raiyat|tenancy|khata|khasra)\b",
@@ -4624,13 +5268,18 @@ def _is_tribal_land_transfer_issue(q: str) -> bool:
     )) or _has_any(q, ("cnt", "chotanagpur", "chota nagpur", "santhal parganas"))
     transfer_context = _has_any(q, (
         "sold", "sale deed", "land transfer", "land transferred",
+        "transferred my", "transferred our", "transferred his",
+        "transferred her", "transferred baba", "transferred grandfather",
         "plot transfer", "registered deed", "without our consent",
         "restore", "restoration", "grabbed", "land grab",
         "land restoration", "mortgage", "mortgaged", "sahukar",
         "moneylender", "refusing return", "refusing to return",
-        "not returning land", "took my land",
+        "not returning land", "took my land", "mutation", "mutation record",
+        "record changed", "khata changed", "khata transfer", "patwari changed",
+        "non tribal buyer", "non-tribal buyer", "buyer", "giving my",
+        "giving our", "giving his", "giving her",
     )) or bool(re.search(
-        r"\btransfer(?:red)?\s+of\s+(?:tribal\s+)?(?:land|plot)\b",
+        r"\b(?:transfer(?:red)?\s+of\s+(?:tribal\s+)?(?:land|plot)|transferred\s+.*\b(?:land|plot)\b|mutation\s+.*\b(?:land|plot)\b|giving\s+.*\b(?:land|plot)\b.*\b(?:non[-\s]?tribal|buyer)\b)\b",
         q,
     ))
     return tribal_context and land_noun_context and transfer_context
@@ -4670,11 +5319,116 @@ def _is_elder_maintenance_cheque_issue(q: str) -> bool:
 def _is_family_marriage_status_issue(q: str) -> bool:
     if _is_succession_issue(q):
         return False
+    if _is_marriage_misrepresentation_issue(q) or _is_marital_intimacy_breakdown_issue(q):
+        return True
     if _has_any(q, ("triple talaq", "talaq-e-biddat", "instant talaq", "talaq on whatsapp")):
         return _has_any(q, ("husband", "wife", "muslim", "marriage", "nikah", "whatsapp", "remedy"))
     if _has_any(q, ("legal age", "age legal", "marriage age", "got married")) and _has_any(q, ("married", "marriage", "family says illegal")):
         return True
     return _has_any(q, _FAMILY_MARRIAGE_STATUS_WORDS) and _has_any(q, ("husband", "wife", "marriage", "divorce", "land", "share", "protection", "muslim", "hindu"))
+
+
+def _is_joint_property_sale_issue(q: str) -> bool:
+    if _has_any(q, ("tribal", "non tribal", "non-tribal", "adivasi", "scheduled tribe", "scheduled area")):
+        return False
+    joint_context = _has_any(q, (
+        "joint name", "jointly", "together", "co owner", "co-owner",
+        "coowned", "co-owned", "common fund", "both bought", "we bought",
+        "we purchased", "both purchased", "brother and i bought",
+        "sister and i bought", "brother and i purchased", "sister and i purchased",
+    ))
+    property_context = _has_any(q, ("plot", "land", "house", "flat", "property", "sale deed"))
+    sale_context = _has_any(q, ("sold", "sale", "transferred", "registered", "mutation"))
+    return property_context and sale_context and joint_context
+
+
+def _is_ancestral_land_sale_issue(q: str) -> bool:
+    if _has_any(q, ("tribal", "non tribal", "non-tribal", "adivasi", "scheduled tribe", "scheduled area")):
+        return False
+    property_context = _has_any(q, (
+        "ancestral", "dada", "grandfather", "grandfather's",
+        "father land", "father's land", "father property", "father's property",
+        "family land", "family property",
+    )) and _has_any(q, ("land", "plot", "house", "property"))
+    sale_context = _has_any(q, ("selling", "sold", "sale", "sale deed", "transfer", "transferred", "mutation"))
+    family_context = _has_any(q, ("brother", "uncle", "cousin", "family", "heir", "legal heir", "father", "mother"))
+    exclusion = _has_any(q, ("refund", "defective", "damaged phone", "online order", "delivery", "warranty"))
+    return property_context and sale_context and family_context and not exclusion
+
+
+def _is_tenant_nonpayment_possession_issue(q: str) -> bool:
+    tenancy = _has_any(q, ("tenant", "tenent", "landlord", "rent agreement", "lease"))
+    possession = _has_any(q, ("not vacating", "not leaving", "refusing to vacate", "evict", "eviction", "possession"))
+    arrears = _has_any(q, ("not paying rent", "rent not paid", "rent arrears", "unpaid rent", "no rent"))
+    return tenancy and (possession or arrears)
+
+
+def _is_marriage_misrepresentation_issue(q: str) -> bool:
+    marriage_context = _has_existing_or_completed_marriage_context(q)
+    misrep_context = _has_any(q, (
+        "lied", "lie", "lies", "false", "fraud", "misrepresented",
+        "misrepresentation", "concealed", "hid", "hide", "fake",
+    ))
+    life_fact_context = _has_any(q, (
+        "job", "salary", "income", "work", "employment", "qualification",
+        "education", "degree", "health", "disease", "hiv", "hiv positive",
+        "aids", "already married",
+    ))
+    return marriage_context and misrep_context and life_fact_context
+
+
+def _is_pre_marriage_health_disclosure_issue(q: str) -> bool:
+    pre_marriage = _has_any(q, (
+        "supposed to marry", "marry next month", "marriage next month",
+        "wedding next month", "before marriage", "not married yet",
+        "engagement", "engaged", "fiance", "fiancee", "prospective bride",
+        "prospective groom",
+    ))
+    health = _has_any(q, (
+        "hiv", "hiv positive", "aids", "std", "sti", "disease",
+        "health issue", "medical condition",
+    ))
+    disclosure = _has_any(q, (
+        "hid", "hide", "hides", "concealed", "did not tell",
+        "didn't tell", "found out", "lied", "false",
+    ))
+    return pre_marriage and health and disclosure
+
+
+def _is_writ_constitution_procedure_issue(q: str) -> bool:
+    writ_context = _has_any(q, ("writ", "mandamus", "article 226", "article 32"))
+    legal_help_context = _has_any(q, (
+        "when can i file", "how to file", "what is", "difference between",
+        "against government", "government officer", "public authority",
+        "complain", "complaint", "high court", "supreme court",
+    ))
+    return writ_context and legal_help_context
+
+
+def _has_existing_or_completed_marriage_context(q: str) -> bool:
+    if _has_any(q, (
+        "not married", "not married yet", "never married", "marriage not happened",
+        "wedding not happened", "wedding cancelled", "engagement", "engaged",
+        "fiance", "fiancee", "prospective bride",
+        "prospective groom",
+    )) and not _has_any(q, ("husband", "wife", "spouse")):
+        return False
+    return _has_any(q, (
+        "husband", "wife", "spouse", "married", "got married", "after marriage",
+        "after wedding", "wedding happened", "marriage happened", "marriage took place",
+        "wedding took place", "marriage certificate", "our marriage", "my marriage",
+    ))
+
+
+def _is_marital_intimacy_breakdown_issue(q: str) -> bool:
+    spouse_context = _has_any(q, ("wife", "husband", "spouse", "marriage", "married"))
+    intimacy_context = _has_any(q, (
+        "denies sex", "denied sex", "denying sex", "refuses sex", "refusing sex",
+        "no sex", "physical relation", "physical relationship",
+        "denying physical relation", "denying physical relationship",
+        "conjugal", "intimacy",
+    ))
+    return spouse_context and intimacy_context
 
 
 def _is_succession_issue(q: str) -> bool:
@@ -4858,6 +5612,8 @@ def _cyber_required_sources(q: str) -> list[str]:
 
 
 def _is_child_intimate_image(q: str) -> bool:
+    if _has_any(q, _CSAM_WORDS):
+        return True
     child_age = _has_age_under(q, 18)
     if not child_age and _has_age_at_least(q, 18):
         return False
@@ -4876,8 +5632,10 @@ def _is_intimate_image_emergency(q: str) -> bool:
 
 
 def _is_family_safety_issue(q: str) -> bool:
+    if _is_wife_as_aggressor_issue(q):
+        return False
     if _has_negated_sexual_coercion(q) and not _has_any(q, (
-        "beat", "beating", "threat", "locked", "unsafe", "dowry",
+        "beat", "beating", "slap", "slapped", "slaps", "hit", "threat", "locked", "unsafe", "dowry",
         "grabbed", "touching", "touched",
     )):
         return False
@@ -4886,17 +5644,69 @@ def _is_family_safety_issue(q: str) -> bool:
         "father in law", "dowry", "marriage", "married", "live in partner",
         "live-in partner", "domestic relationship", "husband's brother",
         "husbands brother", "brother in law", "brother-in-law", "in-laws",
+        "sasural", "he gets angry", "my parents say all marriages",
     ))
     has_immediate_safety = _has_any(q, (
         "husband beat", "husband is beating", "beating me", "beats me",
-        "slaps me", "slapped me", "hit me", "hitting me", "locked", "threat", "threatens",
+        "slap", "slaps me", "slapped me", "hit me", "hits me", "hitting me", "locked", "threat", "threatens",
         "threatened", "threatening", "kill", "no food", "not giving food",
         "threw me out", "unsafe", "grabbed my hand", "grabbed me",
         "touching me", "touched me", "making me uncomfortable", "uncomfortable",
         "forces sex", "force sex", "forced sex", "marital rape",
-        "even when i say no", "sex when i say no",
+        "even when i say no", "sex when i say no", "ghar se nikal",
+        "nikal diya", "raat ko", "sorry next day", "should i stay",
     ))
     return has_family_context and has_immediate_safety
+
+
+def _is_wife_as_aggressor_issue(q: str) -> bool:
+    if _is_accused_498a_issue(q):
+        return False
+    wife_context = _has_any(q, ("my wife", "wife slapped", "wife hit", "wife beat", "wife took", "wife threw", "wife kicked", "wife threatens", "wife threatened"))
+    first_person_victim = _has_any(q, (
+        "slapped me", "hit me", "beat me", "beats me", "hitting me",
+        "threatens me", "threatened me", "threatening me", "abuses me",
+        "forces sex", "force sex", "forced sex", "sex without consent",
+        "sexual assault", "sexually assaulted me", "sexually assaulting me",
+        "assaulted me sexually",
+        "took my salary", "takes my salary", "my salary", "my atm",
+        "atm card", "bank card", "not giving me money", "against me",
+        "threw me out", "kicked me out", "locked me out", "not allowing me entry",
+        "not letting me enter", "not letting me in", "not allowing me in",
+        "took my jewellery", "took my jewelry", "took my gold", "my jewellery",
+        "my jewelry", "my gold", "my documents", "took my property",
+        "stole my property", "sold my property", "transferred my property",
+        "took my house papers", "sold my house", "transferred my house",
+    ))
+    return wife_context and first_person_victim and not _has_any(q, (
+        "husband slapped", "husband hit", "husband beat", "husband took",
+        "my husband",
+    ))
+
+
+def _is_wife_as_aggressor_sexual_coercion(q: str) -> bool:
+    return _has_any(q, (
+        "forces sex", "force sex", "forced sex", "sex without consent",
+        "sexual assault", "sexually assaulted me", "sexually assaulting me",
+        "assaulted me sexually",
+    ))
+
+
+def _is_spouse_civil_property_or_maintenance_issue(q: str) -> bool:
+    if _is_wife_as_aggressor_issue(q):
+        return False
+    spouse_context = _has_any(q, ("my wife", "my husband", "spouse"))
+    civil_context = _has_any(q, (
+        "maintenance", "alimony", "share in my property", "share in my house",
+        "share in property", "share in house", "property share", "house share",
+        "during divorce", "divorce case", "matrimonial property",
+    ))
+    active_deprivation = _has_any(q, (
+        "slapped me", "hit me", "beat me", "threatens me", "threatened me",
+        "threw me out", "kicked me out", "locked me out", "not allowing me entry",
+        "took my", "stole my", "sold my", "transferred my",
+    ))
+    return spouse_context and civil_context and not active_deprivation
 
 
 def _is_work_injury(q: str) -> bool:
@@ -4991,7 +5801,8 @@ def _is_workplace_sexual_harassment(q: str) -> bool:
         return True
     retaliation_context = _has_any(q, ("retaliation", "reporting manager", "bad rating", "pip")) and _has_any(q, (
         "posh", "sexual harassment", "icc", "internal committee", "local committee",
-        "harassment complaint", "complained to icc", "complained to internal committee",
+        "harassment complaint under posh", "complained about sexual harassment",
+        "complained to icc", "complained to internal committee",
     ))
     if retaliation_context:
         return True
@@ -5006,7 +5817,7 @@ def _is_workplace_sexual_harassment(q: str) -> bool:
         "told him no", "uncomfortable",
     ))
     harassment_context = _has_any(q, (
-        "touch", "touched", "harass", "stalking", "sexual", "alone",
+        "touch", "touched", "stalking", "sexual", "alone",
         "late night",
     )) or romantic_date_context or emoji_context
     return workplace_context and harassment_context
@@ -5138,6 +5949,39 @@ def _is_senior_citizen_issue(q: str) -> bool:
     return senior_age and neglect_or_shelter
 
 
+def _is_senior_maintenance_order_enforcement(q: str) -> bool:
+    tribunal_context = _has_any(q, (
+        "maintenance tribunal",
+        "senior citizen tribunal",
+        "tribunal ordered",
+        "tribunal order",
+        "tribunal has ordered",
+        "ordered son",
+        "ordered daughter",
+        "order against son",
+        "order against daughter",
+    ))
+    family_context = _has_any(q, (
+        "son", "daughter", "children", "child", "parent", "father",
+        "mother", "relative", "senior citizen", "elderly", "old age",
+    ))
+    enforcement_context = _has_any(q, (
+        "pay",
+        "maintenance",
+        "stopped paying",
+        "not paying",
+        "refusing to pay",
+        "arrears",
+        "default",
+        "missed payment",
+        "order not followed",
+        "enforce",
+        "enforcement",
+        "kaise",
+    ))
+    return tribunal_context and family_context and enforcement_context
+
+
 def _is_civil_procedure_issue(q: str) -> bool:
     if _has_any(q, ("rti", "right to information", "pio", "public information officer", "information commission")):
         return False
@@ -5188,12 +6032,13 @@ def _red_flags(q: str) -> list[str]:
         flags.append("Immediate safety risk or serious offence")
     if _has_any(q, ("arrested", "arrest", "detained", "in jail", "custody", "bail", "magistrate")):
         flags.append("Liberty/custody issue")
-    if _has_any(q, ("lost money", "upi", "otp", "credit card", "bank account")):
+    if _has_any(q, ("lost money", "upi", "otp", "credit card", "bank account", "account frozen", "account freeze", "account is frozen", "lien marked")):
         flags.append("Time-sensitive money trail")
     if _has_any(q, (
         "threw me out", "homeless", "not giving food", "beating", "locked",
         "hit me", "hitting me", "unsafe", "threatens", "threatened",
-        "threatening",
+        "threatening", "harassing contacts", "harassing my contacts",
+        "loan app is harassing",
     )):
         flags.append("Shelter or personal safety concern")
     return flags
@@ -5288,6 +6133,22 @@ def _social_welfare_pack() -> ActionPack:
         portals=["scheme portal where available", "uidai.gov.in for Aadhaar services", "rtionline.gov.in for central authorities"],
         escalation=["district social welfare office", "scheme appellate/grievance authority", "District Legal Services Authority"],
         cautions=["Benefit cases are state- and scheme-specific; exact scheme name and rejection reason matter."],
+    )
+
+
+def _pan_aadhaar_identity_pack() -> ActionPack:
+    return ActionPack(
+        id="pan_aadhaar_identity",
+        title="PAN/Aadhaar correction path",
+        next_steps=[
+            "Identify whether the mismatch is name, date of birth, gender, or mobile/authentication status.",
+            "Correct the wrong record at the PAN/income-tax side or Aadhaar/UIDAI side before retrying linking.",
+            "Keep screenshots and ask for a written rejection reason if the portal or office refuses correction.",
+        ],
+        documents=["PAN card/e-PAN", "Aadhaar copy", "portal error screenshot", "name/DOB proof", "mobile/email used", "complaint acknowledgement"],
+        portals=["incometax.gov.in", "uidai.gov.in", "public grievance/RTI route where reasons are withheld"],
+        escalation=["Income Tax/PAN grievance", "UIDAI grievance or Aadhaar Seva Kendra", "District Legal Services Authority"],
+        cautions=["Do not treat a PAN/Aadhaar mismatch as a caste or welfare-entitlement answer unless a specific scheme denial is also present."],
     )
 
 
@@ -5414,6 +6275,21 @@ def _business_license_pack() -> ActionPack:
         documents=["license/registration copy", "renewal receipt", "fee/challan proof", "inspection notice", "penalty/rejection letter"],
         escalation=["shops establishment office", "municipal licensing office", "RTI/public grievance channel", "DLSA"],
         cautions=["Shop and establishment rules are state-specific; city and license type matter."],
+    )
+
+
+def _municipal_shop_sealing_pack() -> ActionPack:
+    return ActionPack(
+        id="municipal_shop_sealing",
+        title="Municipal sealing response path",
+        next_steps=[
+            "Get the sealing order, show-cause notice, inspection report, and the officer/ward details in writing.",
+            "Collect shop licence, trade registration, lease/ownership papers, tax/fee receipts, photos, and any hearing notice.",
+            "Use the municipal appellate/review route named in the order; use RTI or DLSA help if the file or reasons are not given.",
+        ],
+        documents=["sealing order", "show-cause notice", "shop/trade licence", "lease/ownership proof", "fee/tax receipts", "photos/videos", "inspection report"],
+        escalation=["municipal ward/licensing office", "Municipal Commissioner/appellate authority", "local lawyer/DLSA", "court route only after reading the order"],
+        cautions=["Municipal sealing powers and appeals are state/city-specific; the written order controls the next forum and deadline."],
     )
 
 
@@ -5630,6 +6506,21 @@ def _tribal_project_displacement_pack() -> ActionPack:
     )
 
 
+def _minor_mineral_gram_sabha_pack() -> ActionPack:
+    return ActionPack(
+        id="minor_mineral_gram_sabha",
+        title="Minor mineral Gram Sabha path",
+        next_steps=[
+            "Collect the mining or quarry lease/NOC file, Gram Sabha or Palli Sabha notice and minutes, and mineral-department approval record.",
+            "Verify Scheduled Area status and whether the PESA Gram Sabha recommendation route applies before treating the lease as complete.",
+            "Use the Collector, mining department, tribal welfare authority, DLSA, or court/NGT route depending on which approval is missing.",
+        ],
+        documents=["lease/NOC file", "Gram Sabha/Palli Sabha notice and minutes", "mineral-department approval", "site map", "forest or pollution clearance papers", "Scheduled Area proof"],
+        escalation=["Collector / District Magistrate", "mining department", "Gram Sabha / Panchayat channel", "tribal welfare authority", "DLSA"],
+        cautions=["Do not add RFCTLARR rehabilitation or compensation framing unless land acquisition, displacement, compensation, or R&R facts are present."],
+    )
+
+
 def _pmla_pack() -> ActionPack:
     return ActionPack(
         id="pmla_ed",
@@ -5658,6 +6549,38 @@ def _banking_credit_pack() -> ActionPack:
         portals=["cms.rbi.org.in", "credit bureau dispute portal"],
         escalation=["bank grievance officer", "RBI Ombudsman", "credit bureau"],
         cautions=["Credit-record disputes need exact account numbers, closure dates, and bureau entries."],
+    )
+
+
+def _bank_account_freeze_pack() -> ActionPack:
+    return ActionPack(
+        id="bank_account_freeze",
+        title="Bank account freeze path",
+        next_steps=[
+            "Ask the bank in writing for the exact freeze/lien/KYC reason, authority, and complaint number.",
+            "Collect the statement, freeze message, KYC proof, branch reply, and any police/cyber/court reference.",
+            "Escalate through bank grievance and RBI Ombudsman if it is a bank-service issue; use legal aid/court/police route if it is a legal hold.",
+        ],
+        documents=["bank statement", "freeze/lien message", "KYC proof", "complaint number", "branch reply", "legal hold/order reference if any", "transaction IDs if fraud is alleged"],
+        portals=["bank grievance portal", "cms.rbi.org.in", "cybercrime.gov.in only for fraud/cyber lien facts"],
+        escalation=["bank branch/grievance officer", "RBI Ombudsman", "cyber police/local police where a legal hold is stated", "DLSA"],
+        cautions=["Do not try to bypass or route money around a legal hold; first get the written reason and authority."],
+    )
+
+
+def _loan_app_harassment_pack() -> ActionPack:
+    return ActionPack(
+        id="loan_app_harassment",
+        title="Loan-app harassment path",
+        next_steps=[
+            "Preserve call logs, WhatsApp/SMS screenshots, messages sent to contacts, app permissions, loan agreement, and repayment proof.",
+            "File a written grievance with the lender/app and ask for the regulated entity/NBFC details.",
+            "Escalate to RBI Ombudsman where covered; use cyber police/local police if threats, extortion, obscene messages, or contact-data abuse continue.",
+        ],
+        documents=["loan app/lender name", "loan agreement", "repayment proof", "call logs", "contact messages", "screenshots", "app permissions", "complaint number"],
+        portals=["lender grievance portal", "cms.rbi.org.in", "cybercrime.gov.in for threats/contact-data misuse"],
+        escalation=["lender grievance officer", "RBI Ombudsman", "cyber police/local police", "DLSA"],
+        cautions=["Keep repayment/default facts separate from illegal recovery harassment; do not delete the app or messages before preserving evidence."],
     )
 
 
@@ -5788,12 +6711,12 @@ def _family_safety_pack() -> ActionPack:
         id="family_domestic",
         title="Family safety path",
         next_steps=[
-            "If you are unsafe, prioritize shelter, emergency help, and a trusted person.",
-            "Keep medical records, photos, messages, and a dated incident diary.",
-            "Legal routes may include protection, residence, maintenance, custody, or criminal complaint depending on facts.",
+            "If you are unsafe or thrown out, prioritize emergency help, shelter, a trusted person, and a safe phone copy of evidence.",
+            "Write a dated incident and residence timeline; keep medical records, photos, messages, expense proof, and witness names.",
+            "Use the Protection Officer/Magistrate/DLSA route for protection, residence, monetary relief, custody, or police escalation depending on facts.",
         ],
         documents=["marriage proof", "ID/address proof", "medical records", "messages/photos", "income details", "child documents"],
-        escalation=["Protection Officer", "Magistrate court", "Family Court", "District Legal Services Authority"],
+        escalation=["Protection Officer", "One Stop Centre / women helpline", "Magistrate court", "Family Court", "District Legal Services Authority", "police for immediate danger"],
         cautions=["Do not wait for a perfect legal answer if there is immediate violence."],
     )
 
@@ -5810,6 +6733,66 @@ def _family_marriage_status_pack() -> ActionPack:
         documents=["marriage proof", "second-marriage proof if any", "ID/address proof", "children documents", "property papers", "messages/notices"],
         escalation=["Family Court", "Magistrate court where protection or maintenance applies", "District Legal Services Authority"],
         cautions=["Second-marriage remedies differ by religion/personal law and by whether protection, maintenance, or property is the immediate issue."],
+    )
+
+
+def _marriage_misrepresentation_pack() -> ActionPack:
+    return ActionPack(
+        id="marriage_misrepresentation",
+        title="Marriage misrepresentation path",
+        next_steps=[
+            "Write a timeline of what was stated before marriage, when you discovered the truth, and what proof exists.",
+            "Clarify the personal law or Special Marriage Act route before choosing annulment, divorce, maintenance, or counselling.",
+            "Use DLSA or a family-law lawyer before sending any notice because limitation, proof, and the remedy choice matter.",
+        ],
+        documents=["marriage proof", "messages/profile/biodata", "salary/job proof if available", "date you discovered the truth", "children/residence/maintenance details"],
+        escalation=["Family Court", "District Legal Services Authority", "family-law lawyer/legal-aid desk"],
+        cautions=["A false statement before marriage is fact-sensitive; do not assume every lie automatically cancels the marriage."],
+    )
+
+
+def _pre_marriage_disclosure_pack() -> ActionPack:
+    return ActionPack(
+        id="pre_marriage_disclosure",
+        title="Pre-marriage disclosure path",
+        next_steps=[
+            "First separate cancellation/safety from legal claims: write down what was disclosed, when you learned it, and whether the marriage has already happened.",
+            "Preserve biodata/messages, engagement or wedding-expense records, gift/dowry return records, and any threats or pressure.",
+            "Speak to DLSA or a family-law lawyer before sending public accusations or notices, especially where medical privacy is involved.",
+        ],
+        documents=["messages/biodata", "engagement or wedding records", "gift/dowry/payment records", "date of discovery", "threat or pressure messages if any"],
+        escalation=["District Legal Services Authority", "family-law lawyer/legal-aid desk", "Family Court only if matrimonial proceedings become necessary"],
+        cautions=["If marriage has not happened, do not frame the issue as divorce or annulment; also do not disclose a person's medical status publicly without legal advice."],
+    )
+
+
+def _writ_constitution_pack() -> ActionPack:
+    return ActionPack(
+        id="writ_constitution",
+        title="Writ remedy path",
+        next_steps=[
+            "Identify the government authority, written order/refusal, public duty, and date of your representation.",
+            "For High Court writs, prepare the order/refusal, representation, proof of delivery, and urgency facts.",
+            "Use DLSA or a writ lawyer to check maintainability, alternate remedy, limitation/delay, and the exact relief before filing.",
+        ],
+        documents=["written order/refusal", "representation/complaint copy", "proof of delivery", "timeline", "ID/address proof", "supporting records"],
+        escalation=["High Court writ jurisdiction", "District Legal Services Authority", "lawyer/legal-aid desk"],
+        cautions=["A writ is not a generic complaint form; the public duty, authority, right, delay, and alternate remedy matter."],
+    )
+
+
+def _marriage_breakdown_pack() -> ActionPack:
+    return ActionPack(
+        id="marriage_breakdown",
+        title="Marriage breakdown path",
+        next_steps=[
+            "Do not use pressure or force; first decide whether you want counselling, separation, divorce, maintenance, or another family-court remedy.",
+            "Write down the timeline and any linked issues like violence, threats, residence, children, or maintenance.",
+            "Speak to DLSA or a family-law lawyer about the personal-law route before filing anything.",
+        ],
+        documents=["marriage proof", "timeline", "messages", "counselling/medical records if any", "children/residence/maintenance details"],
+        escalation=["Family Court", "District Legal Services Authority", "safe counselling/mediation only if voluntary"],
+        cautions=["Sex cannot be treated as something to force from a spouse; if there is violence or coercion, treat safety first."],
     )
 
 
@@ -5952,6 +6935,36 @@ def _tribal_caste_pack() -> ActionPack:
     )
 
 
+def _tribal_land_transfer_pack() -> ActionPack:
+    return ActionPack(
+        id="tribal_land_transfer_restoration",
+        title="Tribal land-transfer restoration path",
+        next_steps=[
+            "Collect certified land records, mutation order, sale/transfer deed or mortgage papers, and possession facts.",
+            "Verify the state Scheduled Area or tribal-land transfer rule with the Collector/Deputy Commissioner or revenue authority.",
+            "Use DLSA or tribal welfare help to prepare a restoration, cancellation, or record-correction request.",
+        ],
+        documents=["khata/khatian/passbook", "mutation order", "sale/transfer deed", "tribal-status proof", "buyer/transferee details", "possession proof", "complaint/RTI copies"],
+        escalation=["Collector / Deputy Commissioner", "revenue restoration authority", "tribal welfare authority", "civil court where title is disputed", "District Legal Services Authority"],
+        cautions=["Do not use locks, threats, or self-help eviction; tribal land-transfer remedies are state-specific and document-heavy."],
+    )
+
+
+def _forest_rights_fra_pack() -> ActionPack:
+    return ActionPack(
+        id="forest_rights_fra",
+        title="Forest-rights / FRA claim path",
+        next_steps=[
+            "Collect the FRA claim, Gram Sabha/FRC resolution, patta/CFR title, and any written refusal or seizure record.",
+            "Ask the Gram Sabha/FRC, SDLC, DLC, or Collector for a written decision or reasoned correction.",
+            "Use tribal welfare office or DLSA help if officials ignore the FRA papers or forest-produce rights.",
+        ],
+        documents=["FRA claim form", "Gram Sabha/FRC resolution", "IFR/patta/CFR title", "SDLC/DLC order or refusal", "photos/video", "seizure/cutting notice", "witness names"],
+        escalation=["Gram Sabha / Forest Rights Committee", "Sub-Divisional Level Committee", "District Level Committee / Collector", "tribal welfare authority", "District Legal Services Authority"],
+        cautions=["Use police channels only for separate violence, threat, illegal detention, or a criminal case; ordinary FRA claim and forest-produce disputes start with FRA institutions."],
+    )
+
+
 def _trademark_pack() -> ActionPack:
     return ActionPack(
         id="trademark_ip",
@@ -6087,6 +7100,21 @@ def _prison_release_pack() -> ActionPack:
     )
 
 
+def _prison_mulaqat_pack() -> ActionPack:
+    return ActionPack(
+        id="prison_mulaqat_access",
+        title="Prison mulaqat / interview path",
+        next_steps=[
+            "Ask the Jail Superintendent in writing for the applicable visit/mulaqat rule and reason for the time or frequency limit.",
+            "Keep prisoner details, relationship proof, prior appointment/refusal proof, and any medical or family urgency.",
+            "Use DLSA or High Court review if access is arbitrary, discriminatory, or blocks lawyer/family communication without reasons.",
+        ],
+        documents=["prisoner number", "jail name", "relationship/ID proof", "appointment or refusal proof", "rule/order copy if available"],
+        escalation=["prison superintendent", "District Legal Services Authority", "prison visitors board where available", "High Court writ jurisdiction"],
+        cautions=["Mulaqat timing and frequency are state-prison-rule heavy; verify the prison/state rule before demanding a specific duration."],
+    )
+
+
 def _cheque_pack() -> ActionPack:
     return ActionPack(
         id="cheque_bounce",
@@ -6188,6 +7216,21 @@ def _property_pack() -> ActionPack:
         ],
         documents=["sale/gift/lease deed", "rent agreement", "receipts", "land records", "notices/messages"],
         escalation=["civil court/rent authority", "revenue office", "District Legal Services Authority"],
+    )
+
+
+def _tenancy_pack() -> ActionPack:
+    return ActionPack(
+        id="tenancy_eviction_nonpayment",
+        title="Tenant eviction / rent arrears path",
+        next_steps=[
+            "Collect the rent agreement, rent ledger, payment receipts, messages, and possession facts.",
+            "Send a written legal notice only after checking the agreement term and local rent-control law.",
+            "File through the rent authority or civil court route instead of using locks, threats, or self-help eviction.",
+        ],
+        documents=["rent agreement", "rent receipts", "arrears calculation", "notice/messages", "tenant ID/details", "property ownership papers"],
+        escalation=["rent authority or civil court", "District Legal Services Authority", "local lawyer/legal-aid desk"],
+        cautions=["Tenant-removal procedure is state-law heavy; state and city change the forum and notice route."],
     )
 
 

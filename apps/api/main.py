@@ -30,6 +30,7 @@ from apps.api.llm import (
     load_answer_prompt,
     stream_chat,
 )
+from apps.api.legal_issue_plan import LegalIssuePlan, build_legal_issue_plan
 from apps.api.matter_router import MatterRoute, route_matter
 from apps.api.relevance import compute_relevance
 from apps.api.retrieval import (
@@ -84,6 +85,27 @@ UNKNOWN_CRIMINAL_REGIME = "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
 CRIMINAL_REGIME_CAVEAT = (
     "The incident date decides whether BNS/BNSS/BSA or "
     "IPC/CrPC/Evidence Act applies."
+)
+MEDICAL_STATUS_ONLINE_DISCLOSURE_TERMS = (
+    "post warning", "post online", "warning online", "online", "social media",
+    "publish", "publicly", "disclose", "instagram", "whatsapp", "facebook",
+    "telegram", "status", "group", "warn people", "tell everyone",
+    "tell relatives", "tell friends", "share his hiv status",
+    "share her hiv status", "put his hiv status", "put her hiv status",
+    "post his hiv status", "post her hiv status", "make viral", "viral",
+)
+_CRIMINAL_REGIME_SOURCE_TERMS = (
+    "bns",
+    "bnss",
+    "bsa",
+    "ipc",
+    "crpc",
+    "evidence act",
+    "bharatiya nyaya",
+    "bharatiya nagarik",
+    "bharatiya sakshya",
+    "indian penal",
+    "criminal procedure",
 )
 
 
@@ -180,6 +202,8 @@ def _make_passages(retrieved: list[RetrievedChunk], n: int) -> tuple[list[dict],
             "court": h.court,
             "citation": h.citation,
             "statute_short": h.statute_short,
+            "required_source_pack": h.metadata.get("_required_source_pack"),
+            "required_source_priority": h.metadata.get("_required_source_priority"),
         })
         idx_map[i] = h.text
     return passages, idx_map
@@ -245,6 +269,17 @@ def _matter_route_event(route: MatterRoute) -> dict:
     return {"event": "matter_route", "data": json.dumps(route.to_event())}
 
 
+def _legal_issue_plan_event(plan: LegalIssuePlan) -> dict:
+    return {"event": "legal_issue_plan", "data": json.dumps(plan.to_event())}
+
+
+def _initial_route_events(route: MatterRoute, plan: LegalIssuePlan | None) -> list[dict]:
+    events = [_matter_route_event(route)]
+    if plan is not None:
+        events.append(_legal_issue_plan_event(plan))
+    return events
+
+
 def _grounded_template_lines(
     query: str,
     route: MatterRoute,
@@ -269,6 +304,21 @@ def _grounded_template_lines(
         if arrest_lines:
             return arrest_lines
 
+    if route.category in {"police_fir", "arrest_custody_safeguard"} and _is_police_picked_fir_copy_query(q):
+        arrest_copy_lines = _police_picked_fir_copy_template_lines(q, passages)
+        if arrest_copy_lines:
+            return arrest_copy_lines
+
+    if route.category == "police_fir" and _is_theft_fir_refusal_query(q):
+        theft_fir_lines = _theft_fir_refusal_template_lines(q, passages)
+        if theft_fir_lines:
+            return theft_fir_lines
+
+    if route.category == "environment_compensation" and _is_mining_gram_sabha_noc_query(q):
+        mining_noc_lines = _mining_gram_sabha_noc_template_lines(q, passages)
+        if mining_noc_lines:
+            return mining_noc_lines
+
     if route.category == "environment_compensation" and _is_mining_displacement_query(q):
         mining_lines = _mining_displacement_template_lines(passages)
         if mining_lines:
@@ -283,6 +333,11 @@ def _grounded_template_lines(
         tribal_land_lines = _tribal_land_transfer_template_lines(q, passages)
         if tribal_land_lines:
             return tribal_land_lines
+
+    if route.category == "tribal_caste_atrocity" and _is_fra_forest_rights_query(q):
+        fra_lines = _forest_rights_template_lines(q, passages)
+        if fra_lines:
+            return fra_lines
 
     if route.category == "tribal_caste_atrocity" and _is_untouchability_rights_query(q):
         untouchability_lines = _untouchability_civil_rights_template_lines(q, passages)
@@ -303,13 +358,28 @@ def _grounded_template_lines(
         if gambling_lines:
             return gambling_lines
 
+    if route.category == "digital_platform_account" and _is_digital_kyc_account_freeze_query(q):
+        kyc_lines = _digital_kyc_account_freeze_template_lines(q, passages)
+        if kyc_lines:
+            return kyc_lines
+
     if route.category == "digital_platform_account" and _is_cab_aggregator_driver_query(q):
-        cab_lines = _cab_aggregator_driver_template_lines(passages)
+        cab_lines = _cab_aggregator_driver_template_lines(q, passages)
         if cab_lines:
             return cab_lines
 
+    if route.category == "social_welfare_identity" and _is_pan_aadhaar_mismatch_query(q):
+        pan_aadhaar_lines = _pan_aadhaar_mismatch_template_lines(q, passages)
+        if pan_aadhaar_lines:
+            return pan_aadhaar_lines
+
+    if route.category == "labour_exploitation_discrimination" and _is_mgnrega_wage_query(q):
+        mgnrega_lines = _mgnrega_wage_template_lines(q, passages)
+        if mgnrega_lines:
+            return mgnrega_lines
+
     if route.category == "social_welfare_identity" and _is_caste_certificate_query(q):
-        caste_certificate_lines = _caste_certificate_template_lines(passages)
+        caste_certificate_lines = _caste_certificate_template_lines(q, passages)
         if caste_certificate_lines:
             return caste_certificate_lines
 
@@ -333,6 +403,11 @@ def _grounded_template_lines(
         if waiver_lines:
             return waiver_lines
 
+    if route.category == "employment_wages" and _is_non_compete_query(q):
+        non_compete_lines = _non_compete_template_lines(q, passages)
+        if non_compete_lines:
+            return non_compete_lines
+
     if route.category == "employment_wages" and _is_gig_platform_worker_query(q):
         gig_lines = _gig_platform_worker_template_lines(passages)
         if gig_lines:
@@ -342,6 +417,16 @@ def _grounded_template_lines(
         retrench_lines = _discriminatory_retrenchment_template_lines(passages)
         if retrench_lines:
             return retrench_lines
+
+    if route.category == "employment_wages" and _is_employment_retaliation_pip_query(q):
+        employment_retaliation_lines = _employment_retaliation_pip_template_lines(q, passages)
+        if employment_retaliation_lines:
+            return employment_retaliation_lines
+
+    if route.category == "workplace_sexual_harassment" and _is_posh_retaliation_query(q):
+        posh_lines = _posh_retaliation_template_lines(q, passages)
+        if posh_lines:
+            return posh_lines
 
     if route.category == "labour_compliance" and _is_labour_overtime_register_query(q):
         labour_lines = _labour_overtime_register_template_lines(q, passages)
@@ -355,6 +440,11 @@ def _grounded_template_lines(
         birth_lines = _birth_certificate_rti_template_lines(q, passages)
         if birth_lines:
             return birth_lines
+
+    if route.category == "consumer" and _is_medical_negligence_query(q):
+        medical_lines = _medical_negligence_consumer_template_lines(q, passages)
+        if medical_lines:
+            return medical_lines
 
     if (
         route.category == "consumer"
@@ -374,6 +464,16 @@ def _grounded_template_lines(
         if pet_lines:
             return pet_lines
 
+    if route.category == "consumer" and _is_subscription_refund_query(q):
+        subscription_lines = _subscription_refund_template_lines(q, passages)
+        if subscription_lines:
+            return subscription_lines
+
+    if route.category == "business_contract_partnership" and _is_b2b_defective_goods_query(q):
+        goods_lines = _b2b_defective_goods_template_lines(q, passages)
+        if goods_lines:
+            return goods_lines
+
     if (
         route.category == "business_contract_partnership"
         and _has_any_term(q, ("msme", "msmed", "udyam"))
@@ -383,6 +483,11 @@ def _grounded_template_lines(
         if msme_lines:
             return msme_lines
 
+    if route.category == "tax_gst_compliance" and _is_gst_itc_mismatch_query(q):
+        gst_lines = _gst_itc_mismatch_template_lines(q, passages)
+        if gst_lines:
+            return gst_lines
+
     if (
         route.category == "family_marriage_status"
         and _has_any_term(q, ("name change", "change my name", "change my surname", "change surname", "gazette"))
@@ -390,6 +495,46 @@ def _grounded_template_lines(
         name_lines = _name_change_gazette_template_lines(q, passages)
         if name_lines:
             return name_lines
+
+    if route.category == "family_marriage_status" and route.label == "Matrimonial property / maintenance response":
+        matrimonial_lines = _matrimonial_property_maintenance_template_lines(q, passages)
+        if matrimonial_lines:
+            return matrimonial_lines
+
+    if route.category == "family_marriage_status" and _is_pre_marriage_health_disclosure_query(q):
+        pre_marriage_lines = _pre_marriage_health_disclosure_template_lines(q, passages)
+        if pre_marriage_lines:
+            return pre_marriage_lines
+
+    if route.category == "family_marriage_status" and _is_marriage_misrepresentation_query(q):
+        marriage_lines = _marriage_misrepresentation_template_lines(q, passages)
+        if marriage_lines:
+            return marriage_lines
+
+    if route.category == "family_marriage_status" and _is_marital_intimacy_breakdown_query(q):
+        breakdown_lines = _marital_intimacy_breakdown_template_lines(q, passages)
+        if breakdown_lines:
+            return breakdown_lines
+
+    if route.category == "family_domestic" and _is_marital_sexual_violence_query(q):
+        marital_sexual_lines = _marital_sexual_violence_template_lines(q, passages)
+        if marital_sexual_lines:
+            return marital_sexual_lines
+
+    if route.category == "family_domestic" and _is_domestic_violence_safety_query(q):
+        domestic_safety_lines = _domestic_violence_safety_template_lines(q, passages)
+        if domestic_safety_lines:
+            return domestic_safety_lines
+
+    if route.category == "family_domestic" and _is_streedhan_return_query(q):
+        streedhan_lines = _streedhan_return_template_lines(q, passages)
+        if streedhan_lines:
+            return streedhan_lines
+
+    if route.category == "reproductive_rights_mtp" and _is_mtp_privacy_divorce_query(q):
+        mtp_lines = _mtp_privacy_divorce_template_lines(q, passages)
+        if mtp_lines:
+            return mtp_lines
 
     if route.category == "banking_credit_dispute" and (route.action_pack and route.action_pack.id == "security_cheque_defence"):
         security_cheque_lines = _security_cheque_defence_template_lines(passages)
@@ -401,6 +546,11 @@ def _grounded_template_lines(
         if fd_lines:
             return fd_lines
 
+    if route.category == "banking_credit_dispute" and _is_bank_property_document_fraud_query(q):
+        forged_loan_lines = _bank_property_document_fraud_template_lines(q, passages)
+        if forged_loan_lines:
+            return forged_loan_lines
+
     if route.category == "court_procedure" and _is_private_magistrate_complaint_query(q):
         private_complaint_lines = _private_magistrate_complaint_template_lines(passages)
         if private_complaint_lines:
@@ -410,6 +560,16 @@ def _grounded_template_lines(
         execution_lines = _decree_execution_attachment_template_lines(q, passages)
         if execution_lines:
             return execution_lines
+
+    if route.category == "court_procedure" and _is_vakalatnama_change_query(q):
+        vakalat_lines = _vakalatnama_change_template_lines(passages)
+        if vakalat_lines:
+            return vakalat_lines
+
+    if route.category == "court_procedure" and _is_writ_constitution_query(q):
+        writ_lines = _writ_constitution_template_lines(q, passages)
+        if writ_lines:
+            return writ_lines
 
     if route.category in {"criminal_defence_bail", "court_procedure", "police_fir"} and _is_criminal_quashing_query(q):
         quashing_lines = _criminal_quashing_template_lines(q, passages)
@@ -440,6 +600,17 @@ def _grounded_template_lines(
         otp_refund_lines = _bank_otp_refund_template_lines(q, passages)
         if otp_refund_lines:
             return otp_refund_lines
+
+    if route.category == "cyber_fraud_or_harassment" and _is_cyber_impersonation_fraud_query(q):
+        impersonation_lines = _cyber_impersonation_fraud_template_lines(q, passages)
+        if impersonation_lines:
+            return impersonation_lines
+
+    if route.category == "cyber_fraud_or_harassment" and _is_crypto_investment_fraud_query(q):
+        crypto_lines = _crypto_investment_fraud_template_lines(q, passages)
+        if crypto_lines:
+            return crypto_lines
+
     if route.category == "cyber_fraud_or_harassment":
         creator_leak_lines = _creator_content_leak_template_lines(q, passages)
         if creator_leak_lines:
@@ -458,6 +629,11 @@ def _grounded_template_lines(
         if senior_enforcement_lines:
             return senior_enforcement_lines
 
+    if route.category == "senior_citizen" and _is_insurance_misselling_query(q):
+        insurance_lines = _insurance_misselling_template_lines(q, passages)
+        if insurance_lines:
+            return insurance_lines
+
     if route.category == "senior_citizen" and not (route.action_pack and route.action_pack.id == "senior_maintenance_cheque"):
         senior_lines = _senior_citizen_property_or_maintenance_template_lines(q, passages)
         if senior_lines:
@@ -473,6 +649,11 @@ def _grounded_template_lines(
         if education_loan_lines:
             return education_loan_lines
 
+    if route.category == "education_rights" and _is_school_admission_denial_query(q):
+        school_lines = _school_admission_denial_template_lines(q, passages)
+        if school_lines:
+            return school_lines
+
     if route.category == "legal_aid" and _is_lok_adalat_traffic_query(q):
         lok_lines = _lok_adalat_traffic_template_lines(passages)
         if lok_lines:
@@ -483,10 +664,25 @@ def _grounded_template_lines(
         if undertrial_legal_aid_lines:
             return undertrial_legal_aid_lines
 
+    if route.category == "prison_parole_furlough" and _is_prison_mulaqat_query(q):
+        mulaqat_lines = _prison_mulaqat_template_lines(passages)
+        if mulaqat_lines:
+            return mulaqat_lines
+
+    if route.category == "custody_compensation":
+        custody_compensation_lines = _custody_compensation_template_lines(passages)
+        if custody_compensation_lines:
+            return custody_compensation_lines
+
     if route.category == "criminal_general" and _is_identity_police_threat_query(q):
         identity_threat_lines = _identity_police_threat_template_lines(passages)
         if identity_threat_lines:
             return identity_threat_lines
+
+    if route.category == "criminal_general" and _is_wife_as_aggressor_query(q):
+        spouse_neutral_lines = _spousal_neutral_complaint_template_lines(q, passages)
+        if spouse_neutral_lines:
+            return spouse_neutral_lines
 
     if (
         route.category == "banking_credit_dispute"
@@ -495,6 +691,21 @@ def _grounded_template_lines(
         agri_bank_lines = _agri_cooperative_recovery_template_lines(q, passages)
         if agri_bank_lines:
             return agri_bank_lines
+
+    if route.category == "banking_credit_dispute" and _is_loan_app_harassment_query(q):
+        loan_app_lines = _loan_app_harassment_template_lines(q, passages)
+        if loan_app_lines:
+            return loan_app_lines
+
+    if route.category == "banking_credit_dispute" and _is_bank_account_freeze_query(q):
+        freeze_lines = _bank_account_freeze_template_lines(q, passages)
+        if freeze_lines:
+            return freeze_lines
+
+    if route.category == "banking_credit_dispute" and _is_bank_debit_service_query(q):
+        debit_lines = _bank_debit_ombudsman_template_lines(q, passages)
+        if debit_lines:
+            return debit_lines
 
     if route.category == "banking_credit_dispute" and _is_banking_ombudsman_credit_query(q):
         banking_lines = _banking_ombudsman_credit_template_lines(passages)
@@ -529,6 +740,11 @@ def _grounded_template_lines(
         if witch_lines:
             return witch_lines
 
+    if route.category == "criminal_defence_bail" and _is_elder_498a_accused_query(q):
+        elder_498a_lines = _elder_498a_accused_template_lines(q, passages)
+        if elder_498a_lines:
+            return elder_498a_lines
+
     if (
         route.category == "criminal_defence_bail"
         and _has_any_term(q, ("pregnant", "pregnancy", "medical bail", "interim bail", "sick", "infirm"))
@@ -555,6 +771,11 @@ def _grounded_template_lines(
         if spa_lines:
             return spa_lines
 
+    if route.category == "criminal_defence_bail" and _is_itpa_call_handling_query(q):
+        itpa_call_lines = _itpa_call_handling_template_lines(q, passages)
+        if itpa_call_lines:
+            return itpa_call_lines
+
     if (
         route.category == "criminal_defence_bail"
         and _has_any_term(q, ("forest guard", "forest officer", "tendu", "minor forest produce"))
@@ -575,7 +796,7 @@ def _grounded_template_lines(
 
     if (
         route.category == "criminal_defence_bail"
-        and _has_any_term(q, ("ndps", "ganja", "charas", "mdma", "heroin", "cannabis", "weed", "hash", "cbd", "thc", "vape", "vape cartridge", "vape pen"))
+        and _has_any_term(q, ("ndps", "ganja", "charas", "mdma", "heroin", "cannabis", "weed", "hash", "cbd", "thc", "vape", "vape cartridge", "vape pen", "bhang", "bhang lassi"))
     ):
         ndps_personal_lines = _ndps_personal_use_template_lines(q, passages)
         if ndps_personal_lines:
@@ -680,6 +901,38 @@ def _grounded_template_lines(
 
     if (
         route.category == "property_tenancy"
+        and _is_property_document_fraud_query(q)
+    ):
+        property_lines = _property_document_fraud_template_lines(q, passages)
+        if property_lines:
+            return property_lines
+
+    if (
+        route.category == "property_tenancy"
+        and _is_ancestral_land_sale_query(q)
+    ):
+        ancestral_lines = _ancestral_land_sale_template_lines(q, passages)
+        if ancestral_lines:
+            return ancestral_lines
+
+    if (
+        route.category == "property_tenancy"
+        and _is_joint_property_sale_query(q)
+    ):
+        coowner_lines = _joint_property_sale_template_lines(q, passages)
+        if coowner_lines:
+            return coowner_lines
+
+    if (
+        route.category == "property_tenancy"
+        and _is_tenant_nonpayment_vacate_query(q)
+    ):
+        tenant_lines = _tenant_nonpayment_vacate_template_lines(q, passages)
+        if tenant_lines:
+            return tenant_lines
+
+    if (
+        route.category == "property_tenancy"
         and _has_any_term(q, ("icu", "hospital", "pressure", "forced", "undue influence"))
         and _has_any_term(q, ("property", "signed", "transfer", "gift"))
     ):
@@ -691,6 +944,14 @@ def _grounded_template_lines(
         rti_lines = _rti_template_lines(q, passages)
         if rti_lines:
             return rti_lines
+
+    if (
+        route.category == "business_license_compliance"
+        and _is_municipal_shop_sealing_query(q)
+    ):
+        municipal_lines = _municipal_shop_sealing_template_lines(q, passages)
+        if municipal_lines:
+            return municipal_lines
 
     if (
         route.category == "business_license_compliance"
@@ -794,6 +1055,191 @@ def _arrest_production_delay_template_lines(query: str, passages: list[dict]) ->
     return lines
 
 
+def _police_picked_fir_copy_template_lines(query: str, passages: list[dict]) -> list[str]:
+    article22 = _find_passage_index(
+        passages,
+        title_terms=("constitution",),
+        anchor_terms=("/sec-22",),
+    )
+    bnss173 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-173",),
+    )
+    crpc154 = _find_passage_index(
+        passages,
+        title_terms=("code of criminal procedure",),
+        anchor_terms=("/sec-154",),
+    )
+    if article22 is None and bnss173 is None and crpc154 is None:
+        return []
+    lines = ["**Short answer**"]
+    if article22 is not None:
+        lines.append(
+            f"Because police picked your family member from home, first treat this as an arrest-information and liberty safeguard issue: Article 22 is the source to check for arrest grounds, lawyer access, and production before a Magistrate [{article22}]."
+        )
+    if bnss173 is not None:
+        lines.append(
+            f"For the FIR-copy side, BNSS Section 173 is the current-procedure source to check for how information to police is recorded and handled [{bnss173}]."
+        )
+    elif crpc154 is not None:
+        lines.append(
+            f"For a pre-1 July 2024 or CrPC-framed matter, CrPC Section 154 is the FIR-information source to check for the recorded information/FIR route [{crpc154}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = article22 if article22 is not None else bnss173 if bnss173 is not None else crpc154
+    lines.append(
+        f"- Write down the pickup/arrest time, police station, officer names, and FIR or complaint number if known; take that to DLSA, a criminal lawyer, or the nearest Magistrate and ask for arrest/remand and FIR-copy status [{action_cite}]."
+    )
+    return lines
+
+
+def _theft_fir_refusal_template_lines(query: str, passages: list[dict]) -> list[str]:
+    bnss173 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-173",),
+    )
+    bnss175 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-175",),
+    )
+    crpc154 = _find_passage_index(
+        passages,
+        title_terms=("code of criminal procedure",),
+        anchor_terms=("/sec-154",),
+    )
+    crpc156 = _find_passage_index(
+        passages,
+        title_terms=("code of criminal procedure",),
+        anchor_terms=("/sec-156",),
+    )
+    bns303 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-303",),
+    )
+    bns317 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-317",),
+    )
+    bns_theft = bns303 if bns303 is not None else bns317
+    if bnss173 is None and crpc154 is None and bns_theft is None:
+        return []
+    lines = ["**Short answer**"]
+    if bns303 is not None:
+        lines.append(
+            f"For a stolen bike, the current offence source to check first is the BNS theft provision in the retrieved material [{bns303}]."
+        )
+    elif bns317 is not None:
+        lines.append(
+            f"For a stolen bike, the BNS source defines property whose possession has been transferred by theft as stolen property; the exact FIR section still depends on the incident date and police papers [{bns317}]."
+        )
+    if bnss173 is not None:
+        lines.append(
+            f"For police refusal to register the case, BNSS Section 173 is the current-procedure source for information given to the officer in charge of a police station [{bnss173}]."
+        )
+    elif crpc154 is not None:
+        lines.append(
+            f"For a pre-1 July 2024 or CrPC-framed incident, CrPC Section 154 is the FIR-information source for information given to the police station [{crpc154}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = bnss175 if bnss175 is not None else crpc156 if crpc156 is not None else bnss173 if bnss173 is not None else crpc154 if crpc154 is not None else bns_theft
+    lines.append(
+        f"- Give a written theft complaint with bike registration/chassis details, date/place, CCTV or witness details, and keep acknowledgement; if the station still refuses, escalate with the written proof to senior police, DLSA, or the Magistrate route [{action_cite}]."
+    )
+    return lines
+
+
+def _school_admission_denial_template_lines(query: str, passages: list[dict]) -> list[str]:
+    rte13 = _find_passage_index(
+        passages,
+        title_terms=("right of children",),
+        anchor_terms=("/sec-13",),
+    )
+    rte12 = _find_passage_index(
+        passages,
+        title_terms=("right of children",),
+        anchor_terms=("/sec-12",),
+    )
+    rte14 = _find_passage_index(
+        passages,
+        title_terms=("right of children",),
+        anchor_terms=("/sec-14",),
+    )
+    rte15 = _find_passage_index(
+        passages,
+        title_terms=("right of children",),
+        anchor_terms=("/sec-15",),
+    )
+    if rte13 is None and rte12 is None and rte14 is None and rte15 is None:
+        return []
+    lines = ["**Short answer**"]
+    if rte13 is not None:
+        lines.append(
+            f"For a school-admission denial, first check the RTE source on capitation fee and screening procedure instead of treating the issue as only a transfer-certificate problem [{rte13}]."
+        )
+    if rte12 is not None:
+        lines.append(
+            f"The RTE admission-duty source is also relevant if your daughter's age, class, school type, and category fit that Act [{rte12}]."
+        )
+    if rte14 is not None:
+        lines.append(
+            f"If the school is using age-proof papers as the reason, the RTE age-proof source should be checked before accepting the refusal [{rte14}]."
+        )
+    elif rte15 is not None:
+        lines.append(
+            f"If the issue is late or delayed admission, the RTE admission-timing source should be checked with the school year and class facts [{rte15}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = rte13 if rte13 is not None else rte12 if rte12 is not None else rte14 if rte14 is not None else rte15
+    lines.append(
+        f"- Ask the school for written refusal reasons, keep the application/exam result/messages, and complain to the district education officer or RTE grievance authority with the child's age, class, school type, and category/income papers where relevant [{action_cite}]."
+    )
+    return lines
+
+
+def _pan_aadhaar_mismatch_template_lines(query: str, passages: list[dict]) -> list[str]:
+    income_tax_pan = _find_passage_index(
+        passages,
+        title_terms=("income-tax", "income tax"),
+        anchor_terms=("/sec-139-a", "/sec-139a", "/sec-139"),
+    )
+    aadhaar = _find_passage_index(
+        passages,
+        title_terms=("aadhaar", "aadhar"),
+        anchor_terms=("/sec-4", "/sec-7", "/sec-8", "/sec-59"),
+    )
+    rti = _find_passage_index(
+        passages,
+        title_terms=("right to information",),
+        anchor_terms=("/sec-6", "/sec-7", "/sec-19"),
+    )
+    if income_tax_pan is None and aadhaar is None and rti is None:
+        return []
+    lines = ["**Short answer**"]
+    if income_tax_pan is not None:
+        lines.append(
+            f"For a PAN/Aadhaar mismatch, do not treat this as a caste, ration, or generic welfare issue; first identify whether the PAN/income-tax record or the Aadhaar record has the wrong name, date of birth, gender, or mobile/authentication detail [{income_tax_pan}]."
+        )
+    if aadhaar is not None:
+        lines.append(
+            f"The Aadhaar source is relevant only to the identity/authentication side, so it should not be used to say your PAN details are automatically correct or incorrect [{aadhaar}]."
+        )
+    if rti is not None:
+        lines.append(
+            f"If an office or portal refuses to tell you the exact mismatch reason, use the written grievance/RTI route to get status, reasons, and the rule or record relied on [{rti}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = income_tax_pan if income_tax_pan is not None else aadhaar if aadhaar is not None else rti
+    lines.append(
+        f"- Compare PAN, Aadhaar, and the rejection screenshot field by field; correct the wrong record through the PAN/income-tax side or UIDAI/Aadhaar Seva Kendra, keep the acknowledgement, and retry linking only after the correction is reflected [{action_cite}]."
+    )
+    return lines
+
+
 def _ration_portability_template_lines(query: str, passages: list[dict]) -> list[str]:
     nfsa3 = _find_passage_index(
         passages,
@@ -815,9 +1261,21 @@ def _ration_portability_template_lines(query: str, passages: list[dict]) -> list
         title_terms=("national food security",),
         anchor_terms=("/sec-15",),
     )
-    if nfsa3 is None and nfsa12 is None and nfsa14 is None and nfsa15 is None:
+    aadhaar7 = _find_passage_index(
+        passages,
+        title_terms=("aadhaar",),
+        anchor_terms=("/sec-7",),
+    )
+    aadhaar8 = _find_passage_index(
+        passages,
+        title_terms=("aadhaar",),
+        anchor_terms=("/sec-8",),
+    )
+    if nfsa3 is None and nfsa12 is None and nfsa14 is None and nfsa15 is None and aadhaar7 is None and aadhaar8 is None:
         return []
-    if _has_any_term(query, ("west bengal", "chennai", "one nation")):
+    if _has_any_term(query, ("aadhaar", "aadhar", "mismatch", "biometric", "cancelled", "canceled")):
+        portability_phrase = "ration-card cancellation or Aadhaar mismatch"
+    elif _has_any_term(query, ("west bengal", "chennai", "one nation")):
         portability_phrase = "West Bengal ration card not working at a Chennai ration shop under portability"
     else:
         portability_phrase = "ration portability" if _has_any_term(query, ("one nation", "portability", "chennai", "migrant")) else "ration-card denial"
@@ -832,17 +1290,66 @@ def _ration_portability_template_lines(query: str, passages: list[dict]) -> list
         )
     if nfsa14 is not None:
         lines.append(
-            f"The NFSA grievance source requires every State Government to put an internal grievance redressal mechanism in place for expeditious and effective redressal [{nfsa14}]."
+            f"For this {portability_phrase}, the NFSA grievance source requires every State Government to put an internal grievance redressal mechanism in place for expeditious and effective redressal [{nfsa14}]."
         )
     if nfsa15 is not None:
         lines.append(
             f"The NFSA District Grievance Redressal Officer source is the escalation route for ration entitlement complaints at district level [{nfsa15}]."
         )
+    if aadhaar7 is not None:
+        lines.append(
+            f"Where the problem is Aadhaar authentication or mismatch, keep that as a separate identity/subsidy-benefit issue under the Aadhaar Act source instead of treating the ration cancellation as final [{aadhaar7}]."
+        )
+    elif aadhaar8 is not None:
+        lines.append(
+            f"The Aadhaar Act authentication source is relevant only to the identity/authentication step; the foodgrain entitlement and grievance route still has to be checked separately under NFSA sources [{aadhaar8}]."
+        )
     lines.append("**What you can do next**")
-    action_cite = nfsa15 if nfsa15 is not None else nfsa14 if nfsa14 is not None else nfsa12 if nfsa12 is not None else nfsa3
+    action_cite = nfsa15 if nfsa15 is not None else nfsa14 if nfsa14 is not None else aadhaar7 if aadhaar7 is not None else aadhaar8 if aadhaar8 is not None else nfsa12 if nfsa12 is not None else nfsa3
     lines.append(
-        f"- Keep the ration-card number, shop details, denial date, Aadhaar or portability error screenshot if any, and family-member details, then file a written complaint through the State NFSA grievance/DGRO route [{action_cite}]."
+        f"- Keep the ration-card number, cancellation or shop details, denial date, Aadhaar or portability error screenshot, BDO/office reply, and family-member details, then file a written complaint through the State NFSA grievance/DGRO or identity-correction route [{action_cite}]."
     )
+    return lines
+
+
+def _medical_negligence_consumer_template_lines(query: str, passages: list[dict]) -> list[str]:
+    consumer2 = _find_passage_index(
+        passages,
+        title_terms=("consumer protection",),
+        anchor_terms=("/sec-2", "/sec-2-"),
+    )
+    consumer35 = _find_passage_index(
+        passages,
+        title_terms=("consumer protection",),
+        anchor_terms=("/sec-35",),
+    )
+    consumer39 = _find_passage_index(
+        passages,
+        title_terms=("consumer protection",),
+        anchor_terms=("/sec-39",),
+    )
+    if consumer2 is None and consumer35 is None and consumer39 is None:
+        return []
+    patient_phrase = "your father" if "father" in query else "the patient"
+    issue_phrase = "wrong-limb or wrong-surgery" if _has_any_term(query, ("wrong leg", "wrong limb", "wrong surgery", "wrong operation", "operated wrong")) else "medical-treatment"
+    lines = ["**Short answer**"]
+    if consumer2 is not None:
+        lines.append(
+            f"Treat this first as a hospital service-deficiency or medical-negligence question only if the medical records support the {issue_phrase} facts; the Consumer Protection Act source is the consumer-law base to check [{consumer2}]."
+        )
+    if consumer35 is not None:
+        lines.append(
+            f"The Consumer Protection Act complaint source gives the consumer-forum filing route, so do not route this only as a police/FIR issue unless separate criminal-negligence facts are alleged [{consumer35}]."
+        )
+    if consumer39 is not None:
+        lines.append(
+            f"The Consumer Protection Act relief source is relevant for refund, replacement, removal of deficiency, compensation, or similar consumer-forum relief depending on proof [{consumer39}]."
+        )
+    action_cite = consumer35 if consumer35 is not None else consumer39 if consumer39 is not None else consumer2
+    lines.extend([
+        "**What you can do next**",
+        f"- Collect {patient_phrase}'s consent form, operation notes, discharge summary, bills, photos, second medical opinion, and written hospital reply before filing a hospital grievance, medical-council complaint, or District Commission complaint [{action_cite}].",
+    ])
     return lines
 
 
@@ -1013,6 +1520,149 @@ def _msme_43b_payment_template_lines(query: str, passages: list[dict]) -> list[s
     return lines
 
 
+def _b2b_defective_goods_template_lines(query: str, passages: list[dict]) -> list[str]:
+    contract37 = _find_passage_index(
+        passages,
+        title_terms=("indian contract",),
+        anchor_terms=("/sec-37",),
+    )
+    contract73 = _find_passage_index(
+        passages,
+        title_terms=("indian contract",),
+        anchor_terms=("/sec-73",),
+    )
+    sog31 = _find_passage_index(
+        passages,
+        title_terms=("sale of goods",),
+        anchor_terms=("/sec-31",),
+    )
+    sog32 = _find_passage_index(
+        passages,
+        title_terms=("sale of goods",),
+        anchor_terms=("/sec-32",),
+    )
+    sog55 = _find_passage_index(
+        passages,
+        title_terms=("sale of goods",),
+        anchor_terms=("/sec-55",),
+    )
+    sog56 = _find_passage_index(
+        passages,
+        title_terms=("sale of goods",),
+        anchor_terms=("/sec-56",),
+    )
+    msmed18 = _find_passage_index(
+        passages,
+        title_terms=("micro, small and medium enterprises",),
+        anchor_terms=("/sec-18",),
+    )
+    if contract37 is None and contract73 is None and sog31 is None and sog32 is None and sog55 is None and sog56 is None and msmed18 is None:
+        return []
+    goods_phrase = "defective goods/materials" if _has_any_term(query, ("defective", "quality issue", "material", "materials")) else "goods delivery"
+    lines = ["**Short answer**"]
+    if sog31 is not None:
+        lines.append(
+            f"For a supplier delivering {goods_phrase} and refusing refund, treat this as a sale-of-goods plus contract dispute, because the Sale of Goods Act source fixes seller and buyer duties around delivery and acceptance [{sog31}]."
+        )
+    elif sog32 is not None:
+        lines.append(
+            f"For a supplier delivering {goods_phrase}, the Sale of Goods Act source should be checked for delivery/payment sequencing before choosing the remedy [{sog32}]."
+        )
+    if contract73 is not None:
+        lines.append(
+            f"The Indian Contract Act damages source is relevant for compensation caused by breach, so the loss calculation must be tied to the contract, invoice, and proof of defect [{contract73}]."
+        )
+    elif contract37 is not None:
+        lines.append(
+            f"The Indian Contract Act performance source is relevant because each party's obligation still turns on the written contract and delivery terms [{contract37}]."
+        )
+    if sog55 is not None or sog56 is not None:
+        cite = sog56 if _has_any_term(query, ("refund", "damages", "quality issue", "defective")) and sog56 is not None else sog55
+        lines.append(
+            f"The Sale of Goods Act remedy source should be compared for price, damages, or non-acceptance facts after checking whether the goods were accepted or rejected in writing [{cite}]."
+        )
+    if msmed18 is not None:
+        lines.append(
+            f"If the supplier or buyer is MSME/Udyam registered, keep the MSMED Facilitation Council route separate from the ordinary commercial suit or arbitration route [{msmed18}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = contract73 if contract73 is not None else sog56 if sog56 is not None else sog55 if sog55 is not None else sog31 if sog31 is not None else sog32 if sog32 is not None else contract37 if contract37 is not None else msmed18
+    lines.append(
+        f"- Send a written defect/rejection or refund notice with the purchase order, invoice, delivery challan, inspection/photos, defect report, emails, and loss calculation before choosing arbitration, commercial/civil court, or MSME Facilitation Council if applicable [{action_cite}]."
+    )
+    return lines
+
+
+def _gst_itc_mismatch_template_lines(query: str, passages: list[dict]) -> list[str]:
+    sec16 = _find_passage_index(
+        passages,
+        title_terms=("central goods and services tax",),
+        anchor_terms=("/sec-16",),
+    )
+    sec41 = _find_passage_index(
+        passages,
+        title_terms=("central goods and services tax",),
+        anchor_terms=("/sec-41",),
+    )
+    sec73 = _find_passage_index(
+        passages,
+        title_terms=("central goods and services tax",),
+        anchor_terms=("/sec-73",),
+    )
+    if sec16 is None and sec41 is None and sec73 is None:
+        return []
+    has_2a_3b = _has_any_term(query, ("gstr 2a", "gstr-2a", "2a")) and _has_any_term(query, ("gstr 3b", "gstr-3b", "3b"))
+    issue_phrase = "GSTR-3B/GSTR-2A ITC mismatch" if has_2a_3b else "ITC reversal or mismatch issue"
+    lines = ["**Short answer**"]
+    if sec16 is not None:
+        lines.append(
+            f"For this {issue_phrase}, start with Section 16 of the CGST Act because it is the input-tax-credit eligibility source [{sec16}]."
+        )
+    if sec41 is not None:
+        lines.append(
+            f"If the officer asks for ITC reversal, check the Section 41 CGST source for input-tax-credit availment and reversal framing [{sec41}]."
+        )
+    elif sec73 is not None:
+        lines.append(
+            f"If the issue is converted into a tax demand notice, the Section 73 CGST source is the non-fraud demand route to check [{sec73}]."
+        )
+    lines.append("**What you can do next**")
+    if sec16 is not None:
+        reconciliation_phrase = "GSTR-2A/3B reconciliation" if has_2a_3b else "invoice and payment reconciliation"
+        lines.append(
+            f"- In the reply, map each invoice to Section 16 ITC conditions and attach {reconciliation_phrase}, tax invoice, payment, and supplier proof [{sec16}]."
+        )
+    elif sec41 is not None:
+        reconciliation_phrase = "GSTR-2A/3B reconciliation" if has_2a_3b else "invoice and payment reconciliation"
+        lines.append(
+            f"- In the reply, map the ITC availment and reversal facts to the Section 41 source and attach {reconciliation_phrase}, tax invoice, payment, and supplier proof [{sec41}]."
+        )
+    elif sec73 is not None:
+        lines.append(
+            f"- If a non-fraud tax demand notice has been issued, prepare the reply with the notice, reconciliation, tax invoice, payment, and supplier proof under the Section 73 source [{sec73}]."
+        )
+    return lines
+
+
+def _non_compete_template_lines(query: str, passages: list[dict]) -> list[str]:
+    sec27 = _find_passage_index(
+        passages,
+        title_terms=("indian contract",),
+        anchor_terms=("/sec-27",),
+    )
+    if sec27 is None:
+        return []
+    duration = "two-year " if _has_any_term(query, ("2 year", "2-year", "two year", "two-year")) else ""
+    lines = [
+        "**Short answer**",
+        f"For a {duration}employment non-compete, Section 27 of the Indian Contract Act is the restraint-of-trade source to check first [{sec27}].",
+        f"An agreement by which anyone is restrained from exercising a lawful profession, trade, or business is void to that extent under the Contract Act source [{sec27}].",
+        "**What you can do next**",
+        f"- Review whether the clause is a post-employment restraint of trade and preserve the employment contract, offer letter, and exit documents [{sec27}].",
+    ]
+    return lines
+
+
 def _mining_displacement_template_lines(passages: list[dict]) -> list[str]:
     larr41 = _find_passage_index(passages, title_terms=("right to fair compensation",), anchor_terms=("/sec-41",))
     larr31 = _find_passage_index(passages, title_terms=("right to fair compensation",), anchor_terms=("/sec-31",))
@@ -1047,6 +1697,97 @@ def _mining_displacement_template_lines(passages: list[dict]) -> list[str]:
             f"Collect acquisition notices, award papers, village displacement lists, rehabilitation package records, and file first with the Collector/R&R authority and DLSA [{main_cite}]."
         ),
     ])
+    return lines
+
+
+def _mining_gram_sabha_noc_template_lines(query: str, passages: list[dict]) -> list[str]:
+    minor_mineral = _has_any_term(query, (
+        "minor mineral", "minor minerals", "sand mining", "sand lease",
+        "stone quarry", "quarry lease", "quarry",
+    ))
+    land_or_acquisition = _has_any_term(query, (
+        "land acquisition", "land acquired", "acquired for", "coal block",
+        "land taken", "taken my land", "land taken for mining", "taken for mining",
+        "displacement", "rehabilitation", "resettlement", "submerge", "submerged",
+    ))
+    pesa_minor = _find_passage_index(
+        passages,
+        title_terms=("panchayats (extension", "pesa"),
+        anchor_terms=("/sec-4-c",),
+    )
+    pesa_land = _find_passage_index(
+        passages,
+        title_terms=("panchayats (extension", "pesa"),
+        anchor_terms=("/sec-4-b",),
+    )
+    pesa = (pesa_minor if minor_mineral and not land_or_acquisition else None) or pesa_land or _find_passage_index(
+        passages,
+        title_terms=("panchayats (extension", "pesa"),
+        anchor_terms=("/sec-4",),
+    )
+    mmdr = _find_passage_index(
+        passages,
+        title_terms=("mines and minerals",),
+    )
+    fca2 = _find_passage_index(
+        passages,
+        title_terms=("forest (conservation",),
+        anchor_terms=("/sec-2",),
+    )
+    larr41 = _find_passage_index(
+        passages,
+        title_terms=("right to fair compensation",),
+        anchor_terms=("/sec-41",),
+    )
+    if land_or_acquisition and pesa is None and larr41 is None:
+        return []
+    if pesa is None and mmdr is None and fca2 is None and larr41 is None:
+        return []
+    main_cite = larr41 if land_or_acquisition and larr41 is not None else pesa if pesa is not None else fca2 if fca2 is not None else mmdr if mmdr is not None else larr41
+    lines = ["**Short answer**"]
+    if minor_mineral and not land_or_acquisition:
+        if pesa is not None:
+            lines.append(
+                f"For a sand, quarry, or minor-mineral lease in a Scheduled Area, the PESA source is the Gram Sabha recommendation source to check first [{pesa}]."
+            )
+    elif land_or_acquisition:
+        if pesa is not None:
+            lines.append(
+                f"First verify whether the affected village is in a Scheduled Area; if yes, the PESA source is the Gram Sabha/Palli Sabha consultation source to check before treating the project process as complete [{pesa}]."
+            )
+        if larr41 is not None:
+            lines.append(
+                f"For land acquisition or displacement in a Scheduled Area, the RFCTLARR section 41 source is the specific Scheduled Area rehabilitation and resettlement safeguard to check [{larr41}]."
+            )
+    elif pesa is not None:
+        lines.append(
+            f"For a bauxite or mining NOC in a Scheduled Area where Gram Sabha resolution is missing, the PESA source is the Gram Sabha / Scheduled Area source to check first [{pesa}]."
+        )
+    if fca2 is not None:
+        lines.append(
+            f"If forest land or forest clearance is involved, the Forest Conservation Act source is a separate prior-approval source and should be checked with the project papers [{fca2}]."
+        )
+    if mmdr is not None:
+        lines.append(
+            f"Use the MMDR/mining source to identify the mining lease, mineral, operator, and government approval record; do not treat it as replacing the Gram Sabha or forest-clearance issue [{mmdr}]."
+        )
+    if larr41 is not None and not land_or_acquisition and not minor_mineral:
+        lines.append(
+            f"If land acquisition or displacement is part of the project, the RFCTLARR Scheduled Area source adds a rehabilitation and resettlement track [{larr41}]."
+        )
+    lines.append("**What you can do next**")
+    if minor_mineral and not land_or_acquisition:
+        lines.append(
+            f"- Ask for the mining or quarry lease file, Gram Sabha/Palli Sabha recommendation and minutes, mineral-department approval, site map, and any forest or pollution clearance papers; then take the record to the Collector, mining department, tribal-welfare authority, DLSA, or court/NGT route depending on which approval is missing [{main_cite}]."
+        )
+    elif land_or_acquisition:
+        lines.append(
+            f"- Ask for acquisition notices, project papers, Palli Sabha/Gram Sabha notices and minutes, affected-family lists, R&R records, and forest/mining approvals; then take the record to the Collector/R&R authority, tribal-welfare authority, DLSA, or court/NGT route depending on which safeguard is actually missing [{main_cite}]."
+        )
+    else:
+        lines.append(
+            f"- Ask for the NOC file, mining lease/project proposal, Gram Sabha notice and minutes, forest-clearance papers, and affected-village list; then challenge the NOC through the Collector/tribal-welfare authority, forest authority, DLSA, or court/NGT route depending on which approval is missing [{main_cite}]."
+        )
     return lines
 
 
@@ -1149,29 +1890,155 @@ def _tribal_land_transfer_template_lines(query: str, passages: list[dict]) -> li
     )
     cnt71 = _find_passage_index(passages, title_terms=("chota nagpur tenancy",), anchor_terms=("sec-71-a",))
     schedule = _find_passage_index(passages, title_terms=("constitution of india",), anchor_terms=("/sec-244",))
-    if cnt_transfer is None and cnt71 is None:
+    pesa = _find_passage_index(
+        passages,
+        title_terms=("panchayats (extension", "pesa"),
+        anchor_terms=("/sec-4",),
+    )
+    ap_case = _find_passage_index(
+        passages,
+        title_terms=("government of andhra pradesh", "pratap karan"),
+    )
+    if cnt_transfer is None and cnt71 is None and ap_case is None and schedule is None and pesa is None:
         return []
     restoration_cite = cnt71 or cnt_transfer
     mortgage_phrase = "mortgage/sahukar" if _has_any_term(query, ("mortgage", "sahukar", "moneylender")) else "transfer"
+    mutation_context = _has_any_term(query, ("mutation", "mutation record", "patwari", "khata", "record changed"))
     lines = ["**Short answer**"]
     if cnt_transfer is not None:
         lines.append(
             f"In Jharkhand, a non-tribal {mortgage_phrase} land dispute should be checked under tribal-land transfer restrictions first, "
             f"not only as a general SC/ST offence or civil possession dispute [{cnt_transfer}]."
         )
+    elif ap_case is not None:
+        lines.append(
+            f"For an Andhra Pradesh agency-area tribal land transfer to a non-tribal, treat this first as a Scheduled Area/tribal land-transfer dispute, not just mutation or ordinary civil possession [{ap_case}]."
+        )
     if cnt71 is not None:
         lines.append(
             f"Ask the Deputy Commissioner/SAR or revenue restoration forum to examine restoration if the land went to a non-tribal contrary to the Chota Nagpur Tenancy Act route [{restoration_cite}]."
         )
     if schedule is not None:
+        if mutation_context and cnt_transfer is None and ap_case is None:
+            lines.append(
+                f"Treat the mutation/patwari change as a possible state Scheduled Area or tribal land-transfer problem first; the exact Odisha/state regulation has to be verified from the district record, but Article 244 is the constitutional Scheduled Area starting point in this index [{schedule}]."
+            )
+        elif cnt_transfer is None and ap_case is None:
+            lines.append(
+                f"Treat this first as a possible state Scheduled Area or tribal land-transfer problem, not only as an ordinary mutation or civil possession dispute; Article 244 is the constitutional Scheduled Area starting point in this index [{schedule}]."
+            )
         lines.append(
             f"Also preserve the Scheduled Area/tribal-status facts because the constitutional Scheduled Area framework can affect the forum and remedy [{schedule}]."
         )
+    if pesa is not None:
+        lines.append(
+            f"Where the village is in a Scheduled Area, the PESA source is another official source to verify for local Scheduled Area governance and Gram Sabha facts [{pesa}]."
+        )
     lines.extend([
         "**What you can do next**",
-        (
+    ])
+    if restoration_cite is not None:
+        lines.append(
             f"Use the land papers, mortgage or possession proof, tribal-status proof, and non-tribal transferee details to seek Deputy Commissioner/SAR restoration under the Chota Nagpur Tenancy Act route [{restoration_cite}]."
-        ),
+        )
+    else:
+        action_cite = schedule if schedule is not None else ap_case
+        lines.append(
+            f"- Collect the khata/passbook, mutation order, transfer order or registered deed, tribal-status proof, non-tribal transferee details, and tehsildar/revenue correspondence, then ask the revenue/Collector or tribal-welfare authority to verify the state Scheduled Area land-transfer or restoration route [{action_cite}]."
+        )
+    return lines
+
+
+def _forest_rights_template_lines(query: str, passages: list[dict]) -> list[str]:
+    fra3 = _find_passage_index(
+        passages,
+        title_terms=("scheduled tribes and other traditional forest dwellers", "forest rights"),
+        anchor_terms=("/sec-3",),
+    )
+    fra4 = _find_passage_index(
+        passages,
+        title_terms=("scheduled tribes and other traditional forest dwellers", "forest rights"),
+        anchor_terms=("/sec-4",),
+    )
+    fra5 = _find_passage_index(
+        passages,
+        title_terms=("scheduled tribes and other traditional forest dwellers", "forest rights"),
+        anchor_terms=("/sec-5",),
+    )
+    fra6 = _find_passage_index(
+        passages,
+        title_terms=("scheduled tribes and other traditional forest dwellers", "forest rights"),
+        anchor_terms=("/sec-6",),
+    )
+    fra_header = _find_passage_index(
+        passages,
+        title_terms=("scheduled tribes and other traditional forest dwellers", "forest rights"),
+        anchor_terms=("header",),
+    )
+    pesa = _find_passage_index(passages, title_terms=("panchayats (extension", "pesa"), anchor_terms=("/sec-4",))
+    if fra3 is None and fra4 is None and fra5 is None and fra6 is None and fra_header is None and pesa is None:
+        return []
+
+    claim_refusal = (
+        _has_any_term(query, ("rejected", "refused", "refusal", "without reason", "not giving", "not issuing", "no signature", "sdlc", "dlc"))
+        and _has_any_term(query, ("ifr", "claim", "claim form", "patta", "title", "husband signature", "joint title"))
+    )
+    title_context = _has_any_term(query, ("ifr", "patta", "title", "joint title", "husband signature", "widow", "woman"))
+    produce_context = _has_any_term(query, ("bamboo", "tendu", "mahua", "minor forest produce", "forest produce"))
+    cfr_project_context = _has_any_term(query, ("cfr", "community forest", "community forest land", "mining", "mine", "company"))
+    guard_interference = _has_any_term(query, ("forest guard", "forest guards", "forest officer", "cutting", "seized", "reserved", "invalid"))
+
+    lines = ["**Short answer**"]
+    if produce_context and fra3 is not None:
+        lines.append(
+            f"For bamboo/tendu or other minor forest produce, check the FRA source first because it covers forest-rights claims including minor forest produce/community forest rights [{fra3}]."
+        )
+    if cfr_project_context and (fra3 is not None or fra5 is not None):
+        cfr_cite = fra3 if fra3 is not None else fra5
+        lines.append(
+            f"For a CFR/community-forest interference issue, keep the dispute on the FRA/community forest-rights route before treating it as an ordinary mining or revenue complaint [{cfr_cite}]."
+        )
+    if claim_refusal:
+        claim_cite = fra4 if fra4 is not None else fra6 if fra6 is not None else fra_header if fra_header is not None else fra3 if fra3 is not None else fra5
+        if fra4 is not None or fra6 is not None:
+            lines.append(
+                f"For an IFR/patta/title refusal, keep it on the FRA claim route and ask for the written reason or order instead of treating it as a general caste complaint [{claim_cite}]."
+            )
+        elif fra_header is not None:
+            lines.append(
+                f"The retrieved FRA arrangement identifies recognition/vesting of forest rights and the authorities/procedure chapter as the provisions to verify for an IFR claim refusal [{fra_header}]."
+            )
+        else:
+            lines.append(
+                f"The retrieved index did not surface the exact FRA title/procedure section for this refusal; use the Forest Rights Act route as the issue label and get the written SDLC/DLC reason before deciding the next filing [{claim_cite}]."
+            )
+    elif title_context and (fra3 is not None or fra5 is not None):
+        title_cite = fra3 if fra3 is not None else fra5
+        lines.append(
+            f"For FRA patta/title papers, keep the file with the Forest Rights Act route and preserve the Gram Sabha/FRC and title records before escalating [{title_cite}]."
+        )
+    if _has_any_term(query, ("sdlc", "dlc", "gram sabha passed", "rejected", "without reason")) and fra6 is not None:
+        lines.append(
+            f"If the Gram Sabha/FRC supported the claim but SDLC/DLC rejected or delayed it, use the FRA procedure source to challenge the refusal through the SDLC/DLC/Collector channel [{fra6}]."
+        )
+    if guard_interference:
+        guard_cite = fra5 if fra5 is not None else fra3 if fra3 is not None else fra6
+        lines.append(
+            f"For forest-guard interference, preserve photos, seizure/cutting details, patta papers, and Gram Sabha/FRC records before escalating through the FRA institutions [{guard_cite}]."
+        )
+    if pesa is not None:
+        lines.append(
+            f"If the village is in a Scheduled Area, also verify whether the PESA Gram Sabha source applies alongside the FRA papers [{pesa}]."
+        )
+
+    action_cite = fra6 if fra6 is not None else fra4 if fra4 is not None else fra_header if fra_header is not None else fra3 if fra3 is not None else fra5 if fra5 is not None else pesa
+    if claim_refusal:
+        next_step = "Collect the claim form, Gram Sabha/FRC resolution, SDLC/DLC order or refusal, patta/title papers, and witness names; then approach the Gram Sabha/FRC, SDLC/DLC/Collector, tribal welfare office, or DLSA with those papers"
+    else:
+        next_step = "Collect the patta/CFR title, Gram Sabha/FRC records, photos/video, seizure or cutting notice, and witness names; then approach the Gram Sabha/FRC, SDLC/DLC/Collector, tribal welfare office, or DLSA with those papers"
+    lines.extend([
+        "**What you can do next**",
+        f"- {next_step} [{action_cite}].",
     ])
     return lines
 
@@ -1213,7 +2080,7 @@ def _tribal_displacement_template_lines(passages: list[dict]) -> list[str]:
     return lines
 
 
-def _cab_aggregator_driver_template_lines(passages: list[dict]) -> list[str]:
+def _cab_aggregator_driver_template_lines(query: str, passages: list[dict]) -> list[str]:
     contract = _find_passage_index(passages, title_terms=("motor vehicle aggregator",), anchor_terms=("driver-service-contract",))
     transparency = _find_passage_index(passages, title_terms=("motor vehicle aggregator",), anchor_terms=("app-transparency-grievance",))
     fare = _find_passage_index(passages, title_terms=("motor vehicle aggregator",), anchor_terms=("non-discrimination-driver-fare",))
@@ -1221,6 +2088,10 @@ def _cab_aggregator_driver_template_lines(passages: list[dict]) -> list[str]:
     if contract is None and transparency is None and fare is None:
         return []
     main_cite = contract or transparency or fare
+    discrimination_context = _has_any_term(query, (
+        "racist", "race", "language", "hindi", "regional", "north indian",
+        "marathi", "tamil", "kannada", "bengali", "discrimination", "bias",
+    ))
     lines = ["**Short answer**"]
     if contract is not None:
         lines.append(
@@ -1232,20 +2103,24 @@ def _cab_aggregator_driver_template_lines(passages: list[dict]) -> list[str]:
         )
     if transparency is not None:
         lines.append(
-            f"Also ask for the rating, trip, incentive, fare-share, and charge disclosures because the aggregator guideline source requires transparency in app operations and driver-facing disclosures [{transparency}]."
+            f"For the cab-driver account issue, ask the aggregator for rating, trip, incentive, fare-share, charge, and driver-facing app disclosures [{transparency}]."
         )
     if fare is not None:
         lines.append(
             f"If the rating/deactivation is linked to language or regional bias, preserve the racist comment or trip record and add the guideline non-discrimination point to the platform and transport-authority grievance [{fare}]."
         )
-    elif article14 is not None:
+    elif article14 is not None and discrimination_context:
         lines.append(
-            f"If a state transport authority is involved, preserve the racist comment or trip record as an equality fact for that authority-facing grievance [{article14}]."
+            f"If a state transport authority is involved, preserve the language or regional-bias comment and trip record as equality facts for that authority-facing grievance [{article14}]."
+        )
+    if article14 is not None and discrimination_context:
+        lines.append(
+            f"The Article 14 source covers equality before law and equal protection, so keep the bias facts only if a transport authority handles the cab-driver grievance [{article14}]."
         )
     lines.extend([
         "**What you can do next**",
         (
-            f"Ask the aggregator in writing for the service-provider contract and the app/website disclosures on rating, fare share, incentives, charges, and driver-facing information [{contract or main_cite}][{transparency or main_cite}]."
+            f"- Ask the aggregator in writing for the service-provider contract and the app/website disclosures on rating, fare share, incentives, charges, and driver-facing information [{contract or main_cite}][{transparency or main_cite}]."
         ),
     ])
     return lines
@@ -1257,7 +2132,7 @@ def _online_gambling_template_lines(query: str, passages: list[dict]) -> list[st
     tn16 = _find_passage_index(passages, title_terms=("tamil nadu prohibition of online gambling",), anchor_terms=("/sec-16",))
     skill = _find_passage_index(passages, title_terms=("public gambling",), anchor_terms=("/sec-12",))
     public_street = _find_passage_index(passages, title_terms=("public gambling",), anchor_terms=("/sec-13",))
-    if tn7 is None and skill is None:
+    if tn7 is None and skill is None and public_street is None:
         return []
     lines = ["**Short answer**"]
     if tn7 is not None:
@@ -1270,11 +2145,11 @@ def _online_gambling_template_lines(query: str, passages: list[dict]) -> list[st
         )
     if skill is not None:
         lines.append(
-            f"The Public Gambling Act source has a game-of-mere-skill carve-out, so legality cannot be decided only from the word rummy or fantasy game without checking the state law and the actual stakes/game design [{skill}]."
+            f"Section 12 says the Public Gambling Act does not apply to any game of mere skill wherever played [{skill}]."
         )
     elif public_street is not None:
         lines.append(
-            f"The Public Gambling Act source treats non-skill gaming for money or valuable things as a gambling-law issue, not a routine wallet dispute [{public_street}]."
+            f"Section 13 concerns playing for money or other valuable thing in a public place where the game is not a game of mere skill [{public_street}]."
         )
     if tn16 is not None:
         lines.append(
@@ -1292,13 +2167,90 @@ def _online_gambling_template_lines(query: str, passages: list[dict]) -> list[st
         action_cites.append(public_street)
     cite_text = "".join(f"[{idx}]" for idx in action_cites[:3])
     lines.append(
-        "- First classify the facts against the sources: whether the game is online gambling or an online game of chance, "
-        f"whether money or other stakes were involved, whether the user was in Tamil Nadu, and whether the game-of-skill carve-out could apply {cite_text}."
+        "- Check whether the app game is treated as mere skill or as play for money or other valuable thing before treating it as a recoverable wallet dispute "
+        f"{cite_text}."
     )
     return lines
 
 
-def _caste_certificate_template_lines(passages: list[dict]) -> list[str]:
+def _digital_kyc_account_freeze_template_lines(query: str, passages: list[dict]) -> list[str]:
+    consumer35 = _find_passage_index(
+        passages,
+        title_terms=("consumer protection",),
+        anchor_terms=("/sec-35", "/sec-2", "/sec-38"),
+    )
+    it79 = _find_passage_index(
+        passages,
+        title_terms=("information technology",),
+        anchor_terms=("/sec-79",),
+    )
+    pmla = _find_passage_index(
+        passages,
+        title_terms=("prevention of money laundering",),
+        anchor_terms=("/sec-2", "/sec-5", "/sec-8", "/sec-17", "/sec-50"),
+    )
+    if consumer35 is None and it79 is None and pmla is None:
+        return []
+    platform_phrase = "online gaming or wallet app" if _has_any_term(query, ("game", "gaming", "betting", "rummy", "dream11", "parimatch")) else "digital platform"
+    money_phrase = "the stuck balance" if _has_any_term(query, ("80k", "50k", "lakh", "money", "balance", "fund")) else "the account funds"
+    lines = ["**Short answer**"]
+    if pmla is not None:
+        lines.append(
+            f"If the {platform_phrase} says the account is frozen for KYC, suspicious-transaction, AML, or FIU reasons, the PMLA source is the AML/freeze source to check before treating it as only a refund dispute [{pmla}]."
+        )
+    if consumer35 is not None:
+        lines.append(
+            f"If the platform is simply withholding {money_phrase} or not responding to a KYC ticket, the Consumer Protection Act source is the service-deficiency complaint route to check [{consumer35}]."
+        )
+    if it79 is not None:
+        lines.append(
+            f"The IT Act intermediary/platform source is relevant for the platform-grievance side, so preserve ticket numbers and the account-status notice separately from the money claim [{it79}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = consumer35 if consumer35 is not None else pmla if pmla is not None else it79
+    lines.append(
+        f"- Send a written platform grievance asking for the exact KYC/freeze reason, account ID, balance, transaction IDs, and deadline to resolve; if unresolved, use the consumer forum/grievance route and add cyber/police only if fraud or unauthorized transfer facts exist [{action_cite}]."
+    )
+    return lines
+
+
+def _mgnrega_wage_template_lines(query: str, passages: list[dict]) -> list[str]:
+    grievance = _find_passage_index(
+        passages,
+        title_terms=("mahatma gandhi national rural employment guarantee",),
+        anchor_terms=("/sec-19",),
+    )
+    social_audit = _find_passage_index(
+        passages,
+        title_terms=("mahatma gandhi national rural employment guarantee",),
+        anchor_terms=("/sec-17",),
+    )
+    if grievance is None and social_audit is None:
+        return []
+    days_match = re.search(r"\b(\d{1,3})\s+days?\b", query)
+    work_phrase = f"{days_match.group(1)} days of NREGA work" if days_match else "NREGA work"
+    lines = ["**Short answer**"]
+    if grievance is not None:
+        lines.append(
+            f"For {work_phrase} with wages pending, Section 19 of the MGNREGA source is the grievance-redressal route [{grievance}]."
+        )
+    if social_audit is not None:
+        lines.append(
+            f"The Gram Sabha social-audit source can help check muster rolls and wage-payment records for NREGA work [{social_audit}]."
+        )
+    lines.append("**What you can do next**")
+    if grievance is not None:
+        lines.append(
+            f"- Submit a written NREGA wage complaint with job card, work dates, muster roll details, and pending amount to the programme officer or district grievance authority [{grievance}]."
+        )
+    elif social_audit is not None:
+        lines.append(
+            f"- Use the social-audit route to ask for muster roll and payment records for the NREGA work [{social_audit}]."
+        )
+    return lines
+
+
+def _caste_certificate_template_lines(query: str, passages: list[dict]) -> list[str]:
     article341 = _find_passage_index(passages, title_terms=("constitution of india",), anchor_terms=("/sec-341",))
     article342 = _find_passage_index(passages, title_terms=("constitution of india",), anchor_terms=("/sec-342",))
     rti6 = _find_passage_index(passages, title_terms=("right to information act",), anchor_terms=("/sec-6",))
@@ -1306,13 +2258,36 @@ def _caste_certificate_template_lines(passages: list[dict]) -> list[str]:
     rti19 = _find_passage_index(passages, title_terms=("right to information act",), anchor_terms=("/sec-19",))
     if article341 is None and article342 is None and rti6 is None:
         return []
-    main_cite = article341 if article341 is not None else article342 if article342 is not None else rti6
+    is_st_query = _has_any_term(query, (
+        "st certificate", "scheduled tribe", "scheduled tribes", "tribal",
+        "adivasi", "tribe certificate", "tribal certificate",
+    ))
+    main_cite = (
+        article342 if is_st_query and article342 is not None
+        else article341 if article341 is not None
+        else article342 if article342 is not None
+        else rti6
+    )
+    info_cite = rti19 if rti19 is not None else rti7 if rti7 is not None else rti6
     lines = ["**Short answer**"]
-    if article341 is not None:
+    if is_st_query and article342 is not None:
+        st_fact_phrase = (
+            "a delayed ST certificate needed for your daughter's exam form"
+            if "daughter" in query and _has_any_term(query, ("exam form", "exam", "school", "college"))
+            else "an ST certificate delay or rejection"
+        )
+        lines.append(
+            f"For {st_fact_phrase}, Article 342 is the Scheduled Tribes source to verify the State-wise ST status [{article342}]."
+        )
+        if info_cite is not None:
+            lines.append(
+                f"For an ST certificate pending with the tehsildar, use Article 342 for Scheduled Tribes and the RTI appeal source for the pending record [{article342}][{info_cite}]."
+            )
+    elif article341 is not None:
         lines.append(
             f"For an SC caste-certificate rejection, Article 341 is the starting source because Scheduled Castes are specified for each State or Union Territory by Presidential notification and later Parliamentary change [{article341}]."
         )
-    if article342 is not None:
+    if article342 is not None and not is_st_query:
         lines.append(
             f"If the claim is actually ST rather than SC, Article 342 is the corresponding state-wise Scheduled Tribe source [{article342}]."
         )
@@ -1329,17 +2304,21 @@ def _caste_certificate_template_lines(passages: list[dict]) -> list[str]:
             f"If the office does not provide information, the RTI first-appeal route is available under the RTI source [{rti19}]."
         )
     lines.append("**What you can do next**")
-    info_cite = rti19 if rti19 is not None else rti7 if rti7 is not None else rti6
     if info_cite is not None and main_cite is not None:
         next_cites = f"[{main_cite}][{info_cite}]"
     elif main_cite is not None:
         next_cites = f"[{main_cite}]"
     else:
         next_cites = f"[{info_cite}]"
-    lines.append(
-        "- First verify the claimed community against the state-wise SC/ST list source; if the rejection order lacks reasons, "
-        f"use the RTI request or first-appeal route to obtain the authority's record before filing the state-law appeal {next_cites}."
-    )
+    if is_st_query and article342 is not None and info_cite is not None:
+        lines.append(
+            f"- Use the Article 342 Scheduled Tribes source and RTI Act appeal source when asking the tehsildar for written reasons and the pending certificate record [{article342}][{info_cite}]."
+        )
+    else:
+        lines.append(
+            "- First verify the claimed community against the state-wise SC/ST list source; if the rejection order lacks reasons, "
+            f"use the RTI request or first-appeal route to obtain the authority's record before filing the state-law appeal {next_cites}."
+        )
     return lines
 
 
@@ -1510,6 +2489,87 @@ def _discriminatory_retrenchment_template_lines(passages: list[dict]) -> list[st
         (
             f"Make a worker list with joining dates, termination dates, who was kept, and same-site work proof to support the Industrial Disputes Act retrenchment-selection claim [{main_cite}]."
         ),
+    ])
+    return lines
+
+
+def _employment_retaliation_pip_template_lines(query: str, passages: list[dict]) -> list[str]:
+    id2a = _find_passage_index(passages, title_terms=("industrial disputes",), anchor_terms=("/sec-2A",))
+    id25f = _find_passage_index(passages, title_terms=("industrial disputes",), anchor_terms=("/sec-25F",))
+    posh9 = _find_passage_index(passages, title_terms=("sexual harassment of women at workplace",), anchor_terms=("/sec-9",))
+    if id2a is None and id25f is None and posh9 is None:
+        return []
+
+    lines = ["**Short answer**"]
+    if id2a is not None:
+        lines.append(
+            f"A HR complaint followed by a PIP or bad rating is not automatically a labour-court claim; the Industrial Disputes Act source becomes directly relevant if it turns into discharge, dismissal, retrenchment, or termination of an individual workman [{id2a}]."
+        )
+    if id25f is not None:
+        lines.append(
+            f"If the PIP is used for retrenchment or termination, separately check whether the Section 25F notice/compensation conditions are met [{id25f}]."
+        )
+    if posh9 is not None or _has_any_term(query, ("sexual harassment", "posh", "icc", "internal committee")):
+        cite = posh9 if posh9 is not None else id2a if id2a is not None else id25f
+        lines.append(
+            f"If the harassment complaint is actually a sexual-harassment/POSH complaint, keep that route separate from ordinary performance-management facts and ask for the Internal Committee/Local Committee path [{cite}]."
+        )
+    lines.append("**What you can do next**")
+    action_cites = [idx for idx in (id2a, id25f) if idx is not None]
+    if action_cites:
+        cite_text = "".join(f"[{idx}]" for idx in action_cites[:2])
+    else:
+        cite_text = f"[{posh9}]"
+    lines.append(
+        f"- Preserve the HR complaint, PIP or rating letter, emails, appraisal record, employment contract, and any termination notice; if the company terminates or retrenches you, take those papers to the labour officer/DLSA for the Industrial Disputes route {cite_text}."
+    )
+    return lines
+
+
+def _posh_retaliation_template_lines(query: str, passages: list[dict]) -> list[str]:
+    posh3 = _find_passage_index(
+        passages,
+        title_terms=("sexual harassment",),
+        anchor_terms=("/sec-3",),
+    )
+    posh9 = _find_passage_index(
+        passages,
+        title_terms=("sexual harassment",),
+        anchor_terms=("/sec-9",),
+    )
+    posh19 = _find_passage_index(
+        passages,
+        title_terms=("sexual harassment",),
+        anchor_terms=("/sec-19",),
+    )
+    posh4 = _find_passage_index(
+        passages,
+        title_terms=("sexual harassment",),
+        anchor_terms=("/sec-4",),
+    )
+    if posh3 is None and posh9 is None and posh19 is None and posh4 is None:
+        return []
+    lines = ["**Short answer**"]
+    if posh3 is not None:
+        lines.append(
+            f"Treat this as a workplace sexual-harassment/POSH route only if the HR complaint was about workplace sexual harassment; the POSH Act source is the harassment baseline to check [{posh3}]."
+        )
+    if posh9 is not None:
+        lines.append(
+            f"The POSH complaint source is relevant for the complaint route before the Internal Committee or Local Committee, so the HR complaint and PIP timeline should be preserved together [{posh9}]."
+        )
+    if posh19 is not None:
+        lines.append(
+            f"The employer-duties source matters for the workplace response after a complaint, including the records showing what HR or the employer did after the complaint [{posh19}]."
+        )
+    elif posh4 is not None:
+        lines.append(
+            f"If there is no functioning Internal Committee, the Internal Committee constitution source is relevant before treating the matter as an ordinary performance-review dispute [{posh4}]."
+        )
+    action_cite = posh9 if posh9 is not None else posh19 if posh19 is not None else posh4 if posh4 is not None else posh3
+    lines.extend([
+        "**What you can do next**",
+        f"- Preserve the HR/POSH complaint, PIP or rating letter, dates, manager messages, witnesses, and any Internal Committee details, then ask for the POSH/IC or Local Committee route in writing [{action_cite}].",
     ])
     return lines
 
@@ -1691,6 +2751,90 @@ def _decree_execution_attachment_template_lines(query: str, passages: list[dict]
             f"Questions between the parties about execution, discharge, or satisfaction of the decree stay with the court executing the decree, not a fresh property-title case [{cpc47}]."
         )
     lines.append("**What you can do next**")
+    return lines
+
+
+def _vakalatnama_change_template_lines(passages: list[dict]) -> list[str]:
+    cpc151 = _find_passage_index(
+        passages,
+        title_terms=("code of civil procedure",),
+        anchor_terms=("/sec-151",),
+    )
+    cpc153 = _find_passage_index(
+        passages,
+        title_terms=("code of civil procedure",),
+        anchor_terms=("/sec-153",),
+    )
+    cpc = cpc151 if cpc151 is not None else cpc153
+    if cpc is None:
+        cpc = _find_passage_index(passages, title_terms=("code of civil procedure",))
+    lsa = _find_passage_index(
+        passages,
+        title_terms=("legal services authorities",),
+        anchor_terms=("/sec-12",),
+    )
+    if cpc is None and lsa is None:
+        return []
+    lines = ["**Short answer**"]
+    if cpc is not None:
+        lines.append(
+            f"For changing advocate during a pending civil suit, the CPC source is the civil-court procedure source to check while filing the new vakalatnama or memo in the same case [{cpc}]."
+        )
+    if lsa is not None:
+        lines.append(
+            f"If you cannot afford the new lawyer or need help filing the change, the Legal Services Authorities Act source is the legal-aid eligibility route to check [{lsa}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = cpc if cpc is not None else lsa
+    lines.append(
+        f"- Keep the case number, next date, present advocate details, new advocate vakalatnama, any NOC/discharge communication, and fee/brief handover proof, then file it through the same court registry before the next effective hearing [{action_cite}]."
+    )
+    return lines
+
+
+def _writ_constitution_template_lines(query: str, passages: list[dict]) -> list[str]:
+    article226 = _find_passage_index(
+        passages,
+        title_terms=("constitution",),
+        anchor_terms=("/sec-226",),
+    ) or _find_passage_index_by_text(
+        passages,
+        text_terms=("article 226", "writ"),
+    )
+    article32 = _find_passage_index(
+        passages,
+        title_terms=("constitution",),
+        anchor_terms=("/sec-32",),
+    )
+    legal_aid = _find_passage_index(
+        passages,
+        title_terms=("legal services authorities",),
+        anchor_terms=("/sec-12",),
+    )
+    if article226 is None and article32 is None and legal_aid is None:
+        return []
+    lines = ["**Short answer**"]
+    if article226 is not None:
+        lines.append(
+            f"For a writ against a government officer or public authority, Article 226 is the High Court source to check; mandamus is usually about requiring performance of a public or legal duty, not a general complaint form [{article226}]."
+        )
+    if article32 is not None and _has_any_term(query, ("article 32", "supreme court", "fundamental right", "fundamental rights")):
+        lines.append(
+            f"Article 32 is the Supreme Court route for enforcement of fundamental rights; it is different from the broader High Court Article 226 route [{article32}]."
+        )
+    elif article32 is not None:
+        lines.append(
+            f"Article 32 is mainly the Supreme Court fundamental-right enforcement route, so most ordinary officer-refusal questions first need the High Court/alternate-remedy check [{article32}]."
+        )
+    if legal_aid is not None:
+        lines.append(
+            f"If filing help is needed, the Legal Services Authorities Act source is the legal-aid route to check before trying to draft a writ alone [{legal_aid}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = article226 if article226 is not None else article32 if article32 is not None else legal_aid
+    lines.append(
+        f"- Collect the written order/refusal, your representation and delivery proof, timeline, government-office details, urgency facts, and the exact relief requested before asking DLSA or a writ lawyer about maintainability, alternate remedy, and delay [{action_cite}]."
+    )
     return lines
 
 
@@ -1958,8 +3102,41 @@ def _creator_content_leak_template_lines(query: str, passages: list[dict]) -> li
     return lines
 
 
+def _is_child_or_csam_intimate_image_query(query: str) -> bool:
+    explicit_child_terms = (
+        "csam", "ai csam", "child sexual abuse material",
+        "child sexual image", "child sexual images",
+        "child porn", "child pornography", "pocso", "minor",
+        "under 18", "under eighteen",
+    )
+    if _has_any_term(query, explicit_child_terms):
+        return True
+    if _has_any_term(query, ("adult", "major", "colleague", "coworker", "co-worker")):
+        return False
+    child_age_patterns = (
+        r"\b(?:age|aged|is|was|i am|she is|he is)\s+([1-9]|1[0-7])\b",
+        r"\b([1-9]|1[0-7])\s*(?:year|years|yr|yrs)\s*old\b",
+        r"\b([1-9]|1[0-7])\s*(?:year|years|yr|yrs)\s+(?:girl|boy|child|minor|student)\b",
+        r"\b(?:girl|boy|child|minor|student)\s+(?:is\s+)?([1-9]|1[0-7])\b",
+    )
+    if any(re.search(pattern, query) for pattern in child_age_patterns):
+        return True
+    intimate_context = _has_any_term(query, (
+        "deepfake", "nude", "porn", "sex video", "intimate", "private photo",
+        "private picture", "morphed",
+    ))
+    return intimate_context and _has_any_term(query, (
+        "schoolmate", "girls in class", "boys in class", "minor girl",
+        "minor boy",
+    ))
+
+
 def _deepfake_lookalike_template_lines(query: str, passages: list[dict]) -> list[str]:
-    if not _has_any_term(query, ("deepfake", "lookalike", "look alike", "face same", "not me but face", "ai porn", "porn video")):
+    if not _has_any_term(query, (
+        "deepfake", "lookalike", "look alike", "face same", "not me but face",
+        "ai porn", "porn video", "csam", "child sexual abuse material",
+        "child sexual image", "child porn", "child pornography",
+    )):
         return []
     it66e = _find_passage_index(
         passages,
@@ -1971,15 +3148,28 @@ def _deepfake_lookalike_template_lines(query: str, passages: list[dict]) -> list
         title_terms=("information technology",),
         anchor_terms=("/sec-67A",),
     )
-    it67b = _find_passage_index(
+    it67b = _find_passage_index_by_text(
+        passages,
+        title_terms=("information technology",),
+        text_terms=("67b", "children", "sexually explicit"),
+    ) or _find_passage_index(
         passages,
         title_terms=("information technology",),
         anchor_terms=("/sec-67B",),
     )
-    pocso = _find_passage_index(
+    pocso_media = _find_passage_index_by_text(
         passages,
         title_terms=("protection of children from sexual offences", "pocso"),
-        anchor_terms=("/sec-13", "/sec-14", "/sec-15", "/sec-19"),
+        text_terms=("use of child", "pornographic purposes"),
+    ) or _find_passage_index(
+        passages,
+        title_terms=("protection of children from sexual offences", "pocso"),
+        anchor_terms=("/sec-13", "/sec-14", "/sec-15"),
+    )
+    pocso_reporting = _find_passage_index(
+        passages,
+        title_terms=("protection of children from sexual offences", "pocso"),
+        anchor_terms=("/sec-19",),
     )
     bns356 = _find_passage_index(
         passages,
@@ -2001,17 +3191,27 @@ def _deepfake_lookalike_template_lines(query: str, passages: list[dict]) -> list
         title_terms=("digital personal data protection",),
         anchor_terms=("/sec-8",),
     )
-    if it66e is None and it67a is None and it67b is None and pocso is None and bns356 is None and bns77 is None and bns351 is None and dpdp8 is None:
+    child_or_csam_context = _is_child_or_csam_intimate_image_query(query)
+    adult_or_unknown_source = any(source is not None for source in (it66e, it67a, bns356, bns77, bns351, dpdp8))
+    child_source = any(source is not None for source in (it67b, pocso_media, pocso_reporting))
+    if not child_or_csam_context and not adult_or_unknown_source:
+        return []
+    if child_or_csam_context and not child_source and not adult_or_unknown_source:
+        return []
+    if it66e is None and it67a is None and it67b is None and pocso_media is None and pocso_reporting is None and bns356 is None and bns77 is None and bns351 is None and dpdp8 is None:
         return []
     lines = ["**Short answer**"]
-    if pocso is not None:
-        minor_context = "a 15-year-old student targeted by schoolmate-made deepfake nude videos" if _has_any_term(query, ("i am 15", "schoolmate", "class")) else "the person affected is a minor"
+    if child_or_csam_context and pocso_media is not None:
         lines.append(
-            f"Because this involves {minor_context}, the POCSO source must be checked for child sexual image or reporting duties before treating this as only a generic deepfake complaint [{pocso}]."
+            f"The POCSO source covers use of a child in any form of media for pornographic purposes, including electronic or computer technology used for preparation, transmission, publishing, facilitation, or distribution of such material [{pocso_media}]."
         )
-    if it67b is not None:
+    elif child_or_csam_context and pocso_reporting is not None:
         lines.append(
-            f"The IT Act child sexually-explicit material source is directly relevant where a minor's nude or sexual deepfake is being made or circulated electronically [{it67b}]."
+            f"The POCSO reporting source is relevant for the child sexual-content complaint track, so preserve the links/screenshots and report the facts to police or the Special Juvenile Police Unit rather than treating it as only an adult cyber-harassment issue [{pocso_reporting}]."
+        )
+    if child_or_csam_context and it67b is not None:
+        lines.append(
+            f"The IT Act child sexually-explicit material source is directly relevant where a minor's sexual image, CSAM, or nude deepfake is being made or circulated electronically [{it67b}]."
         )
     elif it66e is not None:
         lines.append(
@@ -2038,10 +3238,17 @@ def _deepfake_lookalike_template_lines(query: str, passages: list[dict]) -> list
             f"The DPDP source matters only if an identifiable platform or data fiduciary handled your personal data; it imposes security-safeguard duties for personal data breach contexts [{dpdp8}]."
         )
     lines.append("**What you can do next**")
-    action_cite = pocso if pocso is not None else it67b if it67b is not None else it66e if it66e is not None else it67a if it67a is not None else bns356 if bns356 is not None else bns77 if bns77 is not None else bns351 if bns351 is not None else dpdp8
-    lines.append(
-        f"- Separate the child sexual-image issue, the electronic publication/privacy issue, and any threat or reputation issue, then match each part to the cited POCSO, IT Act, or BNS source that applies [{action_cite}]."
-    )
+    platform = "Telegram" if "telegram" in query else "WhatsApp" if "whatsapp" in query else "the platform"
+    if child_or_csam_context:
+        action_cite = it67b if it67b is not None else pocso_media if pocso_media is not None else pocso_reporting if pocso_reporting is not None else it66e if it66e is not None else it67a if it67a is not None else bns356 if bns356 is not None else bns77 if bns77 is not None else bns351 if bns351 is not None else dpdp8
+        lines.append(
+            f"- Preserve the {platform} links, screenshots, profile IDs, and timestamps, then report the CSAM/minor-image facts through the cyber portal/local police as a child sexual-image and electronic-publication issue using the cited IT Act or POCSO source [{action_cite}]."
+        )
+    else:
+        action_cite = it66e if it66e is not None else it67a if it67a is not None else bns356 if bns356 is not None else bns77 if bns77 is not None else bns351 if bns351 is not None else dpdp8
+        lines.append(
+            f"- Preserve the {platform} links, screenshots, profile IDs, and timestamps, then report it through the cyber portal/local police as a non-consensual deepfake, private-image, or electronic-publication issue using the cited IT Act/BNS/DPDP source that matches the facts [{action_cite}]."
+        )
     return lines
 
 
@@ -2171,6 +3378,10 @@ def _bank_otp_refund_template_lines(query: str, passages: list[dict]) -> list[st
             f"Do not stop at the bank saying it was your fault: the RBI Ombudsman source is the regulated-entity complaint route to preserve after the bank grievance step [{rbi}]."
         )
     lines.append("**What you can do next**")
+    action_cite = rbi if rbi is not None else it66d if it66d is not None else it66c if it66c is not None else bns_cheating
+    lines.append(
+        f"- Freeze the complaint trail: keep the transaction reference, bank complaint number, cyber complaint acknowledgement, device/SIM facts, and bank reply before escalating through the cited cyber and RBI route [{action_cite}]."
+    )
     return lines
 
 
@@ -2239,12 +3450,52 @@ def _senior_citizen_property_or_maintenance_template_lines(query: str, passages:
         title_terms=("transfer of property",),
         anchor_terms=("/sec-126",),
     )
+    pwdva19 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-19",),
+    )
+    pwdva12 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-12",),
+    )
     is_transfer = _has_any_term(query, ("gift", "gifted", "gift deed", "transfer", "transferred", "settlement deed", "cancel", "cancelled", "cancellation", "take back"))
     is_maintenance = _has_any_term(query, ("maintenance", "tribunal", "maximum", "pay maintenance"))
+    violence_context = _has_any_term(query, (
+        "beat", "beats", "beating", "hit", "hits", "violence", "abuse",
+        "assault", "injury", "threat", "threaten",
+    ))
+    family_context = _has_any_term(query, (
+        "mother", "father", "parent", "senior", "elderly", "68", "70", "75",
+        "daughter in law", "daughter-in-law", "bahu", "son", "relative",
+    ))
+    is_home_violence = violence_context and family_context
     if senior23 is None and senior9 is None and senior4 is None:
         return []
+    victim_phrase = (
+        "your 68-year-old mother"
+        if "mother" in query and _has_any_term(query, ("68", "68 years", "68-year"))
+        else "your mother"
+        if "mother" in query
+        else "the senior citizen"
+    )
+    actor_phrase = (
+        "daughter-in-law"
+        if _has_any_term(query, ("daughter in law", "daughter-in-law", "bahu"))
+        else "household relative"
+    )
+    transfer_asset = "house" if _has_any_term(query, ("house", "home")) else "flat" if "flat" in query else "property"
+    transferee_phrase = "son" if "son" in query else "transferee or relative"
     lines = ["**Short answer**"]
+    if is_home_violence and pwdva19 is not None:
+        lines.append(
+            f"For domestic violence against {victim_phrase} by a {actor_phrase}, also check the Domestic Violence Act residence-order source because a Magistrate may pass a residence order when domestic violence is shown [{pwdva19}]."
+        )
     if is_transfer and senior23 is not None:
+        lines.append(
+            f"For {transfer_asset} gifted or transferred to a {transferee_phrase} where basic amenities or physical needs are not being provided, Section 23 of the Senior Citizens Act is the transfer-void route to check [{senior23}]."
+        )
         lines.append(
             f"The Senior Citizens Act source is the first route to check: a transfer by gift or otherwise can be declared void by the Tribunal if the transferee fails to provide the promised basic amenities or physical needs [{senior23}]."
         )
@@ -2261,7 +3512,11 @@ def _senior_citizen_property_or_maintenance_template_lines(query: str, passages:
             f"The Senior Citizens Act source gives the parent/senior-citizen maintenance obligation route where children or relatives with sufficient means neglect support [{senior4}]."
         )
     lines.append("**What you can do next**")
-    if is_transfer and senior23 is not None:
+    if is_home_violence and pwdva12 is not None:
+        lines.append(
+            f"- For immediate protection, prepare a Domestic Violence Act application to the Magistrate and keep age, residence, injury, and relationship proof [{pwdva12}]."
+        )
+    elif is_transfer and senior23 is not None:
         lines.append(
             f"- Take the gift or settlement deed, proof of age/parent relationship, and proof of neglect to the Maintenance Tribunal / District Magistrate route under the cited Senior Citizens Act source [{senior23}]."
         )
@@ -2396,6 +3651,82 @@ def _lok_adalat_traffic_template_lines(passages: list[dict]) -> list[str]:
     return lines
 
 
+def _bank_account_freeze_template_lines(query: str, passages: list[dict]) -> list[str]:
+    rbi = _find_passage_index(
+        passages,
+        title_terms=("reserve bank integrated ombudsman",),
+        anchor_terms=("/sec-2", "/sec-3"),
+    ) or _find_passage_index(passages, title_terms=("reserve bank integrated ombudsman",))
+    banking = _find_passage_index(passages, title_terms=("banking regulation",))
+    consumer = _find_passage_index(passages, title_terms=("consumer protection",), anchor_terms=("/sec-35", "/sec-2", "/sec-2-"))
+    if rbi is None and banking is None and consumer is None:
+        return []
+    lines = ["**Short answer**"]
+    if rbi is not None:
+        lines.append(
+            f"For a frozen or lien-marked bank account, first treat this as a written bank-grievance issue: ask for the freeze/lien/KYC reason, the authority behind it, and the complaint number before escalating under the RBI Ombudsman route [{rbi}]."
+        )
+    elif banking is not None:
+        lines.append(
+            f"For a frozen or lien-marked bank account, first get the bank's written reason and account-record basis instead of guessing whether it is KYC, fraud, tax, cyber, or a court/police hold [{banking}]."
+        )
+    if banking is not None:
+        lines.append(
+            f"Keep the bank-service record separate from any police/cyber/ED hold; the bank source is only the account-service side until the written freeze reason identifies another authority [{banking}]."
+        )
+    elif consumer is not None:
+        lines.append(
+            f"If the bank gives no written reason or wrongly blocks service, the consumer/service-deficiency route is a backup after the bank grievance record exists [{consumer}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = rbi if rbi is not None else banking if banking is not None else consumer
+    lines.append(
+        f"- Keep the freeze SMS/email, statement, KYC proof, complaint number, branch reply, and any police/cyber/court reference; file the bank grievance first, then use RBI Ombudsman for a bank-service failure or legal aid/court/police route if the freeze is due to a legal hold [{action_cite}]."
+    )
+    return lines
+
+
+def _loan_app_harassment_template_lines(query: str, passages: list[dict]) -> list[str]:
+    rbi = _find_passage_index(
+        passages,
+        title_terms=("reserve bank integrated ombudsman",),
+        anchor_terms=("/sec-2", "/sec-3"),
+    ) or _find_passage_index(passages, title_terms=("reserve bank integrated ombudsman",))
+    dpdp = _find_passage_index(passages, title_terms=("digital personal data protection",), anchor_terms=("/sec-8", "/sec-13", "/sec-27"))
+    it_act = _find_passage_index(passages, title_terms=("information technology",), anchor_terms=("/sec-66c", "/sec-66d", "/sec-66e"))
+    bns_threat = _find_passage_index(passages, title_terms=("bharatiya nyaya",), anchor_terms=("/sec-351", "/sec-308", "/sec-356"))
+    consumer = _find_passage_index(passages, title_terms=("consumer protection",), anchor_terms=("/sec-35", "/sec-2", "/sec-2-"))
+    if rbi is None and dpdp is None and it_act is None and bns_threat is None and consumer is None:
+        return []
+    lines = ["**Short answer**"]
+    if rbi is not None:
+        lines.append(
+            f"Loan-app or recovery harassment should be treated as a lender/NBFC grievance plus evidence-preservation problem, not just a repayment question; the RBI Ombudsman source is the regulated-entity escalation route to check [{rbi}]."
+        )
+    if dpdp is not None:
+        lines.append(
+            f"If the app is using your contact list or messaging relatives/colleagues, keep a separate personal-data grievance track and preserve the permissions/screenshots before complaining [{dpdp}]."
+        )
+    elif it_act is not None:
+        lines.append(
+            f"If the app misused phone data or online identity details, keep a cyber/electronic-record track with screenshots, app permissions, and contact messages [{it_act}]."
+        )
+    if bns_threat is not None and _has_any_term(query, ("threat", "threaten", "threatening", "blackmail", "extortion", "morphed", "abusive")):
+        lines.append(
+            f"If threats, blackmail, abusive messages, or morphed-image pressure are involved, keep a police/cyber track separate from the civil repayment dispute [{bns_threat}]."
+        )
+    elif consumer is not None:
+        lines.append(
+            f"The consumer-service route is only a backup for service deficiency; threats or contact-data misuse should not be reduced to a normal loan dispute [{consumer}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = rbi if rbi is not None else dpdp if dpdp is not None else it_act if it_act is not None else bns_threat if bns_threat is not None else consumer
+    lines.append(
+        f"- Preserve call logs, WhatsApp/SMS screenshots, messages sent to contacts, app permissions, lender/app name, loan agreement, repayment proof, and complaint number; complain to the lender/app first and escalate to RBI Ombudsman or cyber/local police depending on whether it is regulated-entity harassment or threats/contact-data abuse [{action_cite}]."
+    )
+    return lines
+
+
 def _banking_ombudsman_credit_template_lines(passages: list[dict]) -> list[str]:
     rbi2 = _find_passage_index(passages, title_terms=("reserve bank integrated ombudsman",), anchor_terms=("/sec-2",))
     rbi3 = _find_passage_index(passages, title_terms=("reserve bank integrated ombudsman",), anchor_terms=("/sec-3",))
@@ -2433,6 +3764,231 @@ def _banking_ombudsman_credit_template_lines(passages: list[dict]) -> list[str]:
     return lines
 
 
+def _bank_debit_ombudsman_template_lines(query: str, passages: list[dict]) -> list[str]:
+    rbi2 = _find_passage_index(passages, title_terms=("reserve bank integrated ombudsman",), anchor_terms=("/sec-2",))
+    rbi3 = _find_passage_index(passages, title_terms=("reserve bank integrated ombudsman",), anchor_terms=("/sec-3",))
+    rbi = rbi2 if rbi2 is not None else rbi3 if rbi3 is not None else _find_passage_index(passages, title_terms=("reserve bank integrated ombudsman",))
+    consumer35 = _find_passage_index(passages, title_terms=("consumer protection",), anchor_terms=("/sec-35",))
+    consumer2 = _find_passage_index(passages, title_terms=("consumer protection",), anchor_terms=("/sec-2", "/sec-2-"))
+    if rbi is None and consumer35 is None and consumer2 is None:
+        return []
+    bank_phrase = "HDFC bank" if "hdfc" in query else "the bank"
+    transaction_phrase = "forex/card transaction" if _has_any_term(query, ("forex", "card")) else "debit transaction"
+    lines = ["**Short answer**"]
+    if rbi is not None:
+        lines.append(
+            f"The RBI Ombudsman Scheme source covers commercial banks and other regulated entities, so first confirm {bank_phrase} is covered for the disputed {transaction_phrase} [{rbi}]."
+        )
+    if consumer2 is not None:
+        lines.append(
+            f"The Consumer Protection Act source covers consumer disputes and consumer rights for goods or services, which is the consumer-law base to check for a banking service dispute [{consumer2}]."
+        )
+    if consumer35 is not None:
+        lines.append(
+            f"The consumer-complaint source is the backup consumer-forum route if the bank grievance or RBI route does not resolve the service-deficiency claim [{consumer35}]."
+        )
+    action_cite = rbi if rbi is not None else consumer35 if consumer35 is not None else consumer2
+    lines.extend([
+        "**What you can do next**",
+        f"- Keep the statement entry, transaction reference, forex/card slip, SMS/email alerts, complaint number, bank reply or non-reply, and timeline before escalating the regulated-entity complaint [{action_cite}].",
+    ])
+    return lines
+
+
+def _bank_property_document_fraud_template_lines(query: str, passages: list[dict]) -> list[str]:
+    bns_forgery = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-336", "/sec-338", "/sec-340", "/sec-318", "/sec-319"),
+    )
+    bnss173 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-173",),
+    )
+    crpc_complaint = _find_passage_index(
+        passages,
+        title_terms=("criminal procedure",),
+        anchor_terms=("/sec-154", "/sec-156", "/sec-200"),
+    )
+    banking = _find_passage_index(passages, title_terms=("banking regulation",))
+    rbi = _find_passage_index(passages, title_terms=("reserve bank integrated ombudsman",), anchor_terms=("/sec-2", "/sec-3"))
+    consumer = _find_passage_index(passages, title_terms=("consumer protection",), anchor_terms=("/sec-2", "/sec-35"))
+    if bns_forgery is None and bnss173 is None and banking is None and rbi is None and consumer is None:
+        return []
+    property_phrase = "house" if "house" in query or "home" in query else "property"
+    lines = ["**Short answer**"]
+    if bns_forgery is not None and not _query_mentions_pre_july_2024(query):
+        lines.append(
+            f"If a loan was created against your {property_phrase} using a signature or consent you dispute, keep a criminal forgery/cheating track; the retrieved BNS source is current-law support only, so the incident date still decides whether BNS/BNSS or IPC/CrPC applies [{bns_forgery}]."
+        )
+    if banking is not None:
+        lines.append(
+            f"Keep the bank-service track separate too: the Banking Regulation Act source is the bank-regulation source to verify for the lender and loan-record side [{banking}]."
+        )
+    if rbi is not None:
+        lines.append(
+            f"If the lender is covered by the RBI Ombudsman Scheme, the RBI source is the escalation route after a written bank complaint and reply/non-reply period [{rbi}]."
+        )
+    elif consumer is not None:
+        lines.append(
+            f"The Consumer Protection Act source may be the backup service-deficiency route if the bank does not handle the disputed loan records properly [{consumer}]."
+        )
+    if bnss173 is not None:
+        lines.append(
+            f"For the police side, the BNSS source is the current FIR/information source to preserve if forged documents are alleged [{bnss173}]."
+        )
+    if crpc_complaint is not None and _query_mentions_pre_july_2024(query):
+        lines.append(
+            f"Because the facts mention a pre-July-2024 forged-loan dispute, the CrPC complaint/FIR source is the police or Magistrate procedure to check for that older regime [{crpc_complaint}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = rbi if rbi is not None else banking if banking is not None else bnss173 if bnss173 is not None else bns_forgery if bns_forgery is not None else consumer
+    lines.append(
+        f"- Give the bank a written disputed-signature/forged-loan complaint with loan number, property papers, signature/thumb-impression proof, and request a temporary hold on disputed recovery while you separately file the police/cyber complaint if forgery is alleged [{action_cite}]."
+    )
+    return lines
+
+
+def _cyber_impersonation_fraud_template_lines(query: str, passages: list[dict]) -> list[str]:
+    it66c = _find_passage_index(
+        passages,
+        title_terms=("information technology",),
+        anchor_terms=("/sec-66C",),
+    )
+    it66d = _find_passage_index(
+        passages,
+        title_terms=("information technology",),
+        anchor_terms=("/sec-66D",),
+    )
+    bns_cheating = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-318", "/sec-319"),
+    )
+    bnss173 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-173",),
+    )
+    rbi = _find_passage_index(
+        passages,
+        title_terms=("reserve bank integrated ombudsman",),
+        anchor_terms=("/sec-2", "/sec-3"),
+    )
+    if it66c is None and it66d is None and bns_cheating is None and bnss173 is None and rbi is None:
+        return []
+    victim_phrase = "your elderly parent" if _has_any_term(query, ("father", "mother", "75", "70", "senior")) else "the victim"
+    lines = ["**Short answer**"]
+    if it66d is not None:
+        lines.append(
+            f"A fake bank or pension-office call is a cyber impersonation-fraud issue first; the IT Act cheating-by-personation source is directly relevant where a communication device or computer resource is used [{it66d}]."
+        )
+    elif it66c is not None:
+        lines.append(
+            f"A fake bank or pension-office call is a cyber-fraud issue first; the IT Act identity-theft source is relevant if identity information or credentials were misused [{it66c}]."
+        )
+    if bns_cheating is not None:
+        lines.append(
+            f"The BNS cheating/personation source is the criminal-law track to compare with the call, inducement, and money-transfer facts [{bns_cheating}]."
+        )
+    if bnss173 is not None:
+        lines.append(
+            f"The BNSS source is the FIR/information route for giving the police the call number, transaction IDs, beneficiary details, and complaint acknowledgement [{bnss173}]."
+        )
+    if rbi is not None:
+        lines.append(
+            f"For the bank-service or refund side, the RBI Ombudsman source is the regulated-entity escalation route after a written bank complaint and reply or non-reply period [{rbi}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = bnss173 if bnss173 is not None else it66d if it66d is not None else it66c if it66c is not None else rbi if rbi is not None else bns_cheating
+    lines.append(
+        f"- Give the police/cyber complaint with {victim_phrase}'s phone number used for the call, transaction IDs, beneficiary account/UPI, screenshots, and bank complaint number [{action_cite}]."
+    )
+    return lines
+
+
+def _crypto_investment_fraud_template_lines(query: str, passages: list[dict]) -> list[str]:
+    it66d = _find_passage_index(
+        passages,
+        title_terms=("information technology",),
+        anchor_terms=("/sec-66D",),
+    )
+    bns318 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-318", "/sec-319"),
+    )
+    bnss173 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-173", "/sec-175"),
+    )
+    pmla = _find_passage_index(
+        passages,
+        title_terms=("prevention of money laundering",),
+        anchor_terms=("/sec-2", "/sec-5", "/sec-17", "/sec-50"),
+    )
+    if it66d is None and bns318 is None and bnss173 is None and pmla is None:
+        return []
+    lines = ["**Short answer**"]
+    if bns318 is not None:
+        lines.append(
+            f"A Telegram crypto rug-pull or investment-group loss should be framed as cheating/fraud facts first; the BNS cheating source is the criminal-law source to compare with the inducement and money-transfer record [{bns318}]."
+        )
+    if it66d is not None:
+        lines.append(
+            f"Because the approach happened through Telegram or an online group, the IT Act cheating-by-personation source is also relevant if online impersonation or deceptive digital communication is part of the facts [{it66d}]."
+        )
+    if pmla is not None:
+        lines.append(
+            f"If the money trail involves crypto wallets, laundering, or suspicious transaction records, keep the PMLA source as a separate money-trail/freezing source rather than the first FIR section [{pmla}]."
+        )
+    if bnss173 is not None:
+        lines.append(
+            f"The BNSS source is the FIR/information route for giving police or cyber cell the wallet addresses, transaction hashes, UPI/bank trail, Telegram handles, and complaint acknowledgement [{bnss173}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = bnss173 if bnss173 is not None else bns318 if bns318 is not None else it66d if it66d is not None else pmla
+    lines.append(
+        f"- Preserve Telegram group links, admin handles, chat screenshots, payment proofs, wallet addresses, transaction hashes, bank/UPI details, and file on cybercrime.gov.in or at the cyber police station with those identifiers [{action_cite}]."
+    )
+    return lines
+
+
+def _insurance_misselling_template_lines(query: str, passages: list[dict]) -> list[str]:
+    ombudsman = _find_passage_index(passages, title_terms=("insurance ombudsman", "ombudsman rules"))
+    consumer2 = _find_passage_index(passages, title_terms=("consumer protection",), anchor_terms=("/sec-2", "/sec-2-"))
+    consumer35 = _find_passage_index(passages, title_terms=("consumer protection",), anchor_terms=("/sec-35",))
+    senior = _find_passage_index(passages, title_terms=("parents and senior citizens", "senior citizens"))
+    if ombudsman is None and consumer2 is None and consumer35 is None and senior is None:
+        return []
+    policy_phrase = "LIC policy" if "lic" in query else "insurance policy"
+    lines = ["**Short answer**"]
+    if ombudsman is not None:
+        lines.append(
+            f"For a {policy_phrase} sold through an agent and then paying much less at maturity, the Insurance Ombudsman source for insurer/agent complaints is the first sector route to check [{ombudsman}]."
+        )
+    if consumer2 is not None:
+        lines.append(
+            f"The Consumer Protection Act source is also relevant because insurance service deficiency or mis-selling can be framed as a consumer-service complaint when the documents support it [{consumer2}]."
+        )
+    elif consumer35 is not None:
+        lines.append(
+            f"The Consumer Protection Act complaint source is a backup consumer-forum route if insurer grievance or Ombudsman relief does not resolve the policy dispute [{consumer35}]."
+        )
+    if senior is not None:
+        lines.append(
+            f"The Senior Citizens Act source covers an application by a senior citizen or parent who is unable to maintain himself from earnings or property, so use that route only if age, dependency, or exploitation facts also exist [{senior}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = ombudsman if ombudsman is not None else consumer35 if consumer35 is not None else consumer2 if consumer2 is not None else senior
+    lines.append(
+        f"- File a written insurer grievance with the policy bond, proposal form, benefit illustration, agent messages, premium receipts, maturity statement, and the exact promised-return words before escalating to Ombudsman or consumer forum [{action_cite}]."
+    )
+    return lines
+
+
 def _undertrial_legal_aid_template_lines(passages: list[dict]) -> list[str]:
     lsa = _find_passage_index(
         passages,
@@ -2464,6 +4020,74 @@ def _undertrial_legal_aid_template_lines(passages: list[dict]) -> list[str]:
         lines.append(
             f"- For release based on custody duration, compare the detention period and offence maximum to the cited BNSS undertrial-release source [{bnss479}]."
         )
+    return lines
+
+
+def _prison_mulaqat_template_lines(passages: list[dict]) -> list[str]:
+    prisons = _find_passage_index(
+        passages,
+        title_terms=("prisons act", "prisons"),
+    )
+    article21 = _find_passage_index(
+        passages,
+        title_terms=("constitution",),
+        anchor_terms=("/sec-21",),
+    )
+    if prisons is None and article21 is None:
+        return []
+    lines = ["**Short answer**"]
+    if prisons is not None:
+        lines.append(
+            f"For a jail mulaqat or interview-duration complaint, the Prisons Act source is the prison-administration source to check before relying on a general parole or bail route [{prisons}]."
+        )
+    if article21 is not None:
+        lines.append(
+            f"If the restriction is arbitrary, discriminatory, or blocks family/lawyer access without reasons, preserve the Article 21 liberty/fairness point for DLSA or High Court review [{article21}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = prisons if prisons is not None else article21
+    lines.append(
+        f"- Submit a written request to the Jail Superintendent with prisoner details, relationship proof, requested mulaqat time/frequency, and the refusal/order copy; then escalate to DLSA, prison-visitors board, or High Court writ route if reasons are not given [{action_cite}]."
+    )
+    return lines
+
+
+def _custody_compensation_template_lines(passages: list[dict]) -> list[str]:
+    article21 = _find_passage_index(
+        passages,
+        title_terms=("constitution",),
+        anchor_terms=("/sec-21",),
+    )
+    bnss479 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-479",),
+    )
+    crpc436a = _find_passage_index(
+        passages,
+        title_terms=("criminal procedure",),
+        anchor_terms=("/sec-436", "/sec-436-a", "/sec-436a"),
+    )
+    if article21 is None and bnss479 is None and crpc436a is None:
+        return []
+    lines = ["**Short answer**"]
+    if article21 is not None:
+        lines.append(
+            f"For compensation after delayed or excessive custody, start with the Article 21 liberty source and build the case around unlawful or unjustified deprivation of personal liberty [{article21}]."
+        )
+    if bnss479 is not None:
+        lines.append(
+            f"For the custody-duration part, the BNSS Section 479 source is relevant to compare the actual detention period with the maximum punishment and undertrial-release threshold [{bnss479}]."
+        )
+    if crpc436a is not None:
+        lines.append(
+            f"If the custody period is from the older CrPC regime, check the CrPC Section 436A source as the comparable undertrial custody-duration provision [{crpc436a}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = bnss479 if bnss479 is not None else crpc436a if crpc436a is not None else article21
+    lines.append(
+        f"- Make a dated timeline from arrest/remand to charge-sheet, bail, release, or acquittal, then take FIR, remand, bail/release, and final order copies to DLSA or a lawyer before choosing High Court or Human Rights Commission compensation steps [{action_cite}]."
+    )
     return lines
 
 
@@ -2514,6 +4138,119 @@ def _identity_police_threat_template_lines(passages: list[dict]) -> list[str]:
     return lines
 
 
+def _spousal_neutral_complaint_template_lines(query: str, passages: list[dict]) -> list[str]:
+    bns_hurt = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-115", "/sec-117"),
+    )
+    bns_property = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-303", "/sec-316", "/sec-318"),
+    )
+    bns_threat_or_restraint = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-351", "/sec-126", "/sec-127"),
+    )
+    bnss173 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-173",),
+    )
+    bnss175 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-175",),
+    )
+    if bns_hurt is None and bns_property is None and bns_threat_or_restraint is None and bnss173 is None and bnss175 is None:
+        return []
+    physical_context = _has_any_term(query, ("slap", "slapped", "hit", "beat", "beaten", "hurt"))
+    threat_context = _has_any_term(query, ("threat", "threatens", "threatened", "threatening"))
+    residence_context = _has_any_term(query, (
+        "threw me out", "kicked me out", "locked me out",
+        "not allowing me entry", "not letting me enter", "not letting me in",
+    ))
+    property_context = _has_any_term(query, (
+        "salary", "atm card", "bank card", "money", "jewellery", "jewelry",
+        "gold", "documents", "took my property", "stole my property",
+        "sold my property", "transferred my property", "took my house papers",
+        "sold my house", "transferred my house",
+    ))
+    lines = ["**Short answer**"]
+    if physical_context and bns_hurt is not None:
+        lines.append(
+            f"For a slap, hit, or injury, the neutral BNS hurt/grievous-hurt source is the source to check with the incident date and injury facts [{bns_hurt}]."
+        )
+    sexual_context = _has_any_term(query, (
+        "forces sex", "force sex", "forced sex", "sex without consent",
+        "sexual assault", "sexually assaulted me", "sexually assaulting me",
+        "assaulted me sexually",
+    ))
+    if sexual_context:
+        sexual_cite = bns_threat_or_restraint if bns_threat_or_restraint is not None else bns_hurt
+        if sexual_cite is not None:
+            lines.append(
+                f"For 'my wife forced sex' or 'my wife sexually assaulted me' facts, do not treat this answer as a final offence classification; the neutral BNS force, hurt, threat, or restraint source is only a source to check if those facts fit [{sexual_cite}]."
+            )
+        elif bnss173 is not None:
+            lines.append(
+                f"For 'my wife forced sex' or 'my wife sexually assaulted me' facts, the retrieved BNSS source is only the complaint-procedure source; ask DLSA or a lawyer to check the exact offence fit before filing [{bnss173}]."
+            )
+    if threat_context and bns_threat_or_restraint is not None:
+        lines.append(
+            f"For 'my wife threatens me' or similar spouse-threat facts, the neutral BNS criminal-intimidation or restraint source is the source to check with the exact words, conduct, and safety facts [{bns_threat_or_restraint}]."
+        )
+    if residence_context and bns_threat_or_restraint is not None:
+        lines.append(
+            f"For 'my wife threw/kicked/locked me out' facts, separate the residence or property dispute from any force, threat, or restraint; the neutral BNS source is the criminal-law source to check only if those facts exist [{bns_threat_or_restraint}]."
+        )
+    if property_context and bns_property is not None:
+        property_phrase = (
+            "my wife sold/transferred my house/property without consent"
+            if _has_any_term(query, ("sold my house", "transferred my house", "sold my property", "transferred my property"))
+            else "my wife took my jewellery/salary/ATM card"
+        )
+        lines.append(
+            f"For '{property_phrase}' or similar property-control facts, first identify ownership, consent, entrustment, transfer papers, withdrawals, and messages; the neutral BNS theft, breach-of-trust, or cheating source is the criminal-law source to compare with those facts [{bns_property}]."
+        )
+    if bnss173 is not None:
+        lines.append(
+            f"For the complaint route, the BNSS source on information to police is the procedure source to check before approaching police or escalating refusal [{bnss173}]."
+        )
+    elif bnss175 is not None:
+        lines.append(
+            f"If police refuse to act, the BNSS Magistrate-investigation source is the procedure source to check [{bnss175}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = bnss173 if bnss173 is not None else bnss175 if bnss175 is not None else bns_hurt if bns_hurt is not None else bns_threat_or_restraint if bns_threat_or_restraint is not None else bns_property
+    if physical_context:
+        lines.append(
+            f"- For the 'my wife slapped me' fact, preserve injury photos, medical notes if any, messages, and witness names before deciding whether to make a police complaint or seek family/civil help [{action_cite}]."
+        )
+    if sexual_context:
+        lines.append(
+            f"- For the sexual-coercion fact, prioritize current safety, medical or mental-health support if needed, messages, witness details, and legal-aid review before deciding whether to use the police complaint route [{action_cite}]."
+        )
+    if threat_context:
+        lines.append(
+            f"- For the threat fact, write down the exact words, date, place, witnesses, and messages before deciding whether to use the police complaint route or family/civil support route [{action_cite}]."
+        )
+    if residence_context:
+        lines.append(
+            f"- For the thrown-out or locked-out fact, keep proof of residence, ownership or tenancy papers, messages, and any force or threat details before choosing police, family, or civil forum help [{action_cite}]."
+        )
+    if property_context:
+        lines.append(
+            f"- For the salary, ATM-card, jewellery, gold, house, documents, or property-transfer fact, keep bank records, ownership papers, transfer papers, entrustment proof, and messages before deciding whether the correct route is police complaint, family/civil remedy, or both [{action_cite}]."
+        )
+    lines.append(
+        f"- Use DLSA or a lawyer to separate criminal complaint facts from matrimonial or civil financial-relief facts before filing [{action_cite}]."
+    )
+    return lines
+
+
 def _name_change_gazette_template_lines(query: str, passages: list[dict]) -> list[str]:
     required_docs = _find_passage_index(
         passages,
@@ -2551,6 +4288,516 @@ def _name_change_gazette_template_lines(query: str, passages: list[dict]) -> lis
     action_cite = required_docs if required_docs is not None else formalities
     lines.append(
         f"- If you choose the Gazette publication route, prepare the newspaper page, undertaking, typed proforma, photographs, ID proof, CD or soft copy certificate, fee receipt, and request letter [{action_cite}]."
+    )
+    return lines
+
+
+def _marriage_misrepresentation_template_lines(query: str, passages: list[dict]) -> list[str]:
+    hma12 = _find_passage_index(
+        passages,
+        title_terms=("hindu marriage",),
+        anchor_terms=("/sec-12",),
+    )
+    family7 = _find_passage_index(
+        passages,
+        title_terms=("family courts",),
+        anchor_terms=("/sec-7",),
+    )
+    if hma12 is None and family7 is None:
+        return []
+    health_context = _has_any_term(query, ("hiv", "hiv positive", "aids", "health", "disease", "medical condition"))
+    misrep_subject = "health or medical-status statement" if health_context else "salary, job, or loan statement"
+    proof_phrase = "medical-disclosure proof/messages and the date you discovered the truth" if health_context else "job/salary/loan proof, and the date you discovered the truth"
+    lines = ["**Short answer**"]
+    if hma12 is not None:
+        lines.append(
+            f"If the Hindu Marriage Act applies, Section 12 is the source to check for whether a marriage is voidable on consent or fraud-related grounds; a {misrep_subject} must be tested against that source and the proof [{hma12}]."
+        )
+    if family7 is not None:
+        lines.append(
+            f"The Family Courts Act jurisdiction source is relevant for matrimonial-status or validity proceedings, so the forum is usually the Family Court route after personal law is identified [{family7}]."
+        )
+    lines.append("**What you can do next**")
+    if hma12 is not None:
+        lines.append(
+            f"- Collect marriage proof, biodata/messages, {proof_phrase}; then ask DLSA or a family-law lawyer whether annulment, divorce, maintenance, or counselling fits the facts [{hma12}]."
+        )
+    elif family7 is not None:
+        lines.append(
+            f"- Collect marriage proof, the statement/proof you relied on, and the date you discovered the truth; then ask DLSA or a family-law lawyer which family-court remedy fits the facts [{family7}]."
+        )
+    return lines
+
+
+def _pre_marriage_health_disclosure_template_lines(query: str, passages: list[dict]) -> list[str]:
+    hiv = _find_passage_index(
+        passages,
+        title_terms=("human immunodeficiency",),
+        anchor_terms=("/sec-5", "/sec-8", "/sec-9"),
+    ) or _find_passage_index(
+        passages,
+        title_terms=("hiv", "aids"),
+        anchor_terms=("/sec-5", "/sec-8", "/sec-9"),
+    )
+    hma12 = _find_passage_index(
+        passages,
+        title_terms=("hindu marriage",),
+        anchor_terms=("/sec-12",),
+    )
+    family7 = _find_passage_index(
+        passages,
+        title_terms=("family courts",),
+        anchor_terms=("/sec-7",),
+    )
+    it_privacy = _find_passage_index(
+        passages,
+        title_terms=("information technology",),
+        anchor_terms=("/sec-66E", "/sec-67"),
+    )
+    dpdp = _find_passage_index(
+        passages,
+        title_terms=("digital personal data protection",),
+        anchor_terms=("/sec-8", "/sec-13"),
+    )
+    dowry = _find_passage_index(passages, title_terms=("dowry prohibition",))
+    if hiv is None and hma12 is None and family7 is None and it_privacy is None and dpdp is None and dowry is None:
+        return []
+    lines = ["**Short answer**"]
+    not_married_yet = _has_any_term(query, (
+        "supposed to marry", "marry next month", "marriage next month",
+        "wedding next month", "not married yet", "engagement", "engaged",
+        "fiance", "fiancee",
+    ))
+    if not_married_yet:
+        if hma12 is not None:
+            lines.append(
+                f"If the marriage has not happened yet, do not treat this as divorce or annulment today; the Hindu Marriage Act voidable-marriage source becomes relevant only if a marriage has occurred and consent/fraud has to be tested later [{hma12}]."
+            )
+        elif family7 is not None:
+            lines.append(
+                f"If the marriage has not happened yet, first treat this as cancellation, records, privacy, and gifts/expense-return planning, not as a Family Court divorce filing [{family7}]."
+            )
+    elif hma12 is not None:
+        lines.append(
+            f"If a marriage has already occurred and the Hindu Marriage Act applies, Section 12 is the source to check for whether consent/fraud facts make the marriage voidable [{hma12}]."
+        )
+    if hiv is not None:
+        lines.append(
+            f"For HIV/health-status facts, verify the primary HIV/privacy source before disclosing the person's medical status publicly or using it in any notice [{hiv}]."
+        )
+    online_warning = _has_any_term(query, MEDICAL_STATUS_ONLINE_DISCLOSURE_TERMS)
+    if online_warning:
+        privacy_cite = it_privacy if it_privacy is not None else dpdp
+        if privacy_cite is not None:
+            lines.append(
+                f"Do not post the person's identifiable medical status online as a pressure tactic; keep evidence private and verify any disclosure, takedown, or complaint step against the cited privacy/cyber source first [{privacy_cite}]."
+            )
+    if dowry is not None:
+        lines.append(
+            f"If gifts, dowry, or wedding-expense return is the dispute, keep that property-return track separate from the medical-disclosure issue [{dowry}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = (
+        it_privacy if online_warning and it_privacy is not None
+        else hiv if hiv is not None
+        else hma12 if hma12 is not None
+        else dowry if dowry is not None
+        else dpdp if dpdp is not None
+        else family7
+    )
+    lines.append(
+        f"- Preserve biodata/messages, engagement or wedding records, gift/dowry/payment records, and the date you discovered the fact; speak to DLSA or a family-law lawyer before sending a notice or making public allegations about medical status [{action_cite}]."
+    )
+    if hiv is None:
+        lines.append(
+            "The retrieved index did not surface the HIV Act source for this answer, so verify the medical-privacy/non-discrimination rule from a lawyer or primary source before acting on that part."
+        )
+    return lines
+
+
+def _marital_intimacy_breakdown_template_lines(query: str, passages: list[dict]) -> list[str]:
+    family7 = _find_passage_index(
+        passages,
+        title_terms=("family courts",),
+        anchor_terms=("/sec-7",),
+    )
+    hma13 = _find_passage_index(
+        passages,
+        title_terms=("hindu marriage",),
+        anchor_terms=("/sec-13",),
+    )
+    if family7 is None and hma13 is None:
+        return []
+    lines = ["**Short answer**"]
+    if family7 is not None:
+        lines.append(
+            f"For a spouse denying sex or intimacy, treat this as a marriage-breakdown or matrimonial-remedy question, because the Family Courts Act source covers suits and proceedings relating to matrimonial matters [{family7}]."
+        )
+    if hma13 is not None:
+        lines.append(
+            f"Do not treat refusal of intimacy as a complete legal claim by itself; if the Hindu Marriage Act applies, Section 13 is the divorce-ground source to check with the full facts [{hma13}]."
+        )
+    lines.append("**What you can do next**")
+    if hma13 is not None:
+        lines.append(
+            f"- Do not use pressure or force; write the timeline and decide whether you want counselling, separation, divorce, maintenance, or another family-court remedy before speaking to DLSA or a family-law lawyer [{hma13}]."
+        )
+    elif family7 is not None:
+        lines.append(
+            f"- Do not use pressure or force; write the timeline, residence, children, maintenance, and any violence/coercion facts before choosing a counselling or family-court route [{family7}]."
+        )
+    return lines
+
+
+def _matrimonial_property_maintenance_template_lines(query: str, passages: list[dict]) -> list[str]:
+    family7 = _find_passage_index(
+        passages,
+        title_terms=("family courts",),
+        anchor_terms=("/sec-7", "/sec-8"),
+    )
+    hma = _find_passage_index(
+        passages,
+        title_terms=("hindu marriage",),
+        anchor_terms=("/sec-13", "/sec-24", "/sec-25"),
+    )
+    sma = _find_passage_index(
+        passages,
+        title_terms=("special marriage",),
+        anchor_terms=("/sec-27", "/sec-28", "/sec-36", "/sec-37"),
+    )
+    if family7 is None and hma is None and sma is None:
+        return []
+    lines = ["**Short answer**"]
+    if family7 is not None:
+        lines.append(
+            f"For a wife asking maintenance or a share in house/property, the Family Courts Act source is the forum source to check for matrimonial proceedings and property disputes connected with marriage [{family7}]."
+        )
+    if hma is not None:
+        lines.append(
+            f"If the Hindu Marriage Act route applies, the HMA source is the source to check for divorce and maintenance relief; do not assume a criminal complaint from a maintenance or property-share demand alone [{hma}]."
+        )
+    elif sma is not None:
+        lines.append(
+            f"If the Special Marriage Act route applies, the SMA source is the source to check for divorce or maintenance relief; do not assume a criminal complaint from a maintenance or property-share demand alone [{sma}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = family7 if family7 is not None else hma if hma is not None else sma
+    lines.append(
+        f"- Read the petition, notice, or message first and separate three issues: maintenance, property title or joint ownership, and divorce or matrimonial relief [{action_cite}]."
+    )
+    lines.append(
+        f"- Keep marriage details, income proof, dependants' expenses, title deed or loan papers, and any pending Family Court case number before replying or filing anything [{action_cite}]."
+    )
+    return lines
+
+
+def _marital_sexual_violence_template_lines(query: str, passages: list[dict]) -> list[str]:
+    pwdva3 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-3",),
+    )
+    pwdva18 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-18",),
+    )
+    bns63 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-63",),
+    )
+    bns67 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-67",),
+    )
+    if pwdva3 is None and bns63 is None:
+        return []
+    lines = ["**Short answer**"]
+    if pwdva3 is not None:
+        lines.append(
+            f"If your husband forces sex or sexual contact after you say no, keep the first legal frame as domestic violence and safety; the PWDVA source defines domestic violence to include sexual abuse and related physical or emotional harm [{pwdva3}]."
+        )
+    if bns63 is not None:
+        lines.append(
+            f"The BNS sexual-offence source must be checked carefully because Section 63 contains both the rape definition and the marital-exception wording; do not assume the criminal route without the incident date and full facts [{bns63}]."
+        )
+    if bns67 is not None:
+        lines.append(
+            f"If the spouses are living separately, also check the specific BNS source on sexual intercourse by husband upon his wife during separation [{bns67}]."
+        )
+    if pwdva18 is not None:
+        lines.append(
+            f"For immediate protection, the PWDVA protection-order source is relevant to stopping further domestic violence through the Magistrate route [{pwdva18}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = pwdva18 if pwdva18 is not None else pwdva3 if pwdva3 is not None else bns63
+    lines.append(
+        f"- Write a dated safety timeline, preserve messages or medical proof if any, and contact a Protection Officer, women's helpline/One Stop Centre, DLSA, or Magistrate court for protection and support [{action_cite}]."
+    )
+    return lines
+
+
+def _domestic_violence_safety_template_lines(query: str, passages: list[dict]) -> list[str]:
+    pwdva3 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-3",),
+    )
+    pwdva12 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-12",),
+    )
+    pwdva17 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-17",),
+    )
+    pwdva18 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-18",),
+    )
+    pwdva19 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-19",),
+    )
+    pwdva20 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-20",),
+    )
+    bns_hurt = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-115", "/sec-117"),
+    )
+    bns_threat = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-351",),
+    )
+    if all(cite is None for cite in (pwdva3, pwdva12, pwdva17, pwdva18, pwdva19, pwdva20, bns_hurt, bns_threat)):
+        return []
+
+    residence_context = _has_any_term(query, (
+        "ghar se nikal", "nikal diya", "threw me out", "kicked me out",
+        "sasural", "wapis", "go back", "return home", "shared household",
+        "residence", "shelter", "raat ko", "night",
+    ))
+    physical_context = _has_any_term(query, (
+        "slap", "slapped", "slaps", "beat", "beaten", "beating",
+        "hit", "hits", "hitting", "pushed", "physical violence",
+        "angry and", "sorry next day",
+    ))
+    immediate_context = _has_any_term(query, (
+        "right now", "now", "currently", "today", "this moment",
+        "beating me", "hitting me", "hits me", "unsafe",
+    ))
+    economic_context = _has_any_term(query, (
+        "salary", "atm card", "bank card", "money", "groceries",
+        "breadwinner", "not giving money", "income",
+    ))
+    dowry_context = _has_any_term(query, ("dowry", "dahej", "taunts", "demand"))
+    food_context = _has_any_term(query, ("not let me eat", "does not let me eat", "no food", "food"))
+
+    lines = ["**Short answer**"]
+    if pwdva3 is not None:
+        if physical_context and immediate_context:
+            lines.append(
+                f"If he is beating you right now or you are not safe, treat immediate safety first; the PWDVA source recognises physical abuse as domestic violence, not a normal family disagreement [{pwdva3}]."
+            )
+        elif physical_context:
+            lines.append(
+                f"You do not have to treat being hit, slapped, or beaten as normal just because he says sorry later; the PWDVA source defines domestic violence to include physical, verbal, emotional, sexual, and economic abuse [{pwdva3}]."
+            )
+        elif dowry_context or food_context:
+            lines.append(
+                f"Daily dowry taunts, pressure for money, or being denied food should be checked as domestic violence and economic abuse, not only as a family argument [{pwdva3}]."
+            )
+        elif economic_context:
+            lines.append(
+                f"A spouse controlling your salary, ATM card, and grocery money is not just a household-management issue; it can be tested as economic abuse under the PWDVA domestic-violence definition when the facts support it [{pwdva3}]."
+            )
+        else:
+            lines.append(
+                f"Keep this as a domestic-violence/support route first, not only a divorce or family-dispute question; the PWDVA source defines the abuse categories to check [{pwdva3}]."
+            )
+    if residence_context and (pwdva17 is not None or pwdva19 is not None):
+        residence_cite = pwdva19 if pwdva19 is not None else pwdva17
+        lines.append(
+            f"For the ghar se nikal diya / can I go back problem, the PWDVA residence-order source is the direct source to check for exclusion from the shared household and asking the Magistrate for residence protection [{residence_cite}]."
+        )
+    elif residence_context and (pwdva18 is not None or pwdva12 is not None):
+        residence_cite = pwdva18 if pwdva18 is not None else pwdva12
+        lines.append(
+            f"On whether you can go back after being thrown out at night: do not go alone if it is unsafe; use the Protection Officer/Magistrate route to ask for protection and safe-return or residence relief [{residence_cite}]."
+        )
+    if pwdva18 is not None:
+        if physical_context and immediate_context:
+            lines.append(
+                f"Because he is beating you right now, move to immediate safety first; the PWDVA protection-order source is the Magistrate route to stop further domestic violence, contact, threats, or intimidation [{pwdva18}]."
+            )
+        else:
+            lines.append(
+                f"For immediate safety, the PWDVA protection-order source is the Magistrate route to stop further domestic violence, contact, threats, or intimidation [{pwdva18}]."
+            )
+    if pwdva20 is not None and (economic_context or dowry_context or food_context):
+        lines.append(
+            f"For money, household expenses, salary control, or dowry-linked economic pressure, the PWDVA monetary-relief source should be checked along with the proof of income and expenses [{pwdva20}]."
+        )
+    if bns_hurt is not None and physical_context:
+        lines.append(
+            f"If there is physical injury or assault, keep a separate criminal-law track too; the BNS hurt source must be matched to the incident date and medical facts [{bns_hurt}]."
+        )
+    elif bns_threat is not None and _has_any_term(query, ("threat", "threaten", "threatening", "kill")):
+        lines.append(
+            f"If threats are involved, the BNS criminal-intimidation source is a separate police track to verify with the exact words and incident date [{bns_threat}]."
+    )
+    lines.append("**What you can do next**")
+    action_cite = (
+        pwdva18 if pwdva18 is not None
+        else pwdva19 if pwdva19 is not None
+        else pwdva17 if pwdva17 is not None
+        else pwdva20 if pwdva20 is not None
+        else pwdva12 if pwdva12 is not None
+        else pwdva3 if pwdva3 is not None
+        else bns_hurt if bns_hurt is not None
+        else bns_threat
+    )
+    if residence_context:
+        lines.append(
+            f"- Because the sasural/household has ghar se nikal diya or thrown you out, do not go back alone if it is unsafe; ask the Protection Officer, DLSA, or Magistrate route for safe return, shelter, or residence protection [{action_cite}]."
+        )
+    if immediate_context and physical_context:
+        lines.append(
+            f"- If violence is happening right now, move to immediate safety first: call local emergency help/police if needed, contact a trusted person or One Stop Centre/women helpline, and then use the Protection Officer/Magistrate route for protection [{action_cite}]."
+        )
+    if physical_context:
+        lines.append(
+            f"- If you are asking whether to stay, decide around immediate safety first: contact a trusted person, helpline, Protection Officer, DLSA, or police/emergency help if violence may continue [{action_cite}]."
+        )
+    lines.append(
+        f"- Write a dated safety timeline, keep messages/photos/medical records, and contact a Protection Officer, One Stop Centre/women helpline, DLSA, or Magistrate court for protection, residence or safe return home, and monetary relief; use police/emergency help if there is immediate danger [{action_cite}]."
+    )
+    if pwdva12 is not None:
+        lines.append(
+            f"- For the court filing path, the PWDVA application source is the provision to check before preparing a protection/residence/monetary-relief application [{pwdva12}]."
+        )
+    return lines
+
+
+def _streedhan_return_template_lines(query: str, passages: list[dict]) -> list[str]:
+    hsa14 = _find_passage_index(
+        passages,
+        title_terms=("hindu succession",),
+        anchor_terms=("/sec-14",),
+    )
+    hsa_succession = _find_passage_index(
+        passages,
+        title_terms=("hindu succession",),
+        anchor_terms=("/sec-15", "/sec-16"),
+    )
+    pwdva3 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-3",),
+    )
+    pwdva12 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-12",),
+    )
+    pwdva20 = _find_passage_index(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-20",),
+    )
+    dowry = _find_passage_index(passages, title_terms=("dowry prohibition",))
+    bns316 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-316",),
+    )
+    if hsa14 is None and hsa_succession is None and pwdva3 is None and pwdva12 is None and pwdva20 is None and dowry is None and bns316 is None:
+        return []
+    lines = ["**Short answer**"]
+    if hsa14 is not None:
+        lines.append(
+            f"For jewellery or streedhan kept by in-laws, first keep it as the woman's property issue; the Hindu Succession Act source on female property is the ownership source to check where that personal-law route applies [{hsa14}]."
+        )
+    elif hsa_succession is not None:
+        lines.append(
+            f"Because the husband has died, keep the streedhan/jewellery return issue separate from succession; the Hindu Succession Act source is the succession source to verify for the female-property/heirship side [{hsa_succession}]."
+        )
+    if pwdva3 is not None:
+        lines.append(
+            f"The Domestic Violence Act source is relevant because withholding jewellery, streedhan, or economic resources can be tested as economic abuse on the domestic-violence route [{pwdva3}]."
+        )
+    if pwdva12 is not None or pwdva20 is not None:
+        cite = pwdva20 if pwdva20 is not None else pwdva12
+        lines.append(
+            f"The Magistrate/Protection Officer route should be checked for return, monetary relief, or protection before treating this only as a generic property case [{cite}]."
+        )
+    if bns316 is not None:
+        lines.append(
+            f"If the facts show entrustment and dishonest refusal to return, the BNS criminal-breach-of-trust source is a separate criminal-law track to compare with the evidence [{bns316}]."
+        )
+    if dowry is not None:
+        lines.append(
+            f"The Dowry Prohibition Act source may be relevant if the jewellery or property is linked to dowry/presents, but it should not replace the streedhan ownership and domestic-relief facts [{dowry}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = pwdva20 if pwdva20 is not None else pwdva12 if pwdva12 is not None else pwdva3 if pwdva3 is not None else hsa14 if hsa14 is not None else hsa_succession if hsa_succession is not None else bns316 if bns316 is not None else dowry
+    lines.append(
+        f"- Make an item-wise list with receipts, wedding photos, locker or possession proof, messages demanding return, and witness names, then seek Protection Officer/Magistrate/DLSA help before adding any police complaint for entrustment/refusal facts [{action_cite}]."
+    )
+    return lines
+
+
+def _mtp_privacy_divorce_template_lines(query: str, passages: list[dict]) -> list[str]:
+    mtp_privacy = _find_passage_index(
+        passages,
+        title_terms=("medical termination of pregnancy",),
+        anchor_terms=("/sec-5A", "/sec-5-a"),
+    )
+    mtp_general = _find_passage_index(passages, title_terms=("medical termination of pregnancy",))
+    hma13 = _find_passage_index(
+        passages,
+        title_terms=("hindu marriage",),
+        anchor_terms=("/sec-13",),
+    )
+    family7 = _find_passage_index(
+        passages,
+        title_terms=("family courts",),
+        anchor_terms=("/sec-7",),
+    )
+    if mtp_privacy is None and mtp_general is None and hma13 is None and family7 is None:
+        return []
+    lines = ["**Short answer**"]
+    if mtp_privacy is not None:
+        lines.append(
+            f"For an old abortion or pregnancy-termination fact being used as a threat, first keep the medical privacy issue separate: the MTP source is the confidentiality/privacy source to check [{mtp_privacy}]."
+        )
+    elif mtp_general is not None:
+        lines.append(
+            f"For an old abortion or pregnancy-termination fact being used as a threat, start with the MTP source and medical record privacy before deciding any family-court strategy [{mtp_general}]."
+        )
+    if hma13 is not None:
+        lines.append(
+            f"Do not assume a past lawful abortion automatically decides divorce; if the Hindu Marriage Act applies, any divorce ground must be tested under the matrimonial source and the full facts [{hma13}]."
+        )
+    if family7 is not None:
+        lines.append(
+            f"The Family Courts Act source is the forum route for matrimonial-status or divorce proceedings, while the medical privacy issue should be handled with minimum disclosure [{family7}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = mtp_privacy if mtp_privacy is not None else mtp_general if mtp_general is not None else family7 if family7 is not None else hma13
+    lines.append(
+        f"- Preserve the threat messages and do not circulate medical papers widely; take the marriage/personal-law details and privacy facts to DLSA or a family-law lawyer before responding to the divorce threat [{action_cite}]."
     )
     return lines
 
@@ -2784,6 +5031,55 @@ def _housing_parking_template_lines(query: str, passages: list[dict]) -> list[st
     return lines
 
 
+def _subscription_refund_template_lines(query: str, passages: list[dict]) -> list[str]:
+    consumer_refund = _find_passage_index(
+        passages,
+        title_terms=("consumer protection",),
+        anchor_terms=("/sec-39",),
+    )
+    consumer_complaint = _find_passage_index(
+        passages,
+        title_terms=("consumer protection",),
+        anchor_terms=("/sec-35",),
+    )
+    consumer_procedure = _find_passage_index(
+        passages,
+        title_terms=("consumer protection",),
+        anchor_terms=("/sec-38",),
+    )
+    if consumer_refund is None and consumer_complaint is None and consumer_procedure is None:
+        return []
+    duration_phrase = "six-month paid subscription" if _has_any_term(query, ("6 months", "six months", "6-month", "six-month")) else "paid subscription"
+    issue_phrase = f"{duration_phrase} with no refund" if _has_any_term(query, ("refund", "no refund")) else f"{duration_phrase} service issue"
+    platform_phrase = "Hinge/Match Group" if _has_any_term(query, ("hinge", "match group")) else "digital-platform"
+    service_record = "account-freeze notice" if _has_any_term(query, ("froze", "frozen")) else "account-block or suspension record" if _has_any_term(query, ("blocked", "suspended")) else "service record"
+    evidence_phrase = f"payment proof, subscription screenshots, {service_record}, and customer-care record"
+    lines = ["**Short answer**"]
+    if consumer_refund is not None:
+        lines.append(
+            f"For a {platform_phrase} {issue_phrase}, the District Commission may order refund of the amount paid under the Consumer Protection Act source [{consumer_refund}]."
+        )
+    if consumer_complaint is not None:
+        lines.append(
+            f"Use the Consumer Protection Act complaint-route source for the paid-subscription service dispute, with {evidence_phrase} [{consumer_complaint}]."
+        )
+    elif consumer_procedure is not None:
+        lines.append(
+            f"Use the Consumer Protection Act procedure source for the paid-subscription service dispute, with {evidence_phrase} [{consumer_procedure}]."
+        )
+    lines.append("**What you can do next**")
+    if consumer_complaint is not None:
+        lines.append(
+            f"- File a complaint with the District Commission under Section 35 of the Consumer Protection Act 2019 with {evidence_phrase} [{consumer_complaint}]."
+        )
+    else:
+        action_cite = consumer_refund if consumer_refund is not None else consumer_procedure
+        lines.append(
+            f"- Prepare {evidence_phrase} before using the cited District Commission consumer route [{action_cite}]."
+        )
+    return lines
+
+
 def _juvenile_age_custody_template_lines(query: str, passages: list[dict]) -> list[str]:
     age_proof = _find_passage_index_by_text(
         passages,
@@ -2943,6 +5239,72 @@ def _itpa_spa_raid_template_lines(query: str, passages: list[dict]) -> list[str]
     return lines
 
 
+def _itpa_call_handling_template_lines(query: str, passages: list[dict]) -> list[str]:
+    itpa4 = _find_passage_index(
+        passages,
+        title_terms=("immoral traffic",),
+        anchor_terms=("/sec-4",),
+    )
+    itpa5 = _find_passage_index(
+        passages,
+        title_terms=("immoral traffic",),
+        anchor_terms=("/sec-5",),
+    )
+    itpa7 = _find_passage_index(
+        passages,
+        title_terms=("immoral traffic",),
+        anchor_terms=("/sec-7",),
+    )
+    itpa8 = _find_passage_index(
+        passages,
+        title_terms=("immoral traffic",),
+        anchor_terms=("/sec-8",),
+    )
+    bnss173 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-173",),
+    )
+    bail = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-480", "/sec-483"),
+    )
+    if itpa4 is None and itpa5 is None and itpa7 is None and itpa8 is None and bnss173 is None and bail is None:
+        return []
+    lines = ["**Short answer**"]
+    if itpa5 is not None:
+        lines.append(
+            f"Section 5 of the Immoral Traffic (Prevention) Act covers procuring, inducing or taking a person for the sake of prostitution [{itpa5}]."
+        )
+    elif itpa4 is not None:
+        lines.append(
+            f"The ITPA source on living on earnings is a separate section to compare with the alleged role and money trail [{itpa4}]."
+        )
+    if itpa7 is not None:
+        lines.append(
+            f"The ITPA source on prostitution in or near notified or public places is a separate factual route from phone calls alone [{itpa7}]."
+        )
+    if itpa8 is not None:
+        lines.append(
+            f"The soliciting source is also a separate section, so ask what section police are relying on before treating phone conversation as public soliciting [{itpa8}]."
+        )
+    if bnss173 is not None:
+        lines.append(
+            f"For current procedure, the BNSS FIR/information source matters if police record information or ask you to sign a statement; incident date decides BNSS versus CrPC framing [{bnss173}]."
+        )
+    action_cite = itpa5 if itpa5 is not None else itpa4 if itpa4 is not None else itpa8 if itpa8 is not None else itpa7 if itpa7 is not None else bnss173 if bnss173 is not None else bail
+    if itpa5 is not None:
+        action_line = f"- Compare whether police allege procuring, inducing or taking a person for the sake of prostitution under Section 5, and get the FIR or notice sections before deciding defence [{action_cite}]."
+    else:
+        action_line = f"- Get the FIR or notice sections and compare the alleged role with the cited ITPA section before deciding defence [{action_cite}]."
+    lines.extend([
+        "**What you can do next**",
+        action_line,
+    ])
+    return lines
+
+
 def _forest_false_dacoity_template_lines(query: str, passages: list[dict]) -> list[str]:
     fra3 = _find_passage_index_by_text(
         passages,
@@ -3037,6 +5399,176 @@ def _police_torture_complaint_template_lines(query: str, passages: list[dict]) -
     return lines
 
 
+def _joint_property_sale_template_lines(query: str, passages: list[dict]) -> list[str]:
+    tpa45 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-45",),
+    )
+    tpa44 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-44",),
+    )
+    specific31 = _find_passage_index(
+        passages,
+        title_terms=("specific relief",),
+        anchor_terms=("/sec-31",),
+    )
+    specific34 = _find_passage_index(
+        passages,
+        title_terms=("specific relief",),
+        anchor_terms=("/sec-34",),
+    )
+    if tpa45 is None and tpa44 is None and specific31 is None and specific34 is None:
+        return []
+    lines = ["**Short answer**"]
+    if tpa45 is not None:
+        lines.append(
+            f"For a plot bought by two people, first check the Transfer of Property Act joint-purchase source because it deals with transfers for consideration to two or more persons [{tpa45}]."
+        )
+    if tpa44 is not None:
+        lines.append(
+            f"If your brother sold what he could transfer as a co-owner, the co-owner transfer source is relevant, but the sale deed must be checked to see what share or interest was transferred [{tpa44}]."
+        )
+    if specific31 is not None:
+        lines.append(
+            f"If a sale deed affecting your share may cause serious injury if left outstanding, the Specific Relief Act cancellation source is the civil-court source to check [{specific31}]."
+        )
+    elif specific34 is not None:
+        lines.append(
+            f"If your ownership right or share is being denied, the Specific Relief Act declaration source is the civil-court source to check [{specific34}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = specific31 if specific31 is not None else specific34 if specific34 is not None else tpa45 if tpa45 is not None else tpa44
+    if specific31 is not None:
+        lines.append(
+            f"- For the civil-court step, check whether the sale deed is a written instrument that is void or voidable against you and may cause serious injury if left outstanding, because that is the cancellation route in the cited Specific Relief source [{specific31}]."
+        )
+    elif specific34 is not None:
+        lines.append(
+            f"- For the civil-court step, check whether your legal character or property right is being denied, because that is the declaration route in the cited Specific Relief source [{specific34}]."
+        )
+    else:
+        lines.append(
+            f"- For the property-record step, compare the registered sale deed, earlier purchase deed, payment proof, mutation record, and possession facts with the cited co-owner transfer source [{action_cite}]."
+        )
+    return lines
+
+
+def _ancestral_land_sale_template_lines(query: str, passages: list[dict]) -> list[str]:
+    hsa = _find_passage_index(
+        passages,
+        title_terms=("hindu succession",),
+        anchor_terms=("/sec-6", "/sec-8", "/sec-10"),
+    ) or _find_passage_index_by_text(
+        passages,
+        text_terms=("hindu succession act", "section 6"),
+    )
+    tpa44 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-44",),
+    )
+    tpa45 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-45",),
+    )
+    specific31 = _find_passage_index(
+        passages,
+        title_terms=("specific relief",),
+        anchor_terms=("/sec-31",),
+    )
+    specific34 = _find_passage_index(
+        passages,
+        title_terms=("specific relief",),
+        anchor_terms=("/sec-34",),
+    )
+    if hsa is None and tpa44 is None and tpa45 is None and specific31 is None and specific34 is None:
+        return []
+    lines = ["**Short answer**"]
+    if hsa is not None:
+        lines.append(
+            f"For ancestral or grandfather/dada land, the Hindu Succession source is the inheritance/share source to check before accepting an uncle's proposed sale as binding on everyone [{hsa}]."
+        )
+    if tpa44 is not None:
+        lines.append(
+            f"If one co-owner or heir sells, the Transfer of Property Act co-owner transfer source is relevant to check whether only that person's share or interest was transferred [{tpa44}]."
+        )
+    elif tpa45 is not None:
+        lines.append(
+            f"The Transfer of Property Act joint-interest source is relevant only after the deed and contribution/share facts are known [{tpa45}]."
+        )
+    if specific31 is not None:
+        lines.append(
+            f"If a registered sale deed wrongly affects your share, the Specific Relief Act cancellation source is the civil-court remedy to check [{specific31}]."
+        )
+    elif specific34 is not None:
+        lines.append(
+            f"If your heirship or share is denied, the Specific Relief Act declaration source is the civil-court remedy to check [{specific34}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = specific31 if specific31 is not None else specific34 if specific34 is not None else hsa if hsa is not None else tpa44 if tpa44 is not None else tpa45
+    lines.append(
+        f"- Get certified copies of the old title deed, mutation/khata, death certificate, family tree/legal-heir papers, proposed or registered sale deed, and possession proof before asking for injunction, declaration, partition, or cancellation in civil court [{action_cite}]."
+    )
+    return lines
+
+
+def _tenant_nonpayment_vacate_template_lines(query: str, passages: list[dict]) -> list[str]:
+    tpa106 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-106",),
+    )
+    if tpa106 is None:
+        tpa106 = _find_passage_index_by_text(
+            passages,
+            title_terms=("transfer of property",),
+            text_terms=("106. duration of certain leases", "terminable", "notice"),
+        )
+    tpa111 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-111",),
+    )
+    tpa105 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-105",),
+    )
+    if tpa106 is None and tpa111 is None and tpa105 is None:
+        return []
+    lines = ["**Short answer**"]
+    if tpa105 is not None:
+        lines.append(
+            f"Treat this first as a tenancy/lease dispute, because the Transfer of Property Act lease source is the starting point where it applies [{tpa105}]."
+        )
+    if tpa106 is not None:
+        lines.append(
+            f"For asking a tenant to vacate, the Transfer of Property Act notice source is important, subject to any state rent-control law that applies in your city [{tpa106}]."
+        )
+    if tpa111 is not None:
+        lines.append(
+            f"The lease-determination source is also relevant before filing for possession or rent arrears [{tpa111}]."
+        )
+    lines.append("**What you can do next**")
+    if tpa106 is not None:
+        lines.append(
+            f"- Collect the rent agreement, rent ledger/receipts, notices, and messages; then ask a local lawyer/legal-aid desk or rent authority/civil court about the notice and eviction route for your state [{tpa106}]."
+        )
+    elif tpa111 is not None:
+        lines.append(
+            f"- Collect the rent agreement, arrears calculation, possession facts, notices, and messages before filing through the rent authority or civil court route instead of self-help eviction [{tpa111}]."
+        )
+    elif tpa105 is not None:
+        lines.append(
+            f"- First confirm the rent agreement, possession status, monthly rent, arrears, and state/city law before choosing the rent authority or civil court route [{tpa105}]."
+        )
+    return lines
+
+
 def _property_pressure_transfer_template_lines(query: str, passages: list[dict]) -> list[str]:
     contract19 = _find_passage_index(
         passages,
@@ -3128,6 +5660,136 @@ def _property_pressure_transfer_template_lines(query: str, passages: list[dict])
         lines.append(
             f"- Build the challenge around the registered deed, medical or capacity records if relevant, witnesses, payment or gift details, and proof of pressure before the civil court step [{action_cite}]."
         )
+    return lines
+
+
+def _property_document_fraud_template_lines(query: str, passages: list[dict]) -> list[str]:
+    contract14 = _find_passage_index(
+        passages,
+        title_terms=("indian contract",),
+        anchor_terms=("/sec-14",),
+    )
+    contract16 = _find_passage_index(
+        passages,
+        title_terms=("indian contract",),
+        anchor_terms=("/sec-16",),
+    )
+    contract17 = _find_passage_index(
+        passages,
+        title_terms=("indian contract",),
+        anchor_terms=("/sec-17",),
+    )
+    contract19 = _find_passage_index(
+        passages,
+        title_terms=("indian contract",),
+        anchor_terms=("/sec-19",),
+    )
+    tpa122 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-122",),
+    )
+    tpa123 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-123",),
+    )
+    tpa126 = _find_passage_index(
+        passages,
+        title_terms=("transfer of property",),
+        anchor_terms=("/sec-126",),
+    )
+    registration = _find_passage_index(
+        passages,
+        title_terms=("registration act",),
+        anchor_terms=("/sec-17", "/sec-49"),
+    )
+    specific31 = _find_passage_index(
+        passages,
+        title_terms=("specific relief",),
+        anchor_terms=("/sec-31",),
+    )
+    specific34 = _find_passage_index(
+        passages,
+        title_terms=("specific relief",),
+        anchor_terms=("/sec-34",),
+    )
+    bns_forgery = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-336", "/sec-338", "/sec-340", "/sec-318"),
+    )
+    crpc_complaint = _find_passage_index(
+        passages,
+        title_terms=("criminal procedure",),
+        anchor_terms=("/sec-154", "/sec-156", "/sec-200"),
+    )
+    if (
+        contract14 is None and contract16 is None and contract17 is None and contract19 is None
+        and tpa122 is None and tpa123 is None and tpa126 is None
+        and registration is None and specific31 is None and specific34 is None and bns_forgery is None
+    ):
+        return []
+    deed_phrase = "gift deed" if "gift" in query else "property document"
+    lines = ["**Short answer**"]
+    if _has_any_term(query, ("thumb impression", "blank paper", "fake signature", "forged", "forgery", "didn't sign", "did not sign")) and (
+        contract16 is not None or contract17 is not None or contract19 is not None or tpa123 is not None or tpa122 is not None
+    ):
+        consent_cite = contract16 if contract16 is not None else contract19 if contract19 is not None else contract17
+        gift_cite = tpa123 if tpa123 is not None else tpa122
+        cited = [idx for idx in (consent_cite, gift_cite) if idx is not None]
+        citation_text = "".join(f"[{idx}]" for idx in cited[:2])
+        if citation_text:
+            lines.append(
+                f"For a thumb impression, blank paper, or disputed signature later shown as a {deed_phrase}, the free-consent and gift-deed sources are the first sources to check {citation_text}."
+            )
+    if contract16 is not None:
+        lines.append(
+            f"For a thumb impression or blank-paper signature later shown as a {deed_phrase}, first test free consent and undue influence under the Contract Act source, not just mutation or possession [{contract16}]."
+        )
+    elif contract14 is not None:
+        lines.append(
+            f"For a thumb impression or blank-paper signature later shown as a {deed_phrase}, first test whether consent was free under the Contract Act source [{contract14}]."
+        )
+    if contract17 is not None or contract19 is not None:
+        cite = contract19 if contract19 is not None else contract17
+        lines.append(
+            f"If the document was obtained by fraud, misrepresentation, coercion, or other non-free consent, the Contract Act source is the consent challenge to compare with proof [{cite}]."
+        )
+    if tpa122 is not None or tpa123 is not None:
+        cite = tpa123 if tpa123 is not None else tpa122
+        lines.append(
+            f"If the paper is a gift deed, the Transfer of Property Act gift-deed source must be checked with the registered document and attestation/registration facts [{cite}]."
+        )
+    if tpa126 is not None:
+        lines.append(
+            f"Gift revocation or suspension is a limited Transfer of Property Act question, so do not assume every family dispute automatically cancels a registered gift [{tpa126}]."
+        )
+    if registration is not None:
+        lines.append(
+            f"The Registration Act source matters because a registered immovable-property document must be challenged through the record and civil-court route rather than ignored orally [{registration}]."
+        )
+    if specific31 is not None:
+        lines.append(
+            f"For the court remedy, the Specific Relief Act cancellation source is the direct civil route if the written instrument is void or voidable against the owner and may cause serious injury if left outstanding [{specific31}]."
+        )
+    elif specific34 is not None:
+        lines.append(
+            f"For the court remedy, the Specific Relief Act declaration source can matter where ownership or legal character is denied [{specific34}]."
+        )
+    if bns_forgery is not None and not _query_mentions_pre_july_2024(query):
+        lines.append(
+            f"If the facts show a forged or false document, keep a separate police track; the retrieved BNS source is current-law support only, so the incident date still decides whether BNS/BNSS or IPC/CrPC applies [{bns_forgery}]."
+        )
+    if crpc_complaint is not None and _query_mentions_pre_july_2024(query):
+        lines.append(
+            f"For a pre-July-2024 alleged forged deed or signature, the CrPC complaint source is the police/Magistrate procedure to check alongside the civil cancellation route [{crpc_complaint}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = specific31 if specific31 is not None else specific34 if specific34 is not None else contract16 if contract16 is not None else contract19 if contract19 is not None else tpa123 if tpa123 is not None else registration if registration is not None else bns_forgery
+    lines.append(
+        f"- Get the certified copy of the deed, thumb-impression/signature proof, witness/medical or capacity facts, mutation record, possession papers, and notices, then ask for civil cancellation/declaration and record correction; add a police complaint only for the forgery facts [{action_cite}]."
+    )
     return lines
 
 
@@ -3410,19 +6072,63 @@ def _witch_accused_defence_template_lines(query: str, passages: list[dict]) -> l
     state_phrase = "Chhattisgarh " if "chhattisgarh" in query else ""
     incident_phrase = " after a child death" if _has_any_term(query, ("child died", "child death")) else ""
     label_phrase = "tonhi" if "tonhi" in query else "witch-branding"
+    if witch is None and bail is not None:
+        return [
+            "**Short answer**",
+            f"The BNSS source is a High Court or Court of Session bail-power source, so use it only if arrest or custody is involved in the {state_phrase}{label_phrase} false-case matter{incident_phrase} [{bail}].",
+            f"If there is arrest or custody in the {state_phrase}{label_phrase} false-case matter, the BNSS source says the High Court or Court of Session may direct release on bail [{bail}].",
+            "**What you can do next**",
+            f"- If arrest or custody is involved, take the FIR, custody status, and tonhi or witch-branding messages to the High Court or Court of Session bail route [{bail}].",
+        ]
     return [
         "**Short answer**",
-        (
-            f"For a {state_phrase}{label_phrase} false-case allegation{incident_phrase}, separate the accused-rights route from the state witch-branding-law route; the indexed witch-hunting source shows why witch-branding facts should not be treated as an ordinary village quarrel [{witch}]."
-            if witch is not None
-            else f"For a {state_phrase}{label_phrase} false-case allegation{incident_phrase}, the retrieved BNSS source points to the bail route if police arrest or custody is involved [{bail}]."
-        ),
+        f"For a {state_phrase}{label_phrase} false-case allegation{incident_phrase}, separate the accused-rights route from the state witch-branding-law route; the indexed witch-hunting source shows why witch-branding facts should not be treated as an ordinary village quarrel [{witch}].",
         "**What you can do next**",
         (
             "- Get the FIR or notice sections, incident date, custody status, and any messages using tonhi or "
             f"witch-branding words before filing the bail or defence application [{bail if bail is not None else witch}]."
         ),
     ]
+
+
+def _elder_498a_accused_template_lines(query: str, passages: list[dict]) -> list[str]:
+    bns85 = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-85", "/sec-86"),
+    )
+    bnss_bail = _find_passage_index(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-480", "/sec-483"),
+    )
+    crpc_bail = _find_passage_index(
+        passages,
+        title_terms=("criminal procedure",),
+        anchor_terms=("/sec-437", "/sec-438", "/sec-439"),
+    )
+    if bns85 is None and bnss_bail is None and crpc_bail is None:
+        return []
+    age_phrase = "your 71-year-old mother" if _has_any_term(query, ("71", "70", "old mother", "elderly mother")) else "the elderly family member"
+    lines = ["**Short answer**"]
+    if bns85 is not None:
+        lines.append(
+            f"For a false 498A/dowry-cruelty FIR naming {age_phrase}, first get the exact FIR sections and incident dates; the current BNS cruelty source is relevant only if the case is under the new criminal regime [{bns85}]."
+        )
+    if bnss_bail is not None:
+        lines.append(
+            f"If arrest is feared or notice/arrest has started, the BNSS bail source is the current-law bail route to check with age, medical papers, role in the household, and allegations in the FIR [{bnss_bail}]."
+        )
+    elif crpc_bail is not None:
+        lines.append(
+            f"If the FIR is from the older CrPC/IPC regime, use the CrPC bail/anticipatory-bail source instead of mixing it with current BNSS framing [{crpc_bail}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = bnss_bail if bnss_bail is not None else crpc_bail if crpc_bail is not None else bns85
+    lines.append(
+        f"- Collect the FIR, notice/arrest status, age and medical records, residence proof, call/location proof, and specific role alleged; then ask a criminal lawyer or DLSA about anticipatory/regular bail, quashing only if the FIR is plainly abusive, and cooperation conditions [{action_cite}]."
+    )
+    return lines
 
 
 def _ndps_bail_template_lines(query: str, passages: list[dict]) -> list[str]:
@@ -3505,14 +6211,18 @@ def _ndps_bail_template_lines(query: str, passages: list[dict]) -> list[str]:
         )
     if ndps36a is not None and custody_timeline_context:
         lines.append(
-            f"For {custody_phrase}, also check the charge-sheet and trial-stage timeline because the NDPS source deals with Special Court trial and custody procedure [{ndps36a}]."
+            f"For an NDPS case in long custody, Section 36A is the NDPS custody and Special Court procedure source to check [{ndps36a}]."
         )
-    if article21 is not None:
+    if article21 is not None and has_three_years and has_tihar:
+        lines.append(
+            f"For three years in Tihar custody after repeated NDPS bail rejection, Article 21 is the personal-liberty source for a custody-delay argument [{article21}]."
+        )
+    elif article21 is not None:
         lines.append(
             f"Article 21 protects life and personal liberty, so prolonged incarceration arguments should be built around custody duration and trial delay rather than a bare repeat bail request [{article21}]."
         )
     lines.append("**What you can do next**")
-    if ndps36a is not None and bnss_bail is None:
+    if ndps36a is not None:
         lines.append(
             f"- Collect the custody start date, remand papers, charge-sheet status, trial progress, and all bail rejection orders before approaching the Special NDPS Court or High Court [{ndps36a}]."
         )
@@ -3524,6 +6234,16 @@ def _ndps_bail_template_lines(query: str, passages: list[dict]) -> list[str]:
 
 
 def _ndps_personal_use_template_lines(query: str, passages: list[dict]) -> list[str]:
+    ndps43 = _find_passage_index(
+        passages,
+        title_terms=("narcotic drugs and psychotropic substances",),
+        anchor_terms=("/sec-43",),
+    )
+    ndps14 = _find_passage_index(
+        passages,
+        title_terms=("narcotic drugs and psychotropic substances",),
+        anchor_terms=("/sec-14",),
+    )
     ndps20 = _find_passage_index(
         passages,
         title_terms=("narcotic drugs and psychotropic substances",),
@@ -3544,16 +6264,34 @@ def _ndps_personal_use_template_lines(query: str, passages: list[dict]) -> list[
         title_terms=("narcotic drugs and psychotropic substances",),
         anchor_terms=("/sec-2",),
     )
-    if ndps20 is None and ndps22 is None and ndps37 is None and ndps2 is None:
+    if ndps20 is None and ndps22 is None and ndps37 is None and ndps2 is None and ndps43 is None and ndps14 is None:
         return []
     lines = ["**Short answer**"]
-    if ndps20 is not None and _has_any_term(query, ("cannabis", "weed", "ganja", "hash", "thc", "vape")):
+    is_bhang = _has_any_term(query, ("bhang", "bhang lassi"))
+    if is_bhang and ndps2 is not None:
+        lines.append(
+            f"For bhang or bhang-lassi facts, start with the NDPS definition source and compare the exact substance in the seizure memo before estimating punishment [{ndps2}]."
+        )
+    elif is_bhang and ndps43 is not None:
+        lines.append(
+            f"Section 43 is only a public-place seizure and arrest power for narcotic drugs or psychotropic substances when an NDPS offence is believed [{ndps43}]."
+        )
+        if ndps14 is not None:
+            lines.append(
+                f"Section 14 is a special cannabis-cultivation provision, not a bhang-lassi classification answer [{ndps14}]."
+            )
+    elif ndps20 is not None and _has_any_term(query, ("cannabis", "weed", "ganja", "hash", "thc", "vape")):
         lines.append(
             f"Do not treat this as only a vaping issue: the NDPS source for cannabis-related possession/punishment must be checked against the seizure memo and quantity [{ndps20}]."
         )
     elif ndps22 is not None:
+        substance_phrase = "MDMA" if "mdma" in query else "the seized oil or psychotropic substance"
         lines.append(
-            f"If the seized oil is treated as a psychotropic substance, the NDPS source for psychotropic-substance possession/punishment is the section to check against the lab report and quantity [{ndps22}]."
+            f"If {substance_phrase} is treated as a psychotropic substance, the NDPS source for psychotropic-substance possession/punishment is the section to check against the lab report and quantity [{ndps22}]."
+        )
+    elif ndps14 is not None and _has_any_term(query, ("personal use", "small quantity", "gram", "grams", "5g", "5 gram", "5 grams")):
+        lines.append(
+            f"Do not prove small quantity from the words 'personal use' alone; the NDPS source retrieved here is not enough by itself, so the seizure memo, substance name, lab/FSL report, and applicable quantity notification must be checked [{ndps14}]."
         )
     elif ndps2 is not None:
         lines.append(
@@ -3564,10 +6302,15 @@ def _ndps_personal_use_template_lines(query: str, passages: list[dict]) -> list[
             f"If police allege commercial quantity or a serious NDPS charge, the NDPS bail source adds a stricter bail filter [{ndps37}]."
         )
     lines.append("**What you can do next**")
-    action_cite = ndps20 if ndps20 is not None else ndps22 if ndps22 is not None else ndps2 if ndps2 is not None else ndps37
-    lines.append(
-        f"- Get the seizure memo, lab/FSL report, quantity, FIR/complaint sections, and arrest or notice papers before asking a lawyer to assess punishment or bail exposure [{action_cite}]."
-    )
+    action_cite = ndps2 if is_bhang and ndps2 is not None else ndps43 if is_bhang and ndps43 is not None else ndps20 if ndps20 is not None else ndps22 if ndps22 is not None else ndps2 if ndps2 is not None else ndps37 if ndps37 is not None else ndps14
+    if is_bhang and ndps43 is not None and ndps2 is None:
+        lines.append(
+            f"- Use the seizure memo to check whether police are relying on a narcotic drug or psychotropic substance before treating the bhang-lassi fact as an NDPS offence [{action_cite}]."
+        )
+    else:
+        lines.append(
+            f"- Get the seizure memo, lab/FSL report, quantity, FIR/complaint sections, and arrest or notice papers before asking a lawyer to assess punishment or bail exposure [{action_cite}]."
+        )
     return lines
 
 
@@ -4071,6 +6814,43 @@ def _drug_inspector_template_lines(passages: list[dict]) -> list[str]:
     return lines
 
 
+def _municipal_shop_sealing_template_lines(query: str, passages: list[dict]) -> list[str]:
+    rti = _find_passage_index(
+        passages,
+        title_terms=("right to information",),
+        anchor_terms=("/sec-6", "/sec-7", "/sec-19"),
+    )
+    shops = _find_passage_index(
+        passages,
+        title_terms=("shops", "establishments", "establishment"),
+    )
+    street_vendor = _find_passage_index(
+        passages,
+        title_terms=("street vendors", "street vendor"),
+    )
+    if rti is None and shops is None and street_vendor is None:
+        return []
+    lines = ["**Short answer**"]
+    if rti is not None:
+        lines.append(
+            f"For a municipality sealing a shop, the safe first step is not to guess the Gujarat/city by-law from generic judgments; get the sealing order, show-cause notice, inspection file, and written reasons, and use RTI if the office will not give them [{rti}]."
+        )
+    if shops is not None:
+        lines.append(
+            f"If the issue is shop registration or trade-licence compliance, match the notice to the shops/establishment or licence source before deciding whether to seek de-sealing, compounding, appeal, or court relief [{shops}]."
+        )
+    elif street_vendor is not None and _has_any_term(query, ("vendor", "hawker", "street")):
+        lines.append(
+            f"If this is actually a street-vending spot rather than a fixed shop, keep the street-vendor route separate because the forum and release process may differ [{street_vendor}]."
+        )
+    lines.append("**What you can do next**")
+    action_cite = rti if rti is not None else shops if shops is not None else street_vendor
+    lines.append(
+        f"- Take the sealing order, licence/trade registration, lease or ownership papers, fee/tax receipts, photos, and hearing date to the municipal ward/licensing office or Commissioner/appellate authority named in the order; use DLSA/local counsel urgently if goods, livelihood, or a deadline is at risk [{action_cite}]."
+    )
+    return lines
+
+
 def _traffic_bribe_template_lines(passages: list[dict]) -> list[str]:
     mv_sec3 = _find_passage_index(passages, title_terms=("motorvehicles", "motor vehicles"), anchor_terms=("/sec-3",))
     pca_sec7 = _find_passage_index(passages, title_terms=("prevention of corruption",), anchor_terms=("/sec-7",))
@@ -4184,6 +6964,181 @@ def _has_any_term(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
 
 
+def _query_mentions_pre_july_2024(text: str) -> bool:
+    if _has_any_term(text, (
+        "before 1 july 2024", "pre-1 july 2024", "pre 1 july 2024",
+        "before july 2024", "pre july 2024", "ipc", "crpc",
+    )):
+        return True
+    years = [int(match.group(0)) for match in re.finditer(r"\b(?:19|20)\d{2}\b", text)]
+    return bool(years and min(years) < 2024)
+
+
+def _is_police_picked_fir_copy_query(text: str) -> bool:
+    picked = _has_any_term(text, ("police picked", "police took", "picked my", "took my", "utha liya", "detained", "arrested"))
+    fir_copy = _has_any_term(text, ("fir copy", "copy of fir", "no fir copy", "not got fir", "not received fir"))
+    family = _has_any_term(text, ("son", "daughter", "husband", "wife", "brother", "father", "mother", "family"))
+    return picked and fir_copy and (family or "from my home" in text)
+
+
+def _is_theft_fir_refusal_query(text: str) -> bool:
+    theft = _has_any_term(text, ("bike", "scooter", "vehicle", "phone", "stolen", "theft", "steal"))
+    refusal = _has_any_term(text, ("not filing fir", "not file fir", "refusing fir", "refused fir", "police not filing", "police refused"))
+    return theft and refusal
+
+
+def _is_school_admission_denial_query(text: str) -> bool:
+    school = _has_any_term(text, ("school", "admission", "admission exam", "entrance"))
+    denial = _has_any_term(text, ("denied", "refused", "not admitting", "reject", "rejected", "clearing admission"))
+    return school and denial
+
+
+def _is_joint_property_sale_query(text: str) -> bool:
+    property_context = _has_any_term(text, ("plot", "land", "house", "flat", "property"))
+    sale = _has_any_term(text, ("sold", "sale", "transferred", "registered"))
+    joint = _has_any_term(text, ("together", "joint", "jointly", "co-owner", "co owner", "brother and i", "sister and i"))
+    return property_context and sale and joint
+
+
+def _is_ancestral_land_sale_query(text: str) -> bool:
+    property_context = _has_any_term(text, ("ancestral", "dada", "grandfather", "grandfather's", "father name", "father's name")) and _has_any_term(text, ("land", "plot", "house", "property"))
+    sale_context = _has_any_term(text, ("selling", "sold", "sale", "sale deed", "transfer", "transferred", "mutation"))
+    family_context = _has_any_term(text, ("uncle", "brother", "cousin", "family", "heir", "legal heir"))
+    secrecy_or_consent = _has_any_term(text, ("without telling", "without consent", "without informing", "not told", "behind our back", "my share", "our share"))
+    return property_context and sale_context and (family_context or secrecy_or_consent)
+
+
+def _is_tenant_nonpayment_vacate_query(text: str) -> bool:
+    tenancy = _has_any_term(text, ("tenant", "landlord", "rent agreement", "lease"))
+    problem = _has_any_term(text, ("not vacating", "not leaving", "not paying rent", "rent arrears", "unpaid rent", "evict", "eviction"))
+    return tenancy and problem
+
+
+def _is_property_document_fraud_query(text: str) -> bool:
+    property_context = _has_any_term(text, (
+        "gift deed", "registered gift", "property transfer", "house",
+        "flat", "land", "plot", "thumb impression", "sale deed",
+    ))
+    document_dispute = _has_any_term(text, (
+        "blank paper", "produced as", "under pressure", "coercion",
+        "undue influence", "didn't sign", "did not sign", "fake signature",
+        "forged", "forgery", "fraud", "challenge", "cancel",
+    ))
+    return property_context and document_dispute
+
+
+def _is_b2b_defective_goods_query(text: str) -> bool:
+    commercial_context = _has_any_term(text, (
+        "supplier", "vendor", "buyer", "purchase order", "po ",
+        "invoice", "dealer", "company", "business",
+    ))
+    goods_context = _has_any_term(text, (
+        "goods", "material", "materials", "stock", "inventory",
+        "machine", "machinery", "equipment", "parts",
+    ))
+    defect_or_refund = _has_any_term(text, (
+        "defective", "quality issue", "poor quality", "not as per",
+        "reject", "rejection", "refusing refund", "refund",
+        "replace", "damaged",
+    ))
+    return commercial_context and goods_context and defect_or_refund
+
+
+def _is_marriage_misrepresentation_query(text: str) -> bool:
+    marriage = _has_existing_or_completed_marriage_terms(text)
+    misrep = _has_any_term(text, ("lied", "lies", "false", "fraud", "misrepresent", "concealed", "hid", "fake"))
+    life_fact = _has_any_term(text, ("job", "salary", "income", "work", "employment", "qualification", "education", "health", "disease", "hiv", "hiv positive", "aids", "already married"))
+    return marriage and misrep and life_fact
+
+
+def _is_pre_marriage_health_disclosure_query(text: str) -> bool:
+    pre_marriage = _has_any_term(text, (
+        "supposed to marry", "marry next month", "marriage next month",
+        "wedding next month", "before marriage", "not married yet",
+        "engagement", "engaged", "fiance", "fiancee",
+        "prospective bride", "prospective groom",
+    ))
+    health = _has_any_term(text, ("hiv", "hiv positive", "aids", "std", "sti", "disease", "health issue", "medical condition"))
+    disclosure = _has_any_term(text, ("hid", "hide", "hides", "concealed", "did not tell", "didn't tell", "found out", "lied", "false"))
+    return pre_marriage and health and disclosure
+
+
+def _has_existing_or_completed_marriage_terms(text: str) -> bool:
+    if _has_any_term(text, (
+        "not married", "not married yet", "never married", "marriage not happened",
+        "wedding not happened", "wedding cancelled", "engagement", "engaged",
+        "fiance", "fiancee", "prospective bride", "prospective groom",
+    )) and not _has_any_term(text, ("husband", "wife", "spouse")):
+        return False
+    return _has_any_term(text, (
+        "husband", "wife", "spouse", "married", "got married", "after marriage",
+        "after wedding", "wedding happened", "marriage happened", "marriage took place",
+        "wedding took place", "marriage certificate", "our marriage", "my marriage",
+    ))
+
+
+def _is_marital_intimacy_breakdown_query(text: str) -> bool:
+    spouse = _has_any_term(text, ("wife", "husband", "spouse", "marriage", "married"))
+    intimacy = _has_any_term(text, (
+        "denies sex", "denied sex", "denying sex", "refuses sex", "refusing sex",
+        "no sex", "physical relation", "physical relationship",
+        "denying physical relation", "denying physical relationship",
+        "conjugal", "intimacy",
+    ))
+    return spouse and intimacy
+
+
+def _is_marital_sexual_violence_query(text: str) -> bool:
+    if _is_wife_as_aggressor_query(text):
+        return False
+    spouse = _has_any_term(text, ("wife", "husband", "spouse", "marriage", "married"))
+    explicit_sexual_context = _has_any_term(text, (
+        "sex", "sexual", "intimacy", "physical relation", "physical relationship",
+        "touch", "touching", "rape", "marital rape", "bedroom",
+    ))
+    coercion_without_explicit_sex = _has_any_term(text, (
+        "even when i say no", "when i say no", "without consent",
+    ))
+    if coercion_without_explicit_sex and not explicit_sexual_context:
+        return False
+    coercion = _has_any_term(text, (
+        "forces sex", "force sex", "forced sex", "marital rape",
+        "even when i say no", "sex when i say no", "without consent",
+        "forces me at night", "forced me at night",
+    ))
+    return spouse and coercion
+
+
+def _is_streedhan_return_query(text: str) -> bool:
+    family_context = _has_any_term(text, (
+        "in-laws", "in laws", "sasural", "husband", "wife",
+        "daughter in law", "daughter-in-law", "widow", "after husband died",
+    ))
+    property_context = _has_any_term(text, (
+        "streedhan", "stridhan", "jewellery", "jewelry", "gold",
+        "ornaments",
+    ))
+    withholding_context = _has_any_term(text, (
+        "not giving", "not returning", "refusing", "kept", "took",
+        "withholding", "return",
+    ))
+    return family_context and property_context and withholding_context
+
+
+def _is_mtp_privacy_divorce_query(text: str) -> bool:
+    mtp_context = _has_any_term(text, (
+        "abortion", "mtp", "pregnancy termination", "terminated pregnancy",
+    ))
+    marital_context = _has_any_term(text, (
+        "husband", "wife", "spouse", "marriage", "divorce",
+    ))
+    threat_or_disclosure = _has_any_term(text, (
+        "threat", "threatening", "found out", "tell everyone",
+        "disclose", "privacy", "old", "years back", "5 years",
+    ))
+    return mtp_context and marital_context and threat_or_disclosure
+
+
 def _extract_worker_count(text: str) -> int | None:
     match = re.search(r"\b(\d{1,3})\s+workers?\b", text)
     if not match:
@@ -4195,6 +7150,18 @@ def _is_mining_displacement_query(text: str) -> bool:
     mining = _has_any_term(text, ("iron ore", "mine", "mining", "coal block", "bauxite"))
     displacement = _has_any_term(text, ("displaced", "displacement", "rehabilitation", "resettlement", "no compensation"))
     return mining and displacement
+
+
+def _is_mining_gram_sabha_noc_query(text: str) -> bool:
+    mining = _has_any_term(text, (
+        "iron ore", "mine", "mining", "coal block", "bauxite", "minerals",
+        "minor mineral", "minor minerals", "sand mining", "sand lease",
+        "stone quarry", "quarry lease", "quarry",
+    ))
+    scheduled_area = _has_any_term(text, ("gram sabha", "palli sabha", "pesa", "scheduled area", "bastar", "tribal village", "adivasi village"))
+    approval = _has_any_term(text, ("noc", "clearance", "approval", "lease", "project", "land acquired", "acquired for", "acquisition"))
+    challenge = _has_any_term(text, ("challenge", "without", "missing", "not taken", "not given", "no gram sabha", "consulting", "consultation", "consent"))
+    return mining and scheduled_area and (approval or challenge)
 
 
 def _is_land_acquisition_compensation_query(text: str) -> bool:
@@ -4244,6 +7211,53 @@ def _is_banking_ombudsman_credit_query(text: str) -> bool:
     return regulated_entity and (bank_error or credit_reporting)
 
 
+def _is_bank_debit_service_query(text: str) -> bool:
+    if _has_any_term(text, ("otp", "phishing", "fake call", "fake cbi", "digital arrest", "scam", "hacked")):
+        return False
+    bank_context = _has_any_term(text, ("bank", "hdfc", "icici", "sbi", "axis", "kotak", "forex", "card"))
+    debit_context = _has_any_term(text, (
+        "wrongly debited", "unauthorized debit", "unauthorised debit",
+        "forex transaction", "forex debit", "debit transaction",
+        "debited twice", "wrong charge", "chargeback", "transaction dispute",
+    ))
+    return bank_context and debit_context
+
+
+def _is_medical_negligence_query(text: str) -> bool:
+    if _has_any_term(text, ("jail", "prison", "custody", "lockup", "undertrial")):
+        return False
+    medical_context = _has_any_term(text, ("hospital", "doctor", "clinic", "surgeon", "operation", "operated", "surgery"))
+    harm_context = _has_any_term(text, (
+        "wrong leg", "wrong limb", "wrong surgery", "wrong operation",
+        "operated wrong", "wrong injection", "medical negligence",
+        "hospital negligence", "doctor negligence", "without consent",
+        "died", "death", "compensation",
+    ))
+    return medical_context and harm_context
+
+
+def _is_posh_retaliation_query(text: str) -> bool:
+    complaint_context = _has_any_term(text, (
+        "posh", "sexual harassment", "icc", "internal committee", "local committee",
+        "harassment complaint", "complained to hr", "complained against",
+        "complaint against my manager", "complaint to hr",
+    ))
+    workplace_context = _has_any_term(text, ("manager", "boss", "hr", "office", "workplace", "reporting manager"))
+    retaliation_context = _has_any_term(text, ("pip", "bad rating", "retaliation", "performance improvement", "warning", "rating"))
+    harassment_context = _has_any_term(text, ("harassment", "harass", "sexual", "touch", "late night", "alone"))
+    return workplace_context and retaliation_context and (complaint_context or harassment_context)
+
+
+def _is_itpa_call_handling_query(text: str) -> bool:
+    itpa_context = _has_any_term(text, ("itpa", "pita", "immoral traffic"))
+    role_context = _has_any_term(text, (
+        "phone", "call", "calls", "whatsapp", "paying clients", "clients",
+        "booking", "bookings", "take bookings", "took bookings",
+        "only talking", "not meet", "not meeting", "did not meet",
+    ))
+    return itpa_context and role_context
+
+
 def _is_trademark_opposition_query(text: str) -> bool:
     return _has_any_term(text, (
         "opposed", "opposition", "counter statement", "counter-statement",
@@ -4256,14 +7270,32 @@ def _is_tribal_land_transfer_query(text: str) -> bool:
     tribal = _has_any_term(text, (
         "tribal", "adivasi", "scheduled tribe", "munda", "santhal",
         "non tribal", "non-tribal", "cnt", "chota nagpur", "jharkhand",
+        "scheduled area", "agency area", "agency village",
     ))
     land = _has_any_term(text, ("land", "plot", "raiyat", "khata", "khatian"))
     transfer = _has_any_term(text, (
         "mortgage", "sahukar", "moneylender", "refusing return",
         "refusing to return", "grabbed", "land grab", "sold", "transfer",
-        "restoration", "restore",
+        "transferred", "restoration", "restore", "without my consent",
+        "without our consent", "mutation", "mutation record", "record changed",
+        "khata changed", "patwari changed", "non tribal buyer", "non-tribal buyer",
+        "buyer", "giving my", "giving our", "giving his", "giving her",
     ))
     return tribal and land and transfer
+
+
+def _is_fra_forest_rights_query(text: str) -> bool:
+    fra = _has_any_term(text, (
+        "fra", "forest rights", "fra 2006", "fra claim", "ifr", "cfr",
+        "forest rights committee", "frc", "sdlc", "dlc", "community forest",
+    ))
+    forest_right = _has_any_term(text, (
+        "patta", "title", "claim form", "gram sabha", "bamboo", "tendu",
+        "mahua", "minor forest produce", "forest produce", "forest guard",
+        "forest guards", "forest officer", "reserved", "husband signature",
+        "joint title", "rejected", "not giving", "without reason",
+    ))
+    return fra and forest_right
 
 
 def _is_cab_aggregator_driver_query(text: str) -> bool:
@@ -4297,6 +7329,19 @@ def _is_online_gambling_query(text: str) -> bool:
         "legal", "illegal", "allowed", "ban", "banned", "50k", "lakh",
     ))
     return gambling_context and stake_context
+
+
+def _is_digital_kyc_account_freeze_query(text: str) -> bool:
+    platform = _has_any_term(text, (
+        "app", "platform", "wallet", "account", "gaming", "online game",
+        "blue trunks", "dream11", "parimatch", "rummy", "binance", "usdt",
+    ))
+    freeze_or_kyc = _has_any_term(text, (
+        "kyc", "froze", "frozen", "freeze", "blocked", "suspended",
+        "pending", "stuck", "withheld", "not releasing",
+    ))
+    money = _has_any_term(text, ("80k", "50k", "lakh", "money", "balance", "fund", "funds", "withdraw"))
+    return platform and freeze_or_kyc and money
 
 
 def _is_caste_certificate_query(text: str) -> bool:
@@ -4352,8 +7397,37 @@ def _is_discriminatory_retrenchment_query(text: str) -> bool:
     return retrenchment and same_work and identity
 
 
+def _is_employment_retaliation_pip_query(text: str) -> bool:
+    workplace = _has_any_term(text, (
+        "manager", "boss", "hr", "company", "employer", "reporting manager",
+        "office", "workplace", "supervisor",
+    ))
+    complaint = _has_any_term(text, (
+        "complained", "complaint", "grievance", "harassment", "harass",
+        "retaliation", "retaliate",
+    ))
+    pip = _has_any_term(text, (
+        "pip", "performance improvement plan", "bad rating", "poor rating",
+        "performance issue", "warning", "disciplinary", "performance review",
+    ))
+    return workplace and complaint and pip
+
+
 def _is_private_magistrate_complaint_query(text: str) -> bool:
     return _has_any_term(text, ("private complaint", "complaint before magistrate", "magistrate complaint", "police inaction", "156(3)", "156 3", "section 156", "section 200"))
+
+
+def _is_writ_constitution_query(text: str) -> bool:
+    return _has_any_term(text, ("writ", "mandamus", "article 226", "article 32"))
+
+
+def _is_vakalatnama_change_query(text: str) -> bool:
+    lawyer_change = _has_any_term(text, (
+        "vakalatnama", "change advocate", "change of advocate",
+        "new advocate", "change lawyer", "new lawyer", "replace lawyer",
+    ))
+    pending_case = _has_any_term(text, ("pending suit", "pending case", "civil suit", "case pending", "during pending"))
+    return lawyer_change and (pending_case or "vakalatnama" in text)
 
 
 def _is_caste_fir_refusal_query(text: str) -> bool:
@@ -4369,6 +7443,130 @@ def _is_domestic_acid_threat_query(text: str) -> bool:
     return domestic_context and acid_context and threat_context
 
 
+def _is_domestic_violence_safety_query(text: str) -> bool:
+    if _is_wife_as_aggressor_query(text):
+        return False
+    family_context = _has_any_term(text, (
+        "husband", "wife", "in laws", "in-laws", "sasural", "mother in law",
+        "father in law", "marriage", "married", "domestic violence",
+        "live in partner", "live-in partner", "he gets angry", "he slaps",
+        "my parents say all marriages",
+    ))
+    safety_context = _has_any_term(text, (
+        "slap", "slapped", "slaps", "beat", "beaten", "beating",
+        "hit me", "hits me", "hitting me", "pushed", "threat",
+        "threaten", "threatening", "unsafe", "ghar se nikal",
+        "nikal diya", "threw me out", "kicked me out", "raat ko",
+        "should i stay", "sorry next day", "dowry", "dahej", "taunts",
+        "salary", "atm card", "bank card", "breadwinner", "not giving money",
+        "groceries", "forces me", "force me",
+    ))
+    return family_context and safety_context
+
+
+def _is_bank_account_freeze_query(text: str) -> bool:
+    non_bank_account_context = _has_any_term(text, (
+        "instagram", "facebook", "meta", "youtube", "google", "gmail",
+        "twitter", "x account", "whatsapp", "telegram", "amazon seller",
+        "flipkart seller", "seller account", "merchant account",
+        "zerodha", "groww", "upstox", "demat", "trading account",
+        "binance", "crypto", "usdt", "wallet", "gaming", "dream11",
+        "parimatch", "rummy", "creator account", "payout account",
+    ))
+    bank_context = _has_any_term(text, (
+        "bank", "bank account", "savings account", "current account",
+        "salary account", "loan account", "jan dhan account", "upi account",
+        "sbi", "hdfc", "icici", "axis", "kotak", "pnb", "canara",
+        "bob", "bank of baroda", "union bank", "idfc", "yes bank",
+        "rbi", "nbfc",
+    ))
+    freeze_context = _has_any_term(text, (
+        "bank account frozen", "bank account is frozen", "bank account froze",
+        "savings account frozen", "current account frozen", "account freeze",
+        "bank account freeze", "bank account blocked",
+        "account lien", "bank account lien", "lien marked", "freeze my account",
+        "debit freeze", "credit freeze", "kyc hold",
+    ))
+    if non_bank_account_context and not bank_context:
+        return False
+    return bank_context and freeze_context
+
+
+def _is_loan_app_harassment_query(text: str) -> bool:
+    app_context = bool(re.search(r"\bloan\s+apps?\b", text)) or _has_any_term(text, (
+        "instant loan app", "online loan app", "digital lending app",
+        "cash loan app", "loan recovery app", "finance app",
+    ))
+    lender_context = app_context or (
+        _has_any_term(text, ("nbfc", "finance company", "recovery agent", "recovery agents"))
+        and _has_any_term(text, ("app", "contacts", "harass", "harassing"))
+    )
+    harassment_context = _has_any_term(text, (
+        "harass", "harassing", "harassment", "calling my contacts",
+        "calling contacts", "contacting contacts", "harassing my contacts",
+        "harassing contacts", "sent message to contacts", "messages to contacts",
+        "contact list", "abusing contacts", "threatening contacts",
+        "recovery calls", "threatening cibil", "threaten cibil",
+        "morphed photo", "abusive message", "blackmail",
+    ))
+    return lender_context and harassment_context
+
+
+def _is_municipal_shop_sealing_query(text: str) -> bool:
+    shop_context = _has_any_term(text, (
+        "shop", "dukan", "store", "restaurant", "hotel", "clinic", "godown",
+        "warehouse", "commercial premises", "business premises", "showroom",
+        "office sealed", "factory sealed",
+    ))
+    municipal_context = _has_any_term(text, (
+        "municipality", "municipal", "municipal corporation", "corporation",
+        "ward office", "nagar palika", "nagarpalika", "mcd", "bmc",
+        "local body",
+    ))
+    sealing_context = _has_any_term(text, (
+        "sealed", "seal", "sealing", "locked", "closed my shop",
+        "shop closed", "closure notice", "demolition notice",
+    ))
+    return shop_context and municipal_context and sealing_context
+
+
+def _is_pan_aadhaar_mismatch_query(text: str) -> bool:
+    pan_context = _has_any_term(text, ("pan", "pan card", "income tax portal"))
+    aadhaar_context = _has_any_term(text, ("aadhaar", "aadhar", "uidai"))
+    mismatch_context = _has_any_term(text, (
+        "mismatch", "not matching", "does not match", "doesn't match",
+        "name different", "dob different", "date of birth different",
+        "linking failed", "link failed", "cannot link", "not linking",
+    ))
+    return pan_context and aadhaar_context and mismatch_context
+
+
+def _is_wife_as_aggressor_query(text: str) -> bool:
+    wife_context = _has_any_term(text, (
+        "my wife", "wife slapped", "wife hit", "wife beat", "wife took",
+        "wife threw", "wife kicked", "wife threatens", "wife threatened",
+    ))
+    first_person_victim = _has_any_term(text, (
+        "slapped me", "hit me", "beat me", "beats me", "hitting me",
+        "threatens me", "threatened me", "threatening me", "abuses me",
+        "forces sex", "force sex", "forced sex", "sex without consent",
+        "sexual assault", "sexually assaulted me", "sexually assaulting me",
+        "assaulted me sexually",
+        "took my salary", "takes my salary", "my salary", "my atm",
+        "atm card", "bank card", "not giving me money", "against me",
+        "threw me out", "kicked me out", "locked me out", "not allowing me entry",
+        "not letting me enter", "not letting me in", "not allowing me in",
+        "took my jewellery", "took my jewelry", "took my gold", "my jewellery",
+        "my jewelry", "my gold", "my documents", "took my property",
+        "stole my property", "sold my property", "transferred my property",
+        "took my house papers", "sold my house", "transferred my house",
+    ))
+    return wife_context and first_person_victim and not _has_any_term(text, (
+        "my husband", "husband slapped", "husband hit", "husband beat",
+        "husband took",
+    ))
+
+
 def _is_honour_or_threat_query(text: str) -> bool:
     honour_context = _has_any_term(text, ("khap", "honour", "honor", "eloped", "inter religion", "inter-religion", "other religion"))
     threat_context = _has_any_term(text, ("threat", "threatening", "harm", "violence", "attack"))
@@ -4381,6 +7579,21 @@ def _is_witness_or_false_evidence_threat_query(text: str) -> bool:
     return witness_context and threat_context
 
 
+def _is_prison_mulaqat_query(text: str) -> bool:
+    prison_context = _has_any_term(text, ("jail", "prison", "tihar", "yerwada", "arthur road", "byculla"))
+    visit_context = _has_any_term(text, ("mulaqat", "mulakat", "interview", "visit", "visitation", "meet"))
+    restriction_context = _has_any_term(text, ("30 min", "30 minutes", "once a week", "only", "more", "denied", "not allowing"))
+    return prison_context and visit_context and restriction_context
+
+
+def _is_elder_498a_accused_query(text: str) -> bool:
+    accused_498a = _has_any_term(text, ("498a", "dowry case", "dowry-cruelty")) and _has_any_term(text, (
+        "false", "named", "accused", "against", "filed by wife", "son wife", "daughter in law", "daughter-in-law",
+    ))
+    elder_context = _has_any_term(text, ("mother", "father", "mother in law", "father in law", "elderly", "old", "70", "71", "72", "73", "74", "75"))
+    return accused_498a and elder_context
+
+
 def _is_arrest_production_delay_query(text: str) -> bool:
     arrest_context = _has_any_term(text, ("arrest", "arrested", "detained", "custody", "lockup", "police picked", "utha liya"))
     production_context = _has_any_term(text, ("magistrate", "not produced", "produce before", "produced before", "24 hours", "twenty four hours", "kab le jana", "court ke samne"))
@@ -4390,7 +7603,12 @@ def _is_arrest_production_delay_query(text: str) -> bool:
 
 def _is_ration_portability_query(text: str) -> bool:
     ration_context = _has_any_term(text, ("ration", "pds", "public distribution", "foodgrain", "food grain"))
-    denial_context = _has_any_term(text, ("not working", "no rice", "denied", "refused", "not happening", "portability", "one nation", "shop"))
+    denial_context = _has_any_term(text, (
+        "not working", "no rice", "denied", "refused", "not happening",
+        "portability", "one nation", "shop", "cancelled", "canceled",
+        "mismatch", "aadhaar mismatch", "aadhar mismatch", "renew", "renewal",
+        "bdo", "blocked", "deleted",
+    ))
     return ration_context and denial_context
 
 
@@ -4410,6 +7628,46 @@ def _is_kanya_vivah_scheme_query(text: str) -> bool:
         "no money", "money not", "payment not", "status", "office not",
     ))
     return scheme_context and nonpayment_context
+
+
+def _is_mgnrega_wage_query(text: str) -> bool:
+    mgnrega_context = _has_any_term(text, (
+        "nrega", "mgnrega", "job card", "muster roll", "gram sabha", "social audit",
+    ))
+    wage_context = _has_any_term(text, (
+        "wage", "wages", "paid", "payment", "not paid", "pending", "mukhiya",
+        "sarpanch", "work done", "work", "days",
+    ))
+    return mgnrega_context and wage_context
+
+
+def _is_non_compete_query(text: str) -> bool:
+    return _has_any_term(text, (
+        "non compete", "non-compete", "restraint of trade", "restrictive covenant",
+    ))
+
+
+def _is_gst_itc_mismatch_query(text: str) -> bool:
+    if _has_any_term(text, ("rule 86b", "86b", "1% cash", "1 percent cash", "one percent cash")):
+        return False
+    has_gst = _has_any_term(text, ("gst", "cgst", "gstr", "gstr 3b", "gstr 2a", "3b", "2a"))
+    has_itc = _has_any_term(text, ("itc", "input tax credit"))
+    has_mismatch_or_reversal = _has_any_term(text, ("mismatch", "reversal", "reverse"))
+    has_2a = _has_any_term(text, ("gstr 2a", "gstr-2a", "2a"))
+    has_3b = _has_any_term(text, ("gstr 3b", "gstr-3b", "3b"))
+    return has_gst and (
+        (has_itc and (has_mismatch_or_reversal or (has_2a and has_3b)))
+        or (has_2a and has_3b and has_mismatch_or_reversal)
+    )
+
+
+def _is_subscription_refund_query(text: str) -> bool:
+    subscription_context = _has_any_term(text, (
+        "subscription", "premium", "paid", "membership", "hinge", "match group",
+    ))
+    refund_context = _has_any_term(text, ("refund", "no refund"))
+    service_block_context = _has_any_term(text, ("froze", "frozen", "blocked", "suspended"))
+    return subscription_context and (refund_context or service_block_context)
 
 
 def _is_wage_waiver_language_query(text: str) -> bool:
@@ -4436,6 +7694,60 @@ def _is_bank_otp_refund_query(text: str) -> bool:
         "refund", "icici", "sbi", "hdfc", "phonepe", "gpay",
     ))
     return otp_context and bank_context
+
+
+def _is_cyber_impersonation_fraud_query(text: str) -> bool:
+    fraud_context = _has_any_term(text, (
+        "fake call", "fraud call", "scam call", "impersonating",
+        "pretending", "phishing", "otp", "took", "debited",
+        "transferred", "lost money", "2 lakh",
+    ))
+    institution_context = _has_any_term(text, (
+        "sbi", "bank", "pension office", "pension", "pf office",
+        "epfo", "account", "atm", "upi",
+    ))
+    return fraud_context and institution_context
+
+
+def _is_crypto_investment_fraud_query(text: str) -> bool:
+    crypto_context = _has_any_term(text, (
+        "crypto", "usdt", "wallet", "telegram group", "telegram crypto",
+        "investment group", "transaction hash", "seed phrase",
+    ))
+    loss_context = _has_any_term(text, (
+        "rugpull", "rugpulled", "scam", "fraud", "lost", "took",
+        "3 lakh", "2 lakh", "vanished", "wallet drained", "stole my crypto",
+    ))
+    return crypto_context and loss_context
+
+
+def _is_bank_property_document_fraud_query(text: str) -> bool:
+    bank_context = _has_any_term(text, (
+        "bank", "lender", "nbfc", "loan", "loan against",
+        "mortgage", "secured loan", "home loan",
+    ))
+    property_context = _has_any_term(text, (
+        "house", "home", "flat", "property", "land", "plot",
+        "title deed", "sale deed",
+    ))
+    disputed_consent = _has_any_term(text, (
+        "didn't sign", "did not sign", "fake signature", "forged",
+        "forgery", "blank paper", "thumb impression", "without my consent",
+    ))
+    return bank_context and property_context and disputed_consent
+
+
+def _is_insurance_misselling_query(text: str) -> bool:
+    insurance_context = _has_any_term(text, (
+        "insurance", "lic", "policy", "ulip", "premium", "maturity",
+        "matured", "maturity amount",
+    ))
+    dispute_context = _has_any_term(text, (
+        "agent sold", "mis-selling", "misselling", "guaranteed return",
+        "got half", "half amount", "less amount", "fraud", "wrongly sold",
+        "promised", "not paying",
+    ))
+    return insurance_context and dispute_context
 
 
 def _is_senior_maintenance_enforcement_query(text: str) -> bool:
@@ -4517,10 +7829,925 @@ def _is_deferred_template_header(text: str) -> bool:
     return normalized == "what you can do next"
 
 
+def _is_no_concrete_placeholder(text: str) -> bool:
+    normalized = text.strip().lower().strip("*#:-. ")
+    return normalized.startswith("the provided passages do not state")
+
+
+def _is_safe_template_next_step(
+    text: str,
+    route: MatterRoute,
+    pending_header: SentenceVerification | None,
+) -> bool:
+    if pending_header is None or not _is_deferred_template_header(pending_header.text):
+        return False
+    if not text.lstrip().startswith("- "):
+        return False
+
+    action_pack_id = route.action_pack.id if route.action_pack is not None else ""
+    allowed_action_packs = {
+        "arrest_custody_safeguard",
+        "criminal_defence_bail",
+        "digital_platform_account",
+        "education_rights",
+        "banking_credit_dispute",
+        "business_contract_partnership",
+        "child_custody_adoption",
+        "consumer",
+        "cyber",
+        "family_domestic",
+        "marriage_breakdown",
+        "marriage_misrepresentation",
+        "online_gambling_dispute",
+        "police_fir",
+        "prison_mulaqat_access",
+        "property_tenancy",
+        "reproductive_rights_mtp",
+        "senior_citizen",
+        "social_welfare_identity",
+        "supervised_visitation",
+        "tenancy_eviction_nonpayment",
+        "tribal_caste_atrocity",
+        "tribal_land_transfer_restoration",
+        "forest_rights_fra",
+        "tribal_project_displacement_rr",
+        "workplace_sexual_harassment",
+    }
+    lower = text.lower()
+    if action_pack_id == "employment_wages":
+        return (
+            _has_any_term(lower, ("pip", "rating", "hr complaint", "industrial disputes", "retrench", "termination"))
+            and not _has_any_term(lower, ("limitation", "deadline", "last date", "within ", " days", " hours", "file within", "appeal within"))
+        )
+    if action_pack_id == "criminal_general" and route.label in {"Spousal assault / financial-control complaint", "Spousal sexual coercion / safety support"}:
+        return not _has_any_term(lower, (
+            "limitation", "deadline", "last date", "within ", " days", " hours",
+            "file within", "appeal within",
+        ))
+    if action_pack_id == "minor_mineral_gram_sabha":
+        return _is_safe_minor_mineral_next_step(lower)
+    if action_pack_id not in allowed_action_packs:
+        return False
+
+    if _has_any_term(lower, (
+        "limitation", "deadline", "last date", "within ", " days", " hours",
+        "file within", "appeal within",
+    )):
+        return False
+    return True
+
+
+def _is_safe_minor_mineral_next_step(lower: str) -> bool:
+    if _has_any_term(lower, (
+        "block the road", "block road", "stop the trucks", "stop trucks",
+        "pay the", "bribe", "rishwat", "threat", "force", "beat",
+        "lock", "seize", "damage", "burn", "obstruct", "yourself",
+        "will cancel", "must cancel", "guaranteed", "guarantee",
+        "gherao", "occupy", "road roko", "surround", "encircle",
+        "dharna", "protest", "rally", "mob", "crowd",
+        "until he cancels", "until they cancel", "until cancellation",
+        "cancel the lease", "cancels the lease",
+    )):
+        return False
+    doc_terms = (
+        "lease", "noc", "gram sabha", "palli sabha", "minutes",
+        "recommendation", "mineral-department", "approval", "site map",
+        "forest", "pollution", "scheduled area", "record",
+    )
+    forum_terms = (
+        "collector", "mining department", "tribal", "dlsa", "court",
+        "ngt", "panchayat", "gram sabha",
+    )
+    return sum(1 for term in doc_terms if term in lower) >= 2 and any(term in lower for term in forum_terms)
+
+
+def _is_safe_template_source_bridge(text: str, route: MatterRoute) -> bool:
+    """Allow weak-but-useful deterministic bridge lines to survive.
+
+    These lines are authored by server templates, not the LLM. They connect a
+    retrieved source to the user's route without inventing deadlines, amounts,
+    or guaranteed outcomes. The verifier often marks them weak because the
+    source itself does not contain the user's facts ("LIC agent", "ex's
+    lawyer", "thumb impression"), but suppressing them leaves only raw statute
+    excerpts and makes the product worse.
+    """
+    lower = text.lower()
+    if _has_any_term(lower, (
+        "limitation", "deadline", "last date", "within ", " days", " hours",
+        "file within", "appeal within", "guaranteed", "will win", "must win",
+    )):
+        return False
+    bridge_phrases = (
+        "source is",
+        "sources to check",
+        "source matters",
+        "source to check",
+        "source to verify",
+        "source is relevant",
+        "route to check",
+        "forum route",
+        "court remedy",
+        "criminal-law track",
+        "bank-service track",
+        "medical privacy issue",
+        "welfare standard",
+        "separate police track",
+        "should be checked",
+        "must be checked",
+        "treat this first",
+        "keep the",
+        "do not assume",
+        "do not treat",
+        "safe first step",
+        "written reasons",
+        "sealing order",
+        "show-cause notice",
+        "trade-licence compliance",
+        "written bank-grievance",
+        "freeze/lien/kyc reason",
+        "bank-service failure",
+        "personal-data grievance",
+        "cyber/electronic-record",
+        "contact-data misuse",
+        "not be reduced",
+        "do not post",
+        "medical status online",
+        "keep evidence private",
+        "public allegations about medical status",
+    )
+    return any(phrase in lower for phrase in bridge_phrases)
+
+
+def _promote_safe_route_next_step(
+    v: SentenceVerification,
+    route: MatterRoute,
+    pending_header: SentenceVerification | None,
+) -> SentenceVerification:
+    """Let server-authored action-pack bullets pass as weak support.
+
+    The legal source often proves the forum/provision but not the operational
+    user step ("keep screenshots", "collect jewellery receipts"). Those steps
+    come from our deterministic route/action-pack layer, so an entailment
+    scorer can mark them unsupported even when they are the product answer the
+    user needs. Keep this narrowly scoped to cited bullets immediately under
+    the server's "What you can do next" header.
+    """
+    if v.status != SentenceStatus.UNSUPPORTED:
+        return v
+    if not v.citations:
+        return v
+    if not _is_safe_template_next_step(v.text, route, pending_header):
+        return v
+    return SentenceVerification(
+        text=v.text,
+        status=SentenceStatus.WEAK_SUPPORT,
+        citations=v.citations,
+        entailment_score=v.entailment_score,
+        reason="server-authored safe route next step",
+        auto_cited=v.auto_cited,
+    )
+
+
+def _promote_safe_template_source_bridge(
+    v: SentenceVerification,
+    route: MatterRoute,
+) -> SentenceVerification:
+    if v.status != SentenceStatus.UNSUPPORTED:
+        return v
+    if not v.citations:
+        return v
+    if not _is_safe_template_source_bridge(v.text, route):
+        return v
+    return SentenceVerification(
+        text=v.text,
+        status=SentenceStatus.WEAK_SUPPORT,
+        citations=v.citations,
+        entailment_score=v.entailment_score,
+        reason="server-authored safe source bridge",
+        auto_cited=v.auto_cited,
+    )
+
+
+def _strip_model_terminal_sections(text: str) -> str:
+    """Remove model-authored Sources/Disclaimer blocks before segmentation."""
+    text = re.sub(
+        r"(?i)(?<!\n)\s+((?:#{1,6}\s*)?(?:\*\*\s*)?"
+        r"(?:sources?|references?|bibliography|disclaimer)"
+        r"(?:\s*\*\*)?\s*:?)",
+        r"\n\1",
+        text,
+    )
+    kept: list[str] = []
+    skipping = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if _SOURCES_HEADER_RE.match(stripped) or _DISCLAIMER_HEADER_RE.match(stripped):
+            skipping = True
+            continue
+        if skipping and _MAJOR_HEADER_RE.match(stripped):
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+_OFFICIAL_SOURCE_TYPES = {
+    "bare_act", "rule", "regulation", "scheme", "guideline", "circular", "notification",
+}
+
+_ACTION_WORDS = (
+    "apply", "application", "complaint", "complain", "appeal", "petition",
+    "file", "filing", "approach", "authority", "tribunal", "court",
+    "magistrate", "collector", "officer", "ombudsman", "commission",
+    "forum", "notice", "report", "register", "grievance",
+)
+
+
+def _answer_contract_lines(
+    route: MatterRoute,
+    passages: list[dict],
+    state: dict,
+    plan: LegalIssuePlan | None = None,
+) -> list[str]:
+    """Server-side floor for answers that under-cite retrieved law.
+
+    The model is still allowed to write the main explanation, but broad evals
+    showed a recurring product failure: retrieval surfaces the right Act while
+    the final answer cites only a judgment, or omits a concrete next-step
+    section. This post-generation floor emits only conservative source-reference
+    lines and route-authored action hints. It deliberately avoids raw statute
+    excerpts because bare Act chunks often contain split definitions,
+    illustrations, or unrelated procedure fragments.
+    """
+    official = _official_passages_for_contract(passages)
+    if not official:
+        return []
+
+    lines: list[str] = []
+    cited = set(state.get("emitted_citation_indices") or set())
+    planned_seen = set(state.get("seen_sentences") or set())
+    official_by_idx = {
+        p.get("index"): p
+        for p in official
+        if isinstance(p.get("index"), int)
+    }
+    cited_source_keys = {
+        _source_pack_key(p)
+        for idx, p in official_by_idx.items()
+        if idx in cited and _source_pack_key(p)
+    }
+
+    for passage in _plan_must_cite_passages(route, plan, official, cited):
+        line = _source_excerpt_line(passage)
+        if not line:
+            continue
+        normalized = _normalize_for_dedupe(line)
+        if normalized in planned_seen:
+            continue
+        idx = passage.get("index")
+        lines.append(line)
+        planned_seen.add(normalized)
+        if isinstance(idx, int):
+            cited.add(idx)
+        source_key = _source_pack_key(passage)
+        if source_key:
+            cited_source_keys.add(source_key)
+
+    required_source_keys: list[str] = []
+    for passage in official:
+        key = _source_pack_key(passage)
+        if passage.get("required_source_pack") and key and key not in required_source_keys:
+            required_source_keys.append(key)
+    missing_required_keys = [key for key in required_source_keys if key not in cited_source_keys]
+    required_budget = 4 if route.category in {
+        "banking_credit_dispute",
+        "family_domestic",
+        "property_tenancy",
+        "reproductive_rights_mtp",
+        "senior_citizen",
+    } else 3
+    if (
+        route.label == "Tribal land transfer / restoration"
+        and cited_source_keys
+        and state.get("saw_next_step_sentence")
+    ):
+        source_budget = 0
+    elif (
+        route.label in {"Spousal assault / financial-control complaint", "Spousal sexual coercion / safety support"}
+        and cited_source_keys
+        and state.get("saw_next_step_sentence")
+    ):
+        source_budget = 0
+    elif cited_source_keys and state.get("saw_next_step_sentence") and int(state.get("emitted") or 0) >= 3:
+        source_budget = 0 if len(cited_source_keys) >= 3 else min(1, len(missing_required_keys))
+    else:
+        source_budget = max(max(0, 2 - len(cited_source_keys)), min(required_budget, len(missing_required_keys)))
+
+    # Cite official/statutory source families the model skipped. Keep this
+    # narrow: broad required packs often include fallbacks, and dumping every
+    # official source makes the answer drift away from the user's problem.
+    added_source_lines = 0
+    for passage in official:
+        if added_source_lines >= source_budget:
+            break
+        idx = passage.get("index")
+        if not isinstance(idx, int) or idx in cited:
+            continue
+        source_key = _source_pack_key(passage)
+        if _should_skip_contract_source_line(route, source_key, cited_source_keys):
+            continue
+        if source_key and source_key in cited_source_keys:
+            continue
+        line = _source_excerpt_line(passage)
+        if not line:
+            continue
+        normalized = _normalize_for_dedupe(line)
+        if normalized in planned_seen:
+            continue
+        lines.append(line)
+        planned_seen.add(normalized)
+        cited.add(idx)
+        if source_key:
+            cited_source_keys.add(source_key)
+        added_source_lines += 1
+
+    needs_next_step = not state.get("saw_next_step_header") or not state.get("saw_next_step_sentence")
+    if needs_next_step:
+        action_passages = passages if route.label == "Writ / constitutional remedy procedure" else official
+        action_line = _route_action_line(route, action_passages) or _plan_action_line(plan, official)
+        if action_line and _normalize_for_dedupe(action_line) not in planned_seen:
+            lines.append("**What you can do next**")
+            lines.append(action_line)
+
+    return lines
+
+
+def _official_passages_for_contract(passages: list[dict]) -> list[dict]:
+    def score(p: dict) -> tuple[int, float, int, int, int]:
+        source_type = str(p.get("source_type") or "").lower()
+        title = str(p.get("title") or "").lower()
+        anchor = str(p.get("anchor") or "").lower()
+        required = 0 if p.get("required_source_pack") else 1
+        priority = -float(p.get("required_source_priority") or 0.0)
+        official = 0 if _is_official_contract_source(p) else 1
+        judgment = 1 if source_type.endswith("judgment") or " versus " in title or " v. " in title else 0
+        useful_anchor = 0 if "/sec-" in anchor or "#sec-" in anchor or "section" in title else 1
+        return (required, priority, official, judgment, useful_anchor)
+
+    official = [p for p in passages if _is_official_contract_source(p)]
+    return sorted(official, key=lambda p: (*score(p), int(p.get("index") or 999)))
+
+
+def _source_pack_key(passage: dict) -> str:
+    pack = str(passage.get("required_source_pack") or "").strip().lower()
+    if pack:
+        return pack
+    return re.sub(
+        r"\s+",
+        " ",
+        str(passage.get("statute_short") or passage.get("title") or "").strip().lower(),
+    )
+
+
+def _plan_must_cite_passages(
+    route: MatterRoute,
+    plan: LegalIssuePlan | None,
+    official: list[dict],
+    cited: set[int],
+    *,
+    limit: int = 2,
+) -> list[dict]:
+    if plan is None or not official:
+        return []
+
+    out: list[dict] = []
+    seen_indices: set[int] = set()
+    for entry in plan.authority_ledger:
+        if not entry.must_cite or not entry.act:
+            continue
+        if entry.act == "date-dependent criminal regime":
+            continue
+        already_cited = any(
+            isinstance(p.get("index"), int)
+            and p.get("index") in cited
+            and _plan_authority_matches_passage(entry.act, entry.section, p)
+            for p in official
+        )
+        if already_cited:
+            continue
+        passage = next(
+            (
+                p for p in official
+                if isinstance(p.get("index"), int)
+                and p.get("index") not in cited
+                and int(p.get("index")) not in seen_indices
+                and not _should_skip_contract_source_line(route, _source_pack_key(p), set())
+                and _plan_authority_matches_passage(entry.act, entry.section, p)
+            ),
+            None,
+        )
+        if passage is None:
+            continue
+        out.append(passage)
+        seen_indices.add(int(passage["index"]))
+        if len(out) >= limit:
+            break
+    return out
+
+
+_PLAN_ACT_ALIASES = {
+    "bnss": ("bnss", "bharatiya nagarik suraksha sanhita"),
+    "bns": ("bns", "bharatiya nyaya sanhita"),
+    "bsa": ("bsa", "bharatiya sakshya adhiniyam"),
+    "crpc": ("crpc", "criminal procedure"),
+    "ipc": ("ipc", "indian penal code"),
+    "consumer protection act": ("consumer protection act",),
+    "consumer protection act 2019": ("consumer protection act 2019", "consumer protection act"),
+    "domestic violence act": ("domestic violence act", "protection of women from domestic violence"),
+    "protection of women from domestic violence act 2005": ("protection of women from domestic violence act 2005", "domestic violence act"),
+    "forest rights act": ("forest rights act", "scheduled tribes and other traditional forest dwellers"),
+    "forest rights act 2006": ("forest rights act 2006", "scheduled tribes and other traditional forest dwellers"),
+    "pesa": ("pesa", "panchayats extension to scheduled areas"),
+    "pesa act 1996": ("pesa", "panchayats extension to scheduled areas"),
+    "rfctlarr act 2013": ("rfctlarr", "right to fair compensation", "land acquisition rehabilitation and resettlement act 2013"),
+    "right to fair compensation and transparency in land acquisition rehabilitation and resettlement act 2013": (
+        "rfctlarr",
+        "right to fair compensation",
+        "land acquisition rehabilitation and resettlement act 2013",
+    ),
+    "sarfaesi act 2002": (
+        "sarfaesi",
+        "securitisation and reconstruction of financial assets and enforcement of security interest act 2002",
+        "securitisation reconstruction financial assets enforcement security interest act 2002",
+    ),
+    "transfer of property act": ("transfer of property act",),
+    "transfer of property act 1882": ("transfer of property act 1882", "transfer of property act"),
+}
+
+
+def _plan_authority_matches_passage(act: str, section: str | None, passage: dict) -> bool:
+    act_key = _normalize_plan_authority_text(act)
+    if not act_key:
+        return False
+    haystack = _normalize_plan_authority_text(
+        " ".join(
+            str(passage.get(field) or "")
+            for field in ("title", "statute_short", "anchor", "required_source_pack")
+        )
+    )
+    aliases = _PLAN_ACT_ALIASES.get(act_key, (act_key,))
+    if not any(alias and alias in haystack for alias in aliases):
+        return False
+    if not section:
+        return True
+    section_token = _section_token(section)
+    if not section_token:
+        return True
+    return _section_token_matches(section_token, _passage_section_tokens(passage))
+
+
+def _normalize_plan_authority_text(text: str) -> str:
+    clean = re.sub(r"\b(?:the|a|an)\b", " ", (text or "").lower())
+    clean = clean.replace("&", " and ")
+    return re.sub(r"[^a-z0-9]+", " ", clean).strip()
+
+
+def _section_token(section: str) -> str:
+    match = re.search(r"\b(?:section|sec\.?|article|order)\s+([0-9a-z()./-]+)", section, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return _normalize_plan_authority_text(match.group(1))
+
+
+def _passage_section_tokens(passage: dict) -> set[str]:
+    text = " ".join(str(passage.get(field) or "") for field in ("title", "anchor"))
+    tokens: set[str] = set()
+    for match in re.finditer(r"(?:/|#)sec-([0-9a-z][0-9a-z.-]*)", text, flags=re.IGNORECASE):
+        tokens.add(_normalize_plan_authority_text(match.group(1)))
+    for match in re.finditer(
+        r"\b(?:section|sec\.?|article|order)\s+([0-9a-z()./-]+)",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        tokens.add(_normalize_plan_authority_text(match.group(1)))
+    return {token for token in tokens if token}
+
+
+def _section_token_matches(expected: str, actual_tokens: set[str]) -> bool:
+    if expected in actual_tokens:
+        return True
+    expected_parts = expected.split()
+    if len(expected_parts) != 1:
+        return False
+    expected_root = expected_parts[0]
+    for token in actual_tokens:
+        parts = token.split()
+        if len(parts) > 1 and parts[0] == expected_root:
+            return True
+    return False
+
+
+def _should_skip_contract_source_line(
+    route: MatterRoute,
+    source_key: str,
+    cited_source_keys: set[str],
+) -> bool:
+    if route.label == "Minor mineral / Gram Sabha recommendation" and (
+        source_key == "rfctlarr_2013"
+        or source_key == "rfctlarr_2013_scheduled_area_rr"
+        or "right to fair compensation" in source_key
+        or "rehabilitation and resettlement" in source_key
+    ):
+        return True
+    if route.label == "SARFAESI / secured-loan recovery" and (
+        source_key == "banking_regulation_1949"
+        or source_key == "consumer_protection_2019"
+        or "banking regulation" in source_key
+        or "consumer protection" in source_key
+    ):
+        return any("sarfaesi" in key or "securitisation" in key for key in cited_source_keys)
+    if route.category == "banking_credit_dispute" and source_key == "consumer_protection_2019":
+        primary_banking_or_criminal = {
+            "rbi_integrated_ombudsman_2021",
+            "banking_regulation_1949",
+            "bns_2023",
+            "bnss_2023",
+            "crpc_1973",
+        }
+        return bool(cited_source_keys & primary_banking_or_criminal)
+    if route.label == "Loan-app / recovery harassment" and source_key in {
+        "banking_regulation_1949",
+        "consumer_protection_2019",
+    }:
+        loan_app_primary = {
+            "rbi_integrated_ombudsman_2021",
+            "dpdp_2023",
+            "it_act_2000",
+            "bns_2023",
+            "bnss_2023",
+            "crpc_1973",
+        }
+        return bool(cited_source_keys & loan_app_primary)
+    if route.label == "Municipal sealing / shop closure notice" and (
+        source_key == "food_safety_2006"
+        or "food safety" in source_key
+        or source_key == "consumer_protection_2019"
+    ):
+        return True
+    if route.label == "Forest rights / FRA claim or forest produce" and (
+        source_key == "scst_poa_1989" or "scheduled castes and scheduled tribes" in source_key
+    ):
+        return True
+    return False
+
+
+def _prompt_retrieval_candidates(
+    query: str,
+    route: MatterRoute,
+    retrieved: list,
+) -> list:
+    q = query.lower()
+    if route.label == "Municipal sealing / shop closure notice" and not _has_any_term(q, (
+        "food", "fssai", "snack", "restaurant", "hotel", "kirana",
+        "adulteration", "misbranding", "food safety", "designated officer",
+    )):
+        filtered = [
+            h for h in retrieved
+            if "right to information" in str(getattr(h, "title", "")).lower()
+            or "rti-2005" in str(getattr(h, "anchor", "")).lower()
+            or "shops" in str(getattr(h, "title", "")).lower()
+            or "establishment" in str(getattr(h, "title", "")).lower()
+            or "street vendor" in str(getattr(h, "title", "")).lower()
+            or "municipal" in str(getattr(h, "title", "")).lower()
+            or "municipality" in str(getattr(h, "title", "")).lower()
+        ]
+        if filtered:
+            return filtered
+    if route.label == "PAN/Aadhaar mismatch / identity linking":
+        filtered = [
+            h for h in retrieved
+            if "income-tax" in str(getattr(h, "anchor", "")).lower()
+            or "income tax" in str(getattr(h, "title", "")).lower()
+            or "income-tax" in str(getattr(h, "title", "")).lower()
+            or "aadhaar" in str(getattr(h, "title", "")).lower()
+            or "aadhaar" in str(getattr(h, "anchor", "")).lower()
+            or "right to information" in str(getattr(h, "title", "")).lower()
+            or "rti-2005" in str(getattr(h, "anchor", "")).lower()
+        ]
+        if filtered:
+            return filtered
+    if route.label == "Loan-app / recovery harassment":
+        filtered = [
+            h for h in retrieved
+            if "reserve bank integrated ombudsman" in str(getattr(h, "title", "")).lower()
+            or "rbi-integrated-ombudsman" in str(getattr(h, "anchor", "")).lower()
+            or "digital personal data protection" in str(getattr(h, "title", "")).lower()
+            or "dpdp" in str(getattr(h, "anchor", "")).lower()
+            or "information technology" in str(getattr(h, "title", "")).lower()
+            or "it-act" in str(getattr(h, "anchor", "")).lower()
+            or "bharatiya nyaya" in str(getattr(h, "title", "")).lower()
+            or "bns-2023" in str(getattr(h, "anchor", "")).lower()
+            or "bharatiya nagarik" in str(getattr(h, "title", "")).lower()
+            or "bnss-2023" in str(getattr(h, "anchor", "")).lower()
+        ]
+        if filtered:
+            return filtered
+    if route.label == "Writ / constitutional remedy procedure":
+        filtered = [
+            h for h in retrieved
+            if "constitution" in str(getattr(h, "title", "")).lower()
+            or "constitution-india" in str(getattr(h, "anchor", "")).lower()
+            or "legal services authorities" in str(getattr(h, "title", "")).lower()
+            or "article 226" in str(getattr(h, "text", "")).lower()
+            or (
+                "mandamus" in str(getattr(h, "text", "")).lower()
+                and "high court" in str(getattr(h, "text", "")).lower()
+            )
+        ]
+        if filtered:
+            return filtered
+    if route.label == "Pre-marriage health disclosure / cancelled wedding":
+        filtered = [
+            h for h in retrieved
+            if "human immunodeficiency" in str(getattr(h, "title", "")).lower()
+            or "hiv" in str(getattr(h, "title", "")).lower()
+            or "aids" in str(getattr(h, "title", "")).lower()
+            or "hindu marriage" in str(getattr(h, "title", "")).lower()
+            or "family courts" in str(getattr(h, "title", "")).lower()
+            or "dowry prohibition" in str(getattr(h, "title", "")).lower()
+            or "information technology" in str(getattr(h, "title", "")).lower()
+            or "it-2000" in str(getattr(h, "anchor", "")).lower()
+            or "digital personal data protection" in str(getattr(h, "title", "")).lower()
+            or "dpdp" in str(getattr(h, "anchor", "")).lower()
+        ]
+        if filtered:
+            return filtered
+    if route.label == "Tribal project displacement / Gram Sabha consent":
+        filtered = [
+            h for h in retrieved
+            if "panchayats (extension" in str(getattr(h, "title", "")).lower()
+            or "pesa" in str(getattr(h, "title", "")).lower()
+            or "pesa-1996" in str(getattr(h, "anchor", "")).lower()
+            or "right to fair compensation" in str(getattr(h, "title", "")).lower()
+            or "rfctlarr" in str(getattr(h, "anchor", "")).lower()
+            or "forest rights" in str(getattr(h, "title", "")).lower()
+            or "fra-2006" in str(getattr(h, "anchor", "")).lower()
+            or "mines and minerals" in str(getattr(h, "title", "")).lower()
+            or "mmdr" in str(getattr(h, "anchor", "")).lower()
+            or "forest (conservation" in str(getattr(h, "title", "")).lower()
+        ]
+        if filtered:
+            return filtered
+    if route.label == "Ancestral land sale / heir share dispute":
+        filtered = [
+            h for h in retrieved
+            if (
+                "hindu succession" in str(getattr(h, "title", "")).lower()
+                and "/sec-14" not in str(getattr(h, "anchor", "")).lower()
+                and "/sec-15" not in str(getattr(h, "anchor", "")).lower()
+            )
+            or (
+                "hindu succession act" in str(getattr(h, "text", "")).lower()
+                and "section 6" in str(getattr(h, "text", "")).lower()
+            )
+            or "transfer of property" in str(getattr(h, "title", "")).lower()
+            or "specific relief" in str(getattr(h, "title", "")).lower()
+            or "registration act" in str(getattr(h, "title", "")).lower()
+        ]
+        if filtered:
+            return filtered
+    if route.label == "Forest rights / FRA claim or forest produce":
+        has_fra = any(
+            "forest rights" in str(getattr(h, "title", "")).lower()
+            or "fra-2006" in str(getattr(h, "anchor", "")).lower()
+            for h in retrieved
+        )
+        if has_fra:
+            filtered = [
+                h for h in retrieved
+                if "prevention of atrocities" not in str(getattr(h, "title", "")).lower()
+                and "sc-st-poa" not in str(getattr(h, "anchor", "")).lower()
+            ]
+            if filtered:
+                return filtered
+    if (
+        route.category == "employment_wages"
+        and _is_employment_retaliation_pip_query(q)
+        and not _is_gig_platform_worker_query(q)
+    ):
+        filtered = [
+            h for h in retrieved
+            if "code on social security" not in str(getattr(h, "title", "")).lower()
+            and "social-security-code-2020" not in str(getattr(h, "anchor", "")).lower()
+            and "occupational safety" not in str(getattr(h, "title", "")).lower()
+            and "osh-code-2020" not in str(getattr(h, "anchor", "")).lower()
+        ]
+        if any("industrial disputes" in str(getattr(h, "title", "")).lower() for h in filtered):
+            return filtered
+    return retrieved
+
+
+def _is_official_contract_source(passage: dict) -> bool:
+    source_type = str(passage.get("source_type") or "").lower()
+    if source_type in _OFFICIAL_SOURCE_TYPES:
+        return True
+    if source_type.endswith("judgment"):
+        return False
+    title = str(passage.get("title") or "").lower()
+    if " versus " in title or " vs " in title or " v. " in title:
+        return False
+    anchor = str(passage.get("anchor") or "").lower()
+    return bool(
+        anchor.startswith("constitution-india")
+        or "/sec-" in anchor
+        or "#sec-" in anchor
+        or re.search(r"\b(act|code|rules|scheme|guideline|notification|circular)\b", title)
+        or any(term in title for term in ("sanhita", "adhiniyam"))
+    )
+
+
+def _source_excerpt_line(passage: dict, *, max_words: int = 34) -> str | None:
+    idx = passage.get("index")
+    if not isinstance(idx, int):
+        return None
+    ref = _source_reference_label(passage)
+    return f"Additional source to verify for this route: {ref} [{idx}]." if ref else None
+
+
+def _source_procedural_line(passages: list[dict], *, avoid_normalized: set[str] | None = None) -> str | None:
+    avoid = avoid_normalized or set()
+    for passage in passages:
+        excerpt = _best_source_excerpt(
+            str(passage.get("text") or ""),
+            max_words=28,
+            prefer_terms=_ACTION_WORDS,
+            require_prefer_terms=True,
+        )
+        idx = passage.get("index")
+        line = f"- {excerpt} [{idx}]." if excerpt and isinstance(idx, int) else ""
+        if line and _normalize_for_dedupe(line) not in avoid:
+            return line
+    return None
+
+
+def _route_action_line(route: MatterRoute, passages: list[dict]) -> str | None:
+    if not route.action_pack or not route.action_pack.next_steps:
+        return None
+    if not passages:
+        return None
+    if route.label == "Writ / constitutional remedy procedure":
+        article226 = next((
+            p for p in passages
+            if "article 226" in _normalize_match_text(str(p.get("text") or ""))
+            or "/sec-226" in str(p.get("anchor") or "").lower()
+        ), None)
+        if article226 is not None and isinstance(article226.get("index"), int):
+            idx = article226["index"]
+            return (
+                "- Collect the written order or refusal, your representation, delivery proof, "
+                f"public-duty facts, urgency facts, and exact relief before asking DLSA or a writ lawyer about the High Court Article 226 route [{idx}]."
+            )
+    passage = passages[0]
+    idx = passage.get("index")
+    if not isinstance(idx, int):
+        return None
+    step = _compact_action_step(route.action_pack.next_steps[0])
+    if not step:
+        return None
+    ref = _source_reference_label(passage)
+    if ref:
+        return f"- {step}; verify the filing, complaint, or reply route against {ref} [{idx}]."
+    return f"- {step} using the cited source [{idx}]."
+
+
+def _plan_action_line(plan: LegalIssuePlan | None, passages: list[dict]) -> str | None:
+    if plan is None or not plan.next_steps or not passages:
+        return None
+    passage = passages[0]
+    idx = passage.get("index")
+    if not isinstance(idx, int):
+        return None
+    step = _compact_action_step(plan.next_steps[0])
+    if not step:
+        return None
+    ref = _source_reference_label(passage)
+    if ref:
+        return f"- {step}; verify the route against {ref} [{idx}]."
+    return f"- {step} using the cited source [{idx}]."
+
+
+def _compact_action_step(step: str, *, max_words: int = 22) -> str:
+    clean = re.sub(r"\s+", " ", step).strip().rstrip(".")
+    if not clean:
+        return ""
+    words = clean.split()
+    if len(words) > max_words:
+        clean = " ".join(words[:max_words]).rstrip(",;:")
+    return clean[:1].upper() + clean[1:]
+
+
+def _best_source_excerpt(
+    text: str,
+    *,
+    max_words: int,
+    prefer_terms: tuple[str, ...] = (),
+    require_prefer_terms: bool = False,
+) -> str:
+    clean = re.sub(r"\s+", " ", text).strip()
+    if not clean:
+        return ""
+    candidates = [
+        _clean_excerpt_sentence(s)
+        for s in segment_sentences(clean)
+        if _clean_excerpt_sentence(s)
+    ]
+    if not candidates:
+        candidates = [_clean_excerpt_sentence(clean)]
+    if prefer_terms:
+        preferred = [s for s in candidates if _has_any_term(s, prefer_terms)]
+        if preferred:
+            candidates = preferred
+        elif require_prefer_terms:
+            return ""
+    for candidate in candidates:
+        if _looks_like_source_heading(candidate):
+            continue
+        words = candidate.split()
+        if len(words) < 4:
+            continue
+        if len(words) > max_words:
+            candidate = " ".join(words[:max_words]).rstrip(",;:")
+        return candidate.rstrip(" .;:")
+    return ""
+
+
+def _clean_excerpt_sentence(text: str) -> str:
+    clean = re.sub(r"\s+", " ", text).strip()
+    clean = re.sub(r"^\s*[-*—–]\s*", "", clean)
+    clean = re.sub(r"^\s*\(?\d+[A-Za-z]?\)?\s*[\).:-]?\s*", "", clean)
+    clean = clean.strip(" \"'")
+    clean = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", clean).strip()
+    return clean
+
+
+def _looks_like_source_heading(text: str) -> bool:
+    clean = re.sub(r"\s+", " ", text).strip(" .;:")
+    if not clean:
+        return True
+    lower = clean.lower()
+    words = clean.split()
+    has_verb = bool(re.search(r"\b(is|are|may|shall|must|can|means|includes|provides?)\b", lower))
+    if len(words) <= 14 and re.search(r"\bsection\s+\d+[a-z]?\b", lower):
+        if not has_verb and re.search(r"\b(act|code|rules|constitution|regulations?|guidelines?)\b", lower):
+            return True
+    if re.fullmatch(r"[A-Za-z0-9 ,&()/-]+ section \d+[a-z]?(?: \d+[a-z]?)?", lower):
+        return True
+    if len(words) <= 6 and not has_verb:
+        return True
+    return False
+
+
+def _source_reference_label(passage: dict) -> str:
+    title = re.sub(r"\s+", " ", str(passage.get("title") or passage.get("statute_short") or "")).strip()
+    if not title:
+        return ""
+    section = _anchor_section_label(str(passage.get("anchor") or ""), title=title)
+    return f"{title}, {section}" if section else title
+
+
+def _anchor_section_label(anchor: str, *, title: str) -> str:
+    m = re.search(r"/sec-([^#@]+)|#sec-([^#@]+)", anchor)
+    if not m:
+        return ""
+    raw = (m.group(1) or m.group(2) or "").split("__", 1)[0]
+    raw = raw.split("@", 1)[0].strip("-_")
+    if not raw:
+        return ""
+    parts = [p for p in raw.split("-") if p]
+    if not parts:
+        return ""
+    main = parts[0].upper()
+    suffix = "".join(f"({p})" for p in parts[1:])
+    kind = "Article" if "constitution" in title.lower() else "Section"
+    return f"{kind} {main}{suffix}"
+
+
 def _route_regime_caveat(route: MatterRoute) -> str | None:
-    if route.legal_regime == UNKNOWN_CRIMINAL_REGIME:
+    if (
+        route.legal_regime == UNKNOWN_CRIMINAL_REGIME
+        and _route_uses_criminal_regime_sources(route)
+    ):
         return CRIMINAL_REGIME_CAVEAT
     return None
+
+
+def _route_uses_criminal_regime_sources(route: MatterRoute) -> bool:
+    source_blob = " ".join([
+        route.category or "",
+        route.label or "",
+        *(route.required_sources or []),
+    ]).lower()
+    return _has_any_term(source_blob, _CRIMINAL_REGIME_SOURCE_TERMS)
 
 
 @app.post("/answer")
@@ -4551,12 +8778,16 @@ async def answer(req: AnswerRequest):
     t_route = time.perf_counter()
     route = route_matter(req.q)
     _record_stage(timings, "matter_route", t_route)
+    issue_plan = build_legal_issue_plan(req.q, route)
+    if issue_plan is not None:
+        logger.debug("legal_issue_plan: %s", issue_plan.to_event())
 
     if route.category == "off_topic":
         metrics.refused_total.inc()
 
         async def off_topic():
-            yield _matter_route_event(route)
+            for ev in _initial_route_events(route, issue_plan):
+                yield ev
             yield {"event": "refused", "data": json.dumps({
                 "message": "This looks outside the legal-help scope of this system. "
                            "Ask about an Indian legal problem, notice, complaint, "
@@ -4584,7 +8815,8 @@ async def answer(req: AnswerRequest):
         llm_model_available = False
 
         async def llm_missing():
-            yield _matter_route_event(route)
+            for ev in _initial_route_events(route, issue_plan):
+                yield ev
             yield _llm_unavailable_error(llm_status, settings)
             yield _timing_event(
                 timings,
@@ -4623,7 +8855,8 @@ async def answer(req: AnswerRequest):
     if not retrieved:
         metrics.refused_total.inc()
         async def empty():
-            yield _matter_route_event(route)
+            for ev in _initial_route_events(route, issue_plan):
+                yield ev
             yield {"event": "refused", "data": json.dumps({
                 "message": "The sources I have don't cover this clearly. I won't guess. "
                            "You should talk to a lawyer for your specific situation.",
@@ -4662,7 +8895,8 @@ async def answer(req: AnswerRequest):
             req.q[:120],
         )
         async def degraded():
-            yield _matter_route_event(route)
+            for ev in _initial_route_events(route, issue_plan):
+                yield ev
             yield {"event": "refused", "data": json.dumps({
                 "message": "The retrieval service is in a degraded state right "
                            "now (the reranker did not return scores). I won't "
@@ -4686,7 +8920,8 @@ async def answer(req: AnswerRequest):
         logger.info("coverage-gate refusal: top_rerank=%.3f < %.3f for query %r",
                     top_rerank, settings.refuse_below_rerank, req.q[:120])
         async def low_coverage():
-            yield _matter_route_event(route)
+            for ev in _initial_route_events(route, issue_plan):
+                yield ev
             yield {"event": "refused", "data": json.dumps({
                 "message": "I couldn't find sources in this index that clearly "
                            "cover your question. I won't make something up from "
@@ -4722,7 +8957,8 @@ async def answer(req: AnswerRequest):
                 top_combined, settings.refuse_below_combined, req.q[:120],
             )
             async def low_dense():
-                yield _matter_route_event(route)
+                for ev in _initial_route_events(route, issue_plan):
+                    yield ev
                 yield {"event": "refused", "data": json.dumps({
                     "message": "I couldn't find sources that clearly cover your "
                                "question. Try asking more concretely, or talk to "
@@ -4742,13 +8978,14 @@ async def answer(req: AnswerRequest):
             return EventSourceResponse(low_dense())
 
     t_prompt = time.perf_counter()
+    prompt_candidates = _prompt_retrieval_candidates(req.q, route, retrieved)
     required_pack_ids = []
-    for h in retrieved:
+    for h in prompt_candidates:
         pack_id = h.metadata.get("_required_source_pack")
         if pack_id and pack_id not in required_pack_ids:
             required_pack_ids.append(pack_id)
     prompt_retrieved = _preserve_required_source_packs(
-        retrieved,
+        prompt_candidates,
         required_pack_ids,
         limit=req.top_k,
         preferred_top_n=settings.required_source_pack_preferred_top_n,
@@ -4770,7 +9007,8 @@ async def answer(req: AnswerRequest):
             seen_subjects.add(h.subject_area)
 
     async def event_stream() -> AsyncIterator[dict]:
-        yield _matter_route_event(route)
+        for ev in _initial_route_events(route, issue_plan):
+            yield ev
         # Send the coverage chip first
         yield {"event": "coverage", "data": json.dumps({
             "sources_searched": sorted(seen_sources),
@@ -4781,7 +9019,8 @@ async def answer(req: AnswerRequest):
         yield {"event": "passages", "data": json.dumps([
             {"index": p["index"], "anchor": p["anchor"], "title": p["title"],
              "as_at": p["as_at"], "court": p["court"], "citation": p["citation"],
-             "source_type": p.get("source_type"), "document_id": p.get("document_id")}
+             "source_type": p.get("source_type"), "document_id": p.get("document_id"),
+             "statute_short": p.get("statute_short")}
             for p in passages
         ])}
 
@@ -4819,6 +9058,10 @@ async def answer(req: AnswerRequest):
             # are EXCLUDED — the relevance signal must reflect what the
             # user actually reads.
             "answer_body_sentences": [],
+            "emitted_citation_indices": set(),
+            "saw_next_step_header": False,
+            "saw_next_step_sentence": False,
+            "current_section": None,
         }
 
         def _stop_event() -> dict:
@@ -4894,6 +9137,15 @@ async def answer(req: AnswerRequest):
                 else:
                     return None, False  # inside Sources/Disclaimer, drop
 
+            stripped = v.text.strip()
+            if _MAJOR_HEADER_RE.match(stripped):
+                normalized_header = stripped.lower().strip("*#:-. ")
+                if normalized_header == "what you can do next":
+                    state["saw_next_step_header"] = True
+                    state["current_section"] = "next_steps"
+                else:
+                    state["current_section"] = normalized_header
+
             # Sentence dedupe — small models loop. Normalize and check.
             normalized = _normalize_for_dedupe(v.text)
             if normalized and normalized in state["seen_sentences"]:
@@ -4936,6 +9188,13 @@ async def answer(req: AnswerRequest):
                 # _suppressed_marker docstring. We return it as the event
                 # so the caller can yield it; counters still tick above.
                 return _suppressed_marker(), triggered
+            if v.citations:
+                state["emitted_citation_indices"].update(v.citations)
+            if (
+                v.status in (SentenceStatus.OK, SentenceStatus.WEAK_SUPPORT)
+                and state.get("current_section") == "next_steps"
+            ):
+                state["saw_next_step_sentence"] = True
             # Task #10: accumulate user-visible cited prose (OK or
             # WEAK_SUPPORT, never META) for the relevance check. We
             # store the sentence text WITHOUT the [N] citation tags so
@@ -4946,6 +9205,75 @@ async def answer(req: AnswerRequest):
                     _CITATION_TAG_RE.sub("", v.text).strip()
                 )
             return _sentence_event(v), triggered
+
+        def _emit_contract_floor() -> tuple[list[dict], bool]:
+            out: list[dict] = []
+            pending_header: SentenceVerification | None = None
+            for sent in _answer_contract_lines(route, passages, state, issue_plan):
+                v = _verify_with_timing(sent)
+                if _is_deferred_template_header(v.text):
+                    pending_header = v
+                    continue
+                v = _promote_safe_route_next_step(v, route, pending_header)
+                v = _promote_safe_template_source_bridge(v, route)
+                if not _candidate_sentence_should_emit(v, pending_header):
+                    continue
+                header_ev: dict | None = None
+                if pending_header is not None:
+                    header_ev, header_stop = _emit_and_check(pending_header)
+                    pending_header = None
+                    if header_ev is not None:
+                        out.append(header_ev)
+                    if header_stop:
+                        return out, True
+                sentence_ev, should_stop = _emit_and_check(v)
+                if sentence_ev is not None:
+                    out.append(sentence_ev)
+                if should_stop:
+                    return out, True
+            return out, False
+
+        def _candidate_sentence_should_emit(
+            v: SentenceVerification,
+            pending_header: SentenceVerification | None = None,
+        ) -> bool:
+            if _MAJOR_HEADER_RE.match(v.text.strip()) and not _is_deferred_template_header(v.text):
+                return False
+            if _is_no_concrete_placeholder(v.text):
+                return False
+            if v.status in (SentenceStatus.UNSUPPORTED, SentenceStatus.UNKNOWN_CITATION):
+                return False
+            # In compose-before-emit mode, weak model prose is treated as an
+            # internal draft failure. The user gets only OK/meta sentences plus
+            # the server-composed source floor.
+            if v.status == SentenceStatus.WEAK_SUPPORT:
+                if _is_safe_template_next_step(v.text, route, pending_header):
+                    return True
+                return False
+            return True
+
+        def _candidate_template_sentence_should_emit(
+            v: SentenceVerification,
+            pending_header: SentenceVerification | None = None,
+        ) -> bool:
+            if _MAJOR_HEADER_RE.match(v.text.strip()) and not _is_deferred_template_header(v.text):
+                return False
+            if _is_no_concrete_placeholder(v.text):
+                return False
+            if v.status == SentenceStatus.UNKNOWN_CITATION:
+                return False
+            if v.status == SentenceStatus.UNSUPPORTED:
+                return (
+                    _is_safe_template_next_step(v.text, route, pending_header)
+                    or _is_safe_template_source_bridge(v.text, route)
+                )
+            if v.status == SentenceStatus.WEAK_SUPPORT:
+                if not (
+                    _is_safe_template_next_step(v.text, route, pending_header)
+                    or _is_safe_template_source_bridge(v.text, route)
+                ):
+                    return False
+            return True
 
         route_caveat = _route_regime_caveat(route)
         if route_caveat:
@@ -4978,29 +9306,32 @@ async def answer(req: AnswerRequest):
                 if _is_deferred_template_header(v.text):
                     pending_template_header = v
                     continue
+                v = _promote_safe_route_next_step(v, route, pending_template_header)
+                v = _promote_safe_template_source_bridge(v, route)
+                if not _candidate_template_sentence_should_emit(v, pending_template_header):
+                    continue
+                if pending_template_header is not None:
+                    header_ev, header_stop = _emit_and_check(pending_template_header)
+                    pending_template_header = None
+                    if header_ev is not None:
+                        yield header_ev
+                    if header_stop:
+                        metrics.stopped_total.inc()
+                        yield _stop_event()
+                        yield _timing_event(
+                            timings,
+                            request_started,
+                            llm_model=settings.llm_model,
+                            llm_model_available=llm_model_available,
+                            retrieved_count=len(retrieved),
+                            passages_used=len(passages),
+                            expansion_variant_count=len(expansion_variants),
+                            state=state,
+                        )
+                        yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                        _record_final_metrics(state, time.perf_counter())
+                        return
                 sentence_ev, should_stop = _emit_and_check(v)
-                if sentence_ev is not None and sentence_ev.get("event") == "sentence":
-                    if pending_template_header is not None:
-                        header_ev, header_stop = _emit_and_check(pending_template_header)
-                        pending_template_header = None
-                        if header_ev is not None:
-                            yield header_ev
-                        if header_stop:
-                            metrics.stopped_total.inc()
-                            yield _stop_event()
-                            yield _timing_event(
-                                timings,
-                                request_started,
-                                llm_model=settings.llm_model,
-                                llm_model_available=llm_model_available,
-                                retrieved_count=len(retrieved),
-                                passages_used=len(passages),
-                                expansion_variant_count=len(expansion_variants),
-                                state=state,
-                            )
-                            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
-                            _record_final_metrics(state, time.perf_counter())
-                            return
                 if sentence_ev is not None:
                     yield sentence_ev
                 if should_stop:
@@ -5020,6 +9351,26 @@ async def answer(req: AnswerRequest):
                     _record_final_metrics(state, time.perf_counter())
                     return
 
+            contract_events, contract_stop = _emit_contract_floor()
+            for ev in contract_events:
+                yield ev
+            if contract_stop:
+                metrics.stopped_total.inc()
+                yield _stop_event()
+                yield _timing_event(
+                    timings,
+                    request_started,
+                    llm_model=settings.llm_model,
+                    llm_model_available=llm_model_available,
+                    retrieved_count=len(retrieved),
+                    passages_used=len(passages),
+                    expansion_variant_count=len(expansion_variants),
+                    state=state,
+                )
+                yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                _record_final_metrics(state, time.perf_counter())
+                return
+
             yield {"event": "sources", "data": json.dumps([
                 {
                     "index": p["index"],
@@ -5030,6 +9381,7 @@ async def answer(req: AnswerRequest):
                     "as_at": p["as_at"],
                     "source_type": p.get("source_type"),
                     "document_id": p.get("document_id"),
+                    "statute_short": p.get("statute_short"),
                 }
                 for p in passages
             ])}
@@ -5080,58 +9432,13 @@ async def answer(req: AnswerRequest):
                     metrics.llm_ttft.observe(time.perf_counter() - llm_t0)
                     first_token_seen = True
                 buf += delta
-                sentences = segment_sentences(buf)
-                # Keep the LAST TWO segments in the buffer (1-sentence lookahead).
-                # pysbd has no lookahead — a buffer ending in "Cr.P." will be
-                # split there even though "C. [1]" is about to arrive in the
-                # next token. Holding the tail sentence lets a later delta
-                # re-merge the false split.
-                #
-                # CRITICAL: slice the ORIGINAL buf rather than joining the
-                # segmented sentences back together. pysbd strips/normalizes
-                # whitespace between segments, and re-joining with " "
-                # injects spaces where the original had none ("Cr.P.\n"+"C."
-                # → "Cr.P. C." → pysbd splits this forever). Sliced original
-                # buf preserves the LLM's exact byte stream.
-                if len(sentences) < 3:
-                    continue
-                ready = sentences[:-2]
-                # Find where the last two sentences begin in buf by searching
-                # for their text. pysbd stripped them so use lstrip-aware
-                # search.
-                tail_start = _find_tail_start(buf, sentences[-2])
-                buf = buf[tail_start:] if tail_start >= 0 else " ".join(sentences[-2:])
 
-                for sent in ready:
+            composed_text = _strip_model_terminal_sections(buf)
+            if composed_text.strip():
+                for sent in segment_sentences(composed_text):
                     v = _verify_with_timing(sent)
-                    sentence_ev, should_stop = _emit_and_check(v)
-                    if sentence_ev is not None:
-                        yield sentence_ev
-                    if should_stop:
-                        metrics.stopped_total.inc()
-                        _record_llm_stream_once()
-                        yield _stop_event()
-                        yield _timing_event(
-                            timings,
-                            request_started,
-                            llm_model=settings.llm_model,
-                            llm_model_available=llm_model_available,
-                            retrieved_count=len(retrieved),
-                            passages_used=len(passages),
-                            expansion_variant_count=len(expansion_variants),
-                            state=state,
-                        )
-                        yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
-                        _record_final_metrics(state, llm_t0)
-                        return
-
-            # Flush the tail. Stream is done so there's no lookahead value
-            # left — emit every remaining sentence. Strict-stop check applies
-            # here too — a wrong final sentence is just as much a citation-
-            # correctness defect.
-            if buf.strip():
-                for sent in segment_sentences(buf):
-                    v = _verify_with_timing(sent)
+                    if not _candidate_sentence_should_emit(v):
+                        continue
                     sentence_ev, should_stop = _emit_and_check(v)
                     if sentence_ev is not None:
                         yield sentence_ev
@@ -5155,6 +9462,26 @@ async def answer(req: AnswerRequest):
 
             _record_llm_stream_once()
 
+            contract_events, contract_stop = _emit_contract_floor()
+            for ev in contract_events:
+                yield ev
+            if contract_stop:
+                metrics.stopped_total.inc()
+                yield _stop_event()
+                yield _timing_event(
+                    timings,
+                    request_started,
+                    llm_model=settings.llm_model,
+                    llm_model_available=llm_model_available,
+                    retrieved_count=len(retrieved),
+                    passages_used=len(passages),
+                    expansion_variant_count=len(expansion_variants),
+                    state=state,
+                )
+                yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                _record_final_metrics(state, llm_t0)
+                return
+
             # Server-authored authoritative Sources event. Per Codex review
             # (round 2) #4, the LLM is no longer allowed to author the
             # Sources section because it can fabricate case names while
@@ -5170,6 +9497,7 @@ async def answer(req: AnswerRequest):
                     "as_at": p["as_at"],
                     "source_type": p.get("source_type"),
                     "document_id": p.get("document_id"),
+                    "statute_short": p.get("statute_short"),
                 }
                 for p in passages
             ])}

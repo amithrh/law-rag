@@ -23,7 +23,7 @@ def test_priority_routes_final_eval_hard_fail_prompts():
         "my wife filed 498A on whole family even my old mother how to defend": "criminal_defence_bail",
         "stranger on bumble sent me dick pic without consent is there any law for this in india": "cyber_fraud_or_harassment",
         "client cheque of 2 lakh bounced for my logo work how to send notice": "cheque_bounce",
-        "son took loan against my house i didn't sign told bank to stop ahmedabad": "criminal_general",
+        "son took loan against my house i didn't sign told bank to stop ahmedabad": "banking_credit_dispute",
         "private limited mgt 7 aoc 4 not filed 3 years director disqualified can revive": "ibc_nclt",
         "ngo helping us said mukhiya did fake job cards no action by collector": "labour_exploitation_discrimination",
         "I work at a place in malad they call it spa but customers want extra and owner makes us do it if we refuse no salary how": "criminal_general",
@@ -53,6 +53,65 @@ def test_priority_routes_final_eval_hard_fail_prompts():
         assert route.required_sources, query
         assert route.forums, query
         assert route.missing_facts, query
+
+
+def test_domestic_violence_common_user_prompts_are_high_urgency_safety_routes():
+    for query in (
+        "sasural waale mujhe ghar se nikal diya raat ko bina kuch diye kya main wapis ja sakti hoon",
+        "please help he gets angry and slaps me but says sorry next day my parents say all marriages are like this should I stay",
+    ):
+        route = route_matter(query)
+
+        assert route.category == "family_domestic"
+        assert route.urgency in {"high", "emergency"}
+        assert route.action_pack is not None
+        assert route.action_pack.id == "family_domestic"
+        assert any("PWDVA" in source for source in route.required_sources)
+        assert "Protection Officer" in route.forums
+
+
+def test_wife_as_aggressor_does_not_use_pwdva_woman_protection_route():
+    for query in (
+        "my wife slapped me what to do",
+        "my wife took my salary atm card what to do",
+        "my wife threw me out of house what to do",
+        "my wife kicked me out at night what to do",
+        "my wife threatens me what to do",
+        "my wife took my jewellery what to do",
+        "my wife sold my house without consent what to do",
+        "my wife forced sex without consent what to do",
+        "my wife sexually assaulted me what to do",
+    ):
+        route = route_matter(query)
+
+        assert route.category == "criminal_general"
+        assert "PWDVA" not in " ".join(route.required_sources)
+        assert route.action_pack is not None
+        assert route.action_pack.id == "criminal_general"
+
+
+def test_without_consent_property_phrase_does_not_trigger_marital_sexual_violence():
+    property_route = route_matter("my wife sold my house without consent what to do")
+    assert property_route.category == "criminal_general"
+    assert property_route.label == "Spousal assault / financial-control complaint"
+
+    sexual_route = route_matter("my husband forced sex without consent what to do")
+    assert sexual_route.category == "family_domestic"
+    assert sexual_route.label == "Marital sexual violence / domestic safety"
+
+
+def test_wife_civil_property_and_maintenance_queries_are_not_criminalized():
+    for query in (
+        "my wife wants share in my house during divorce what to do",
+        "my wife is asking maintenance and share in my property what to do",
+    ):
+        route = route_matter(query)
+
+        assert route.category == "family_marriage_status"
+        assert route.label == "Matrimonial property / maintenance response"
+        assert route.legal_regime is None
+        assert "BNS" not in " ".join(route.required_sources)
+        assert "BNSS" not in " ".join(route.required_sources)
 
 
 def test_stage34_final100_gap_prompts_route_to_specific_buckets():
@@ -183,11 +242,60 @@ def test_stage5_routes_fresh_hard_fail_clusters_to_actionable_buckets():
         assert route.forums, query
 
 
+def test_milestone_b_routes_common_human_failures_to_actionable_buckets():
+    cases = {
+        "hospital operated wrong leg on my 80 yr old father now hospital says consent": (
+            "consumer",
+            "Medical negligence / hospital service deficiency",
+        ),
+        "complained about sexual harassment by my manager to HR and now he gave PIP bad rating": (
+            "workplace_sexual_harassment",
+            "Workplace sexual harassment",
+        ),
+        "PITA case only talking on phone with paying clients not meeting anyone take bookings": (
+            "criminal_defence_bail",
+            "ITPA call-handling / accused-risk clarification",
+        ),
+        "HDFC bank wrongly debited forex transaction no response what to do": (
+            "banking_credit_dispute",
+            "Bank debit / RBI Ombudsman complaint",
+        ),
+        "vit student caught with bhang lassi in mahabaleshwar holi is it ndps": (
+            "criminal_defence_bail",
+            "NDPS / alleged drug possession defence",
+        ),
+        "ration card cancelled due aadhaar mismatch BDO says renew what to do": (
+            "social_welfare_identity",
+            "Welfare benefit / identity record",
+        ),
+    }
+
+    for query, (category, label) in cases.items():
+        route = route_matter(query)
+        assert route.category == category, query
+        assert route.label == label, query
+        assert route.action_pack is not None, query
+        assert route.required_sources, query
+        assert route.forums, query
+
+
 def test_priority_routes_avoid_surface_keyword_conflicts():
     assert route_matter("client cheque of 2 lakh bounced for my logo work how to send notice").category == "cheque_bounce"
     assert route_matter("my brother beaten in lockup constable took 20000 for bail still not released").category == "police_fir"
     assert route_matter("police beating my brother in lockup and not giving medical help").category == "police_fir"
     assert route_matter("my 14 year old girlfriend's father filed pocso on me I am 17 we were in relationship").category == "criminal_defence_bail"
+
+
+def test_senior_maintenance_order_enforcement_beats_police_keyword():
+    route = route_matter(
+        "pls tell tribunal in tamil nadu ordered son to pay 10000 per month he stopped paying enforce kaise need lawyer or police"
+    )
+
+    assert route.category == "senior_citizen"
+    assert route.label == "Senior citizen maintenance order enforcement"
+    assert route.legal_regime is None
+    assert any("Maintenance Tribunal" in forum for forum in route.forums)
+    assert any("Senior Citizens Act" in source or "Senior Citizens" in source for source in route.required_sources)
 
 
 def test_routes_handcuff_court_production_to_custody_safeguard():
@@ -510,6 +618,11 @@ def test_routes_land_records_revenue_issue():
 def test_routes_fra_bamboo_patta_before_land_records():
     route = route_matter("patta given under FRA but forest guards still cutting our bamboo saying it is reserved bastar")
     assert route.category == "tribal_caste_atrocity"
+    assert route.label == "Forest rights / FRA claim or forest produce"
+    assert route.action_pack is not None
+    assert route.action_pack.id == "forest_rights_fra"
+    assert "police station" not in route.action_pack.escalation
+    assert not any("Special Court" in forum for forum in route.action_pack.escalation)
     assert any("Forest Rights Act" in source for source in route.required_sources)
     assert "tribal welfare authority" in route.forums
 
@@ -799,12 +912,24 @@ def test_stage3_overroute_regressions_stay_out_of_wrong_buckets():
     assert route_matter("zomato rider account deactivated no response").category == "digital_platform_account"
     assert route_matter("bank account frozen kyc pending what complaint").category == "banking_credit_dispute"
     assert route_matter("sbi bank account froze because kyc pending").category == "banking_credit_dispute"
+    assert route_matter("my bank account is frozen what to do").label == "Bank account freeze / lien / KYC hold"
+    for query in (
+        "my instagram account is frozen what to do",
+        "my zerodha account is frozen what to do",
+        "my binance account frozen kyc pending what to do",
+        "my youtube account frozen payout held what to do",
+        "my google account blocked what legal remedy",
+    ):
+        assert route_matter(query).label != "Bank account freeze / lien / KYC hold", query
+    assert route_matter("Loan app is harassing my contacts").label == "Loan-app / recovery harassment"
+    assert route_matter("My shop is in Gujarat and municipality sealed it.").label == "Municipal sealing / shop closure notice"
+    assert route_matter("my pan and aadhaar is mismatch").label == "PAN/Aadhaar mismatch / identity linking"
     assert route_matter("kanya vivah scheme money not given by government after my daughter wedding").category == "social_welfare_identity"
     assert route_matter("my husband died in army no service pension widow what papers needed").category == "social_welfare_identity"
     assert route_matter("recovery agents from a NBFC visited my office and shouted in front of colleagues").category == "banking_credit_dispute"
     assert route_matter("i am 73 christian widow can my stepchildren claim share in husband self acquired property").category == "succession_inheritance"
     assert route_matter("my husband had affair I caught them I slapped the woman now she is filing case on me what to do").category == "criminal_defence_bail"
-    assert route_matter("fake call from sbi pension office took 2 lakh from my account 75 yr father").category == "senior_citizen"
+    assert route_matter("fake call from sbi pension office took 2 lakh from my account 75 yr father").category == "cyber_fraud_or_harassment"
     assert route_matter("vendor zone bhopal allotted me 2018 now hawker inspector saying pay 2000 every month otherwise remove").category == "street_vendor_municipal"
 
 
@@ -823,6 +948,39 @@ def test_routes_education_rights():
     route = route_matter("private school refusing admission under 25 percent RTE quota")
     assert route.category == "education_rights"
     assert any("Right of Children" in source for source in route.required_sources)
+
+
+def test_common_user_smoke_routes_from_ui_screenshots():
+    cases = {
+        "brother and i bought a plot together 10 years back, now he has sold it, what can i do": ("property_tenancy", "property_tenancy"),
+        "my daughter school admission is denied, despite her clearing admission exam": ("education_rights", "education_rights"),
+        "police has picked my son from my home in the night, i have not got FIR copy": ("police_fir", "police_fir"),
+        "My bike is stolen, police is not filing FIR": ("police_fir", "police_fir"),
+        "My wife denies sex from last 1 year, what to do": ("family_marriage_status", "marriage_breakdown"),
+        "My wife is denying sex since many years, what to do": ("family_marriage_status", "marriage_breakdown"),
+        "My husband told lies before marriage about his job and his salary, what to do": ("family_marriage_status", "marriage_misrepresentation"),
+        "My tenant is not vacating house and not paying rent": ("property_tenancy", "tenancy_eviction_nonpayment"),
+    }
+
+    for query, (category, action_pack) in cases.items():
+        route = route_matter(query)
+        assert route.category == category, query
+        assert route.action_pack is not None, query
+        assert route.action_pack.id == action_pack, query
+
+
+def test_common_user_smoke_route_guards_do_not_overfit_family_words():
+    solo_sale_tax = route_matter("my brother sold his own plot what tax applies")
+    assert solo_sale_tax.category == "tax_gst_compliance"
+    assert solo_sale_tax.label != "Joint property sale / co-owner dispute"
+
+    not_married_yet = route_matter(
+        "my fiance lied about salary before marriage but we are not married yet what can i do"
+    )
+    assert not_married_yet.category != "family_marriage_status" or (
+        not_married_yet.action_pack is not None
+        and not_married_yet.action_pack.id != "marriage_misrepresentation"
+    )
 
 
 def test_routes_child_adoption_and_return():
@@ -932,13 +1090,53 @@ def test_routes_posh_retaliation_after_icc_complaint():
 def test_routes_fra_ifr_title_for_gond_widow():
     route = route_matter("i am gond woman my husband died forest officer not giving me IFR title dindori")
     assert route.category == "tribal_caste_atrocity"
+    assert route.label == "Forest rights / FRA claim or forest produce"
 
 
 def test_routes_tribal_land_transfer_with_revenue_forums():
     route = route_matter("tribal land sold to non tribal by uncle without our consent is it legal")
     assert route.category == "tribal_caste_atrocity"
     assert "land transfer" in route.label.lower()
+    assert route.action_pack is not None
+    assert route.action_pack.id == "tribal_land_transfer_restoration"
+    assert "police station" not in route.action_pack.escalation
+    assert not any("Special Court" in forum for forum in route.action_pack.escalation)
     assert any("Collector" in forum or "revenue" in forum for forum in route.forums)
+
+
+def test_routes_tribal_mutation_to_land_transfer_not_generic_scst():
+    route = route_matter("can u tell patwari changed mutation record giving my dadaji land to non tribal buyer nuapada odisha what can i do")
+    assert route.category == "tribal_caste_atrocity"
+    assert route.label == "Tribal land transfer / restoration"
+    assert any("Scheduled Area" in source or "Fifth Schedule" in source for source in route.required_sources)
+
+
+def test_routes_fra_claim_rejection_to_fra_not_generic_scst():
+    for query in (
+        "i am adivasi woman my IFR claim form rejected because no signature of husband bastar what can i do",
+        "gram sabha passed my IFR claim but SDLC rejected without reason what to do gadchiroli",
+    ):
+        route = route_matter(query)
+        assert route.category == "tribal_caste_atrocity"
+        assert route.label == "Forest rights / FRA claim or forest produce"
+        assert any("Forest Rights Act" in source for source in route.required_sources)
+
+
+def test_routes_palli_sabha_coal_block_to_tribal_project_consent():
+    route = route_matter("land acquired for coal block without consulting palli sabha angul odisha what can i do")
+    assert route.category == "environment_compensation"
+    assert route.label == "Tribal project displacement / Gram Sabha consent"
+    assert any("PESA" in source for source in route.required_sources)
+
+
+def test_routes_minor_mineral_gram_sabha_without_rfctlarr_rr():
+    route = route_matter("sand mining lease given without gram sabha consent in scheduled area")
+    assert route.category == "environment_compensation"
+    assert route.label == "Minor mineral / Gram Sabha recommendation"
+    assert route.action_pack and route.action_pack.id == "minor_mineral_gram_sabha"
+    assert any("PESA" in source and "4(c)" in source for source in route.required_sources)
+    assert any("Mines and Minerals" in source for source in route.required_sources)
+    assert not any("RFCTLARR" in source or "rehabilitation" in source.lower() for source in route.required_sources)
 
 
 def test_routes_forest_minor_produce_to_tribal_rights():
@@ -1373,7 +1571,7 @@ def test_stage25_final100_hard_fail_routes_to_actionable_forums():
         "my husband lost hand in brick kiln no compensation owner saying he was careless": "workplace_injury_compensation",
         "upper caste people beat my husband called us by caste name FIR not registered": "tribal_caste_atrocity",
         "school principal not giving SC scholarship saying papers wrong since 2 years vidarbha": "social_welfare_identity",
-        "fake call from sbi pension office took 2 lakh from my account 75 yr father": "senior_citizen",
+        "fake call from sbi pension office took 2 lakh from my account 75 yr father": "cyber_fraud_or_harassment",
         "code on wages applicable to me minimum wage notification gujarat for unskilled worker": "labour_compliance",
         "construction site delhi 14 hour work no overtime contractor laughing when i ask": "employment_wages",
         "husband forces me at night even when I say no I am tired or unwell is there any law for this in india now": "family_domestic",
@@ -1539,3 +1737,160 @@ def test_stage38_review_blocker_routes_are_specific_not_generic():
     assert route_matter(
         "maintenance tribunal ordered son to pay but he stopped paying how to enforce"
     ).category == "senior_citizen"
+    prison = route_matter("tihar jail mulaqat only 30 min once a week is this legal can we ask more")
+    assert prison.category == "prison_parole_furlough"
+    assert prison.label == "Prison mulaqat / interview access"
+    assert prison.action_pack and prison.action_pack.id == "prison_mulaqat_access"
+    assert route_matter(
+        "how to file vakalatnama change of advocate during pending suit"
+    ).category == "court_procedure"
+    assert route_matter(
+        "blue trunks app froze my account showing kyc pending pe stuck 80k"
+    ).category == "digital_platform_account"
+    assert route_matter(
+        "DM gave NOC to bauxite project bastar without gram sabha resolution how to challenge"
+    ).category == "environment_compensation"
+
+
+def test_stage_c_repeated_common_failures_route_to_specific_actionable_buckets():
+    cases = {
+        "supplier delivered defective material now refusing refund 18 lakh contract": (
+            "business_contract_partnership",
+            "Business contract / partnership",
+        ),
+        "mother says son took her thumb impression on blank paper now produced as gift deed": (
+            "property_tenancy",
+            "Property transfer / gift deed dispute",
+        ),
+        "son took loan against my house i didn't sign told bank to stop ahmedabad": (
+            "banking_credit_dispute",
+            "Forged loan / bank-property document dispute",
+        ),
+        "lic agent told my father guaranteed return now policy matured got half amount fraud": (
+            "senior_citizen",
+            "Senior citizen financial abuse / mis-selling",
+        ),
+        "tehsildar transferred my baba land to bania without my consent agency area andhra": (
+            "tribal_caste_atrocity",
+            "Tribal land transfer / restoration",
+        ),
+        "fake call from sbi pension office took 2 lakh from my account 75 yr father": (
+            "cyber_fraud_or_harassment",
+            "Bank / pension impersonation fraud",
+        ),
+        "I had abortion 5 years back husband found out threatening divorce": (
+            "reproductive_rights_mtp",
+            "Pregnancy termination / reproductive rights",
+        ),
+    }
+    for query, (category, label) in cases.items():
+        route = route_matter(query)
+        assert route.category == category, query
+        assert route.label == label, query
+        assert route.action_pack is not None, query
+        assert route.required_sources, query
+        assert route.forums, query
+
+
+def test_stage_c_review_regime_and_variant_guards():
+    forged_deed = route_matter(
+        "mother says son took her thumb impression on blank paper in 2022 now produced as gift deed"
+    )
+    assert forged_deed.category == "property_tenancy"
+    assert forged_deed.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+
+    forged_bank = route_matter(
+        "son took loan against my house in 2022 i did not sign told bank to stop"
+    )
+    assert forged_bank.category == "banking_credit_dispute"
+    assert forged_bank.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+
+    b2b = route_matter("supplier delivered defective material refusing refund")
+    assert b2b.category == "business_contract_partnership"
+
+    forged_signature = route_matter("in 2019 brother forged my signature on gift deed of my house")
+    assert forged_signature.category == "property_tenancy"
+    assert forged_signature.label == "Property transfer / gift deed dispute"
+    assert forged_signature.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+
+
+def test_stage_e_hardfail_routes_hit_specific_buckets():
+    ancestral = route_matter(
+        "pls tell father is hindu 78 yrs ancestral land sold by brother without consent madhya pradesh need lawyer or police"
+    )
+    assert ancestral.category == "property_tenancy"
+    assert ancestral.label == "Ancestral land sale / heir share dispute"
+
+    mandamus = route_matter(
+        "urgent what is mandamus writ and when can I file against government officer how to complain"
+    )
+    assert mandamus.category == "court_procedure"
+    assert mandamus.label == "Writ / constitutional remedy procedure"
+
+    article_route = route_matter(
+        "urgent difference between Article 32 Supreme Court and Article 226 High Court writ how to complain"
+    )
+    assert article_route.category == "court_procedure"
+    assert article_route.label == "Writ / constitutional remedy procedure"
+
+    pre_marriage = route_matter(
+        "please help the man I am supposed to marry next month I found out hides he is HIV positive his family also knows can I cancel without dowry return issue any remedy"
+    )
+    assert pre_marriage.category == "family_marriage_status"
+    assert pre_marriage.label == "Pre-marriage health disclosure / cancelled wedding"
+    assert pre_marriage.action_pack and pre_marriage.action_pack.id == "pre_marriage_disclosure"
+
+    post_marriage = route_matter(
+        "married last month found wife hid HIV positive can I cancel marriage"
+    )
+    assert post_marriage.category == "family_marriage_status"
+    assert post_marriage.label != "Pre-marriage health disclosure / cancelled wedding"
+    assert post_marriage.action_pack and post_marriage.action_pack.id == "marriage_misrepresentation"
+
+    after_marriage = route_matter(
+        "after marriage found husband is HIV positive and hid it can I cancel marriage"
+    )
+    assert after_marriage.category == "family_marriage_status"
+    assert after_marriage.label != "Pre-marriage health disclosure / cancelled wedding"
+
+    after_wedding_groom = route_matter(
+        "after wedding found groom hid HIV can I cancel marriage"
+    )
+    assert after_wedding_groom.category == "family_marriage_status"
+    assert after_wedding_groom.label == "Marriage misrepresentation / family-law options"
+
+    after_wedding_bride = route_matter(
+        "after wedding found bride hid HIV can I cancel without dowry issue"
+    )
+    assert after_wedding_bride.category == "family_marriage_status"
+    assert after_wedding_bride.label == "Marriage misrepresentation / family-law options"
+
+    assert route_matter(
+        "i have got damaged phone company is not accepting the return what to do"
+    ).category == "consumer"
+
+
+def test_stage_f_safety_blocker_routes_are_not_general_or_wrong_forum():
+    csam = route_matter("ai csam of my classmate someone made and shared in college telegram")
+    assert csam.category == "cyber_fraud_or_harassment"
+    assert any("POCSO" in source for source in csam.required_sources)
+
+    esi = route_matter(
+        "i am confused ESI hospital refused to treat my wife for delivery saying my contributions are short"
+    )
+    assert esi.category == "employment_wages"
+    assert esi.label == "ESI benefit / insured-person treatment dispute"
+
+    accused_498a = route_matter(
+        "i am confused my wife filed false 498A case against me and my parents can we get anticipatory bail"
+    )
+    assert accused_498a.category == "criminal_defence_bail"
+    assert accused_498a.label == "498A / matrimonial criminal defence"
+
+    online_warning = route_matter("engagement broken because he hid HIV can I post warning online")
+    assert online_warning.category == "family_marriage_status"
+    assert online_warning.label == "Pre-marriage health disclosure / cancelled wedding"
+
+    mining = route_matter("tribal village land taken for mining without consent gram sabha")
+    assert mining.category == "environment_compensation"
+    assert mining.label == "Tribal project displacement / Gram Sabha consent"

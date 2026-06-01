@@ -33,3 +33,10 @@ data/
 uploads/
 *.pdf
 *.sqlite
+
+# Local run artifacts
+.claude/
+checkpoints/
+logs/
+models/
+reports/
