@@ -47,6 +47,7 @@ import re
 import time
 
 from .config import get_settings
+from .legal_hyde import maybe_append_legal_hyde_brief
 from .llm import chat_once
 from .matter_router import MatterRoute, route_matter
 
@@ -499,7 +500,7 @@ _ROUTE_EXPANSIONS: dict[str, list[str]] = {
         "NCLT insolvency application demand notice default debt",
     ],
     "business_contract_partnership": [
-        "Indian Contract Act 1872 section 27 non compete restraint trade",
+        "Indian Contract Act 1872 section 37 performance of promise section 73 compensation breach",
         "Indian Partnership Act 1932 retirement partner liability notice",
     ],
     "business_license_compliance": [
@@ -640,7 +641,11 @@ def _route_variants(query: str, route: MatterRoute, max_variants: int) -> list[s
             "name change after marriage government press gazette publication newspaper undertaking proforma witnesses",
         ][:max_variants]
 
-    variants = _ROUTE_EXPANSIONS.get(route.category, [])
+    variants = (
+        _family_marriage_status_variants(q)
+        if route.category == "family_marriage_status"
+        else _ROUTE_EXPANSIONS.get(route.category, [])
+    )
     if route.category == "employment_wages" and re.search(r"\b(epf|pf|provident fund)\b", q):
         variants = [
             "Employees Provident Funds Act 1952 employer contribution default",
@@ -782,6 +787,16 @@ def _route_variants(query: str, route: MatterRoute, max_variants: int) -> list[s
             "BNSS 2023 FIR police complaint hurt assault workplace injury",
         ] + variants
     if route.category == "business_contract_partnership":
+        if _contains_any(q, ("hand loan", "friendly loan", "borrowed money", "lent money", "personal loan", "family loan", "not returning money", "not repaying", "repayment")):
+            variants = [
+                "Indian Contract Act 1872 section 37 performance of promise loan repayment",
+                "Limitation Act 1963 limitation money recovery loan debt",
+                "Code of Civil Procedure 1908 Order XXXVII summary suit money recovery",
+            ] + variants
+        if _contains_any(q, ("non compete", "non-compete", "restraint trade", "restraint of trade", "joined competitor", "competitor but no nda")):
+            variants = [
+                "Indian Contract Act 1872 section 27 restraint of trade non compete agreement",
+            ] + variants
         if _contains_any(q, ("delivery", "vendor", "seller", "recover advance", "advance", "cancel and recover")):
             variants = [
                 "Indian Contract Act 1872 section 39 refusal to perform section 73 compensation breach delivery advance",
@@ -1010,17 +1025,38 @@ def _route_variants(query: str, route: MatterRoute, max_variants: int) -> list[s
                 "Income Tax Act 1961 section 139 belated revised return assessment year",
             ]
     if route.category == "property_tenancy":
-        if _contains_any(q, ("gift deed", "gift", "registered gift", "not caring", "cancel", "revocation")):
+        tenant_context = _contains_any(q, (
+            "tenant", "landlord", "rent", "lease", "not vacating", "not leaving",
+            "evict", "eviction", "vacate", "rent agreement", "security deposit",
+        ))
+        heir_sale_context = _contains_any(q, (
+            "legal heir", "legal heirs", "heir", "heirs", "inherited",
+            "succession", "father died", "mother died", "ancestral",
+        )) and _contains_any(q, (
+            "sell", "sale", "sold", "not agreeing", "not signing", "without consent",
+        ))
+        if tenant_context:
+            variants = [
+                "Transfer of Property Act 1882 section 106 lease termination notice section 111 determination of lease",
+                "state rent control tenancy eviction rent arrears tenant not vacating",
+            ]
+        elif heir_sale_context:
+            variants = [
+                "Hindu Succession Act 1956 section 8 legal heirs inherited property succession shares",
+                "Transfer of Property Act 1882 section 44 co owner share transfer joint property",
+                "Specific Relief Act 1963 declaration injunction cancellation property sale dispute",
+            ]
+        if not tenant_context and _contains_any(q, ("gift deed", "gift", "registered gift", "not caring", "cancel", "revocation")):
             variants = [
                 "Transfer of Property Act 1882 section 126 revocation suspension of gift deed",
                 "Transfer of Property Act 1882 section 122 section 123 gift transfer registered instrument",
             ] + variants
-        if _contains_any(q, ("joint name", "half share", "claims half", "house", "flat")):
+        if not tenant_context and _contains_any(q, ("joint name", "half share", "claims half", "house", "flat")):
             variants = [
                 "Transfer of Property Act 1882 section 45 joint transfer consideration co owner share",
                 "Transfer of Property Act 1882 joint ownership house flat share",
             ] + variants
-        if _contains_any(q, ("thumb impression", "blank paper", "under pressure", "coercion", "undue influence", "fraud", "didn't sign", "did not sign")):
+        if not tenant_context and _contains_any(q, ("thumb impression", "blank paper", "under pressure", "coercion", "undue influence", "fraud", "didn't sign", "did not sign")):
             variants = [
                 "Indian Contract Act 1872 consent coercion undue influence fraud voidable agreement",
                 "Registration Act 1908 registered gift deed sale deed validity",
@@ -1110,6 +1146,96 @@ def _route_variants(query: str, route: MatterRoute, max_variants: int) -> list[s
             for v in variants
         ]
     return variants[:max_variants]
+
+
+def _family_marriage_status_variants(q: str) -> list[str]:
+    """Keep family-status expansion in the user's actual legal lane."""
+    mutual_context = _contains_any(q, (
+        "mutual consent", "mutual divorce", "13b", "section 13b",
+        "both agree divorce", "both of us agree", "joint petition",
+    )) or ("divorce" in q and _contains_any(q, ("both agree", "both me and", "both husband", "both wife")))
+    if mutual_context:
+        if _contains_any(q, ("special marriage", "special marriage act", "interfaith", "inter-faith", "court marriage", "section 28")):
+            return [
+                "Special Marriage Act 1954 section 28 divorce by mutual consent",
+                "Family Courts Act 1984 jurisdiction divorce mutual consent petition",
+            ]
+        if _contains_any(q, ("muslim", "shariat", "nikah")):
+            return [
+                "Muslim Personal Law Shariat Application Act 1937 divorce personal law",
+                "Dissolution of Muslim Marriages Act 1939 Muslim wife divorce grounds",
+                "Family Courts Act 1984 jurisdiction divorce petition",
+            ]
+        if _contains_any(q, ("christian", "church marriage", "catholic", "protestant")):
+            return [
+                "Divorce Act 1869 Christian divorce mutual consent family court",
+                "Family Courts Act 1984 jurisdiction divorce petition",
+            ]
+        return [
+            "Hindu Marriage Act 1955 section 13B mutual consent divorce",
+            "Family Courts Act 1984 jurisdiction divorce mutual consent petition",
+        ]
+
+    adultery_context = _contains_any(q, (
+        "adultery", "extra marital", "extra-marital", "affair",
+        "cheating on me", "caught my husband", "caught my wife",
+        "another woman", "another women", "another man",
+        "having sex", "sex with another", "in bed",
+    ))
+    if adultery_context:
+        if _contains_any(q, ("special marriage", "special marriage act", "interfaith", "inter-faith", "court marriage")):
+            return [
+                "Special Marriage Act 1954 section 27 adultery divorce ground",
+                "Family Courts Act 1984 section 7 matrimonial jurisdiction divorce",
+            ]
+        if _contains_any(q, ("christian", "church marriage", "catholic", "protestant")):
+            return [
+                "Divorce Act 1869 Christian divorce adultery matrimonial relief",
+                "Family Courts Act 1984 matrimonial jurisdiction Christian divorce",
+            ]
+        if _contains_any(q, ("muslim", "shariat", "nikah")):
+            return [
+                "Muslim Personal Law Shariat Application Act 1937 divorce maintenance personal law",
+                "Family Courts Act 1984 matrimonial jurisdiction divorce maintenance",
+            ]
+        return [
+            "Hindu Marriage Act 1955 section 13 adultery divorce ground",
+            "Special Marriage Act 1954 section 27 divorce adultery ground",
+            "Family Courts Act 1984 section 7 matrimonial jurisdiction divorce",
+        ]
+
+    intimacy_context = _contains_any(q, (
+        "denies sex", "denied sex", "denying sex", "refuses sex", "refusing sex",
+        "no sex", "physical relation", "physical relationship", "conjugal", "intimacy",
+    ))
+    if intimacy_context:
+        return [
+            "Hindu Marriage Act 1955 section 9 section 13 matrimonial relief",
+            "Family Courts Act 1984 section 7 matrimonial jurisdiction",
+        ]
+
+    second_marriage_context = _contains_any(q, (
+        "second marriage", "second wife", "second husband", "married again",
+        "married 2nd time", "married second", "without divorcing",
+        "bigamy", "first marriage valid",
+    ))
+    if second_marriage_context:
+        return [
+            "personal law second marriage first marriage valid protection maintenance",
+            "BNS 2023 IPC 1860 bigamy cruelty marriage status family court",
+        ]
+
+    misrepresentation_context = _contains_any(q, (
+        "lied", "lies", "false", "fraud", "misrepresent", "concealed", "hid", "fake",
+    ))
+    if misrepresentation_context:
+        return [
+            "Hindu Marriage Act 1955 section 12 voidable marriage fraud consent",
+            "Special Marriage Act 1954 voidable marriage fraud consent",
+            "Family Courts Act 1984 matrimonial jurisdiction",
+        ]
+
+    return []
 
 
 def _criminal_defence_bail_variants(query: str, route: MatterRoute) -> list[str]:
@@ -1255,7 +1381,13 @@ async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
             "query_expand: route-aware %d variants (category=%s confidence=%.2f)",
             len(deterministic), route.category, route.confidence,
         )
-        return [query] + deterministic
+        return maybe_append_legal_hyde_brief(
+            query,
+            [query] + deterministic,
+            mode=settings.legal_hyde_mode,
+            max_chars=settings.legal_hyde_max_chars,
+            route=route,
+        )
 
     if not getattr(settings, "query_expansion_llm_enabled", False):
         logger.info(
@@ -1264,7 +1396,13 @@ async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
             route.category,
             route.confidence,
         )
-        return [query]
+        return maybe_append_legal_hyde_brief(
+            query,
+            [query],
+            mode=settings.legal_hyde_mode,
+            max_chars=settings.legal_hyde_max_chars,
+            route=route,
+        )
 
     t0 = time.time()
     try:
@@ -1278,7 +1416,13 @@ async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
         )
     except Exception as e:
         logger.warning("query_expand: LLM call failed: %s", e)
-        return [query]
+        return maybe_append_legal_hyde_brief(
+            query,
+            [query],
+            mode=settings.legal_hyde_mode,
+            max_chars=settings.legal_hyde_max_chars,
+            route=route,
+        )
     elapsed = time.time() - t0
 
     # qwen3 sometimes returns leading "thinking" content even with
@@ -1287,7 +1431,13 @@ async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
 
     if "NOT_LEGAL" in raw.upper():
         logger.info("query_expand: NOT_LEGAL signal (%.1fs); original only", elapsed)
-        return [query]
+        return maybe_append_legal_hyde_brief(
+            query,
+            [query],
+            mode=settings.legal_hyde_mode,
+            max_chars=settings.legal_hyde_max_chars,
+            route=route,
+        )
 
     variants: list[str] = []
     for line in raw.split("\n"):
@@ -1321,7 +1471,13 @@ async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
 
     # Always return original first — it's the most reliable signal even
     # if all variants are bad.
-    return [query] + variants
+    return maybe_append_legal_hyde_brief(
+        query,
+        [query] + variants,
+        mode=settings.legal_hyde_mode,
+        max_chars=settings.legal_hyde_max_chars,
+        route=route,
+    )
 
 
 __all__ = ["expand_query"]

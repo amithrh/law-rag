@@ -116,6 +116,20 @@ def build_messages(
     for p in passages:
         idx = p["index"]
         meta_bits = []
+        source_type = str(p.get("source_type") or "").strip().lower()
+        if source_type:
+            readable_type = {
+                "bare_act": "Bare Act",
+                "sc_judgment": "Supreme Court judgment",
+                "hc_judgment": "High Court judgment",
+                "rule": "Rule",
+                "regulation": "Regulation",
+                "scheme": "Scheme",
+                "guideline": "Guideline",
+                "circular": "Circular",
+                "notification": "Notification",
+            }.get(source_type, source_type.replace("_", " ").title())
+            meta_bits.insert(0, f"TYPE: {readable_type}")
         if p.get("title"):
             meta_bits.append(p["title"])
         if p.get("statute_short"):

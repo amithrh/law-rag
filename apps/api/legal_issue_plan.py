@@ -163,10 +163,7 @@ def build_legal_issue_plan(query: str, route: MatterRoute) -> LegalIssuePlan | N
     user_role = _extract_user_role(q, route.category)
     incident_status = _incident_date_status(q, route)
     required_facts = _dedupe(route.missing_facts)
-    authority_ledger = [
-        _authority_entry(source, position)
-        for position, source in enumerate(route.required_sources or [])
-    ]
+    authority_ledger = _authority_entries(q, route)
     safety_flags = _safety_flags(
         q,
         route=route,
@@ -548,6 +545,37 @@ def _authority_entry(source: str, position: int) -> AuthorityLedgerEntry:
     )
 
 
+def _authority_entries(q: str, route: MatterRoute) -> list[AuthorityLedgerEntry]:
+    entries: list[AuthorityLedgerEntry] = []
+    for position, source in enumerate(route.required_sources or []):
+        normalized_source = source
+        lower = source.lower()
+        if route.label == "Caste certificate rejection / appeal":
+            if "article 341 / 342" in lower:
+                if _has_any(q, ("st certificate", "st cert", "scheduled tribe", "tribe certificate", "tribal certificate")):
+                    normalized_source = "Constitution of India Article 342 for the relevant State-wise Scheduled Tribe list"
+                elif _has_any(q, ("sc certificate", "sc cert", "scheduled caste")):
+                    normalized_source = "Constitution of India Article 341 for the relevant State-wise Scheduled Caste list"
+                else:
+                    entries.append(
+                        AuthorityLedgerEntry(
+                            source="Constitution Article 341 or 342 after the SC/ST category is confirmed",
+                            act="Constitution of India",
+                            section=None,
+                            claim_type="legal_basis",
+                            priority="conditional",
+                            must_cite=False,
+                            conditional=True,
+                            note="category_dependent_sc_article_341_vs_st_article_342",
+                        )
+                    )
+                    continue
+            elif lower.startswith("right to information act 2005"):
+                normalized_source = "Right to Information Act 2005 Section 6 for the application record and written reasons"
+        entries.append(_authority_entry(normalized_source, position))
+    return entries
+
+
 def _is_date_dependent_regime_source(lower_source: str) -> bool:
     has_new_code = any(term in lower_source for term in ("bnss", "bns", "bsa"))
     has_old_code = any(term in lower_source for term in ("crpc", "ipc", "evidence act"))
@@ -583,7 +611,11 @@ def _extract_act_name(source: str) -> str | None:
 
 
 def _extract_section(source: str) -> str | None:
-    match = re.search(r"\b(?:section|sec\.?|article|order)\s+([0-9A-Za-z()./-]+)", source, flags=re.IGNORECASE)
+    match = re.search(
+        r"\b(?:section|sec\.?|article|order)\s+([0-9][0-9A-Za-z()./-]*)",
+        source,
+        flags=re.IGNORECASE,
+    )
     if not match:
         return None
     return match.group(0).strip()

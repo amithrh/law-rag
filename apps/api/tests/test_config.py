@@ -22,6 +22,8 @@ def reset_env(monkeypatch):
         if (
             k.startswith("POSTGRES_")
             or k.startswith("OLLAMA_")
+            or k.startswith("PREWARM_")
+            or k.startswith("LEGAL_HYDE_")
             or k in {"DATABASE_URL", "API_IN_DOCKER"}
         ):
             monkeypatch.delenv(k, raising=False)
@@ -171,3 +173,25 @@ class TestSettingsDefaults:
         monkeypatch.setenv("VERIFIER_BACKEND", "bge")
         s = Settings(database_url="postgresql://x")
         assert s.verifier_backend == "bge"
+
+    def test_model_prewarm_defaults_off_but_can_be_enabled(self, monkeypatch):
+        s = Settings(database_url="postgresql://x")
+        assert s.prewarm_models_on_startup is False
+        assert s.prewarm_models_required is True
+
+        monkeypatch.setenv("PREWARM_MODELS_ON_STARTUP", "true")
+        enabled = Settings(database_url="postgresql://x")
+        assert enabled.prewarm_models_on_startup is True
+
+    def test_legal_hyde_defaults_fallback_with_env_override(self, monkeypatch):
+        s = Settings(database_url="postgresql://x")
+        assert s.legal_hyde_mode == "fallback"
+        assert s.legal_hyde_max_chars == 360
+
+        monkeypatch.setenv("LEGAL_HYDE_MODE", "off")
+        disabled = Settings(database_url="postgresql://x")
+        assert disabled.legal_hyde_mode == "off"
+
+        monkeypatch.setenv("LEGAL_HYDE_MODE", "fallback")
+        enabled = Settings(database_url="postgresql://x")
+        assert enabled.legal_hyde_mode == "fallback"

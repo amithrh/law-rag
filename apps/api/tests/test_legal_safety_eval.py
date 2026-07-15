@@ -93,6 +93,26 @@ def test_plain_dpdp_breach_does_not_require_criminal_regime_metadata():
     assert _labels(row)["wrong_regime"] is False
 
 
+def test_pan_leak_fake_bank_account_does_not_require_criminal_regime_metadata():
+    row = {
+        "query": "PAN card copy leaked online and fake bank account opened in my name",
+        "expected_category": "cyber",
+        "expected_act_hint": "DPDP Act, IT Act, RBI Ombudsman and BNS/BNSS for PAN leak fake bank account identity misuse",
+        "route_category": "cyber_fraud_or_harassment",
+        "route_forums": ["cyber police", "bank", "RBI Ombudsman"],
+        "sentence_count": 4,
+        "answer_text": (
+            "Keep the DPDP personal-data grievance, IT Act identity/electronic misuse, "
+            "and bank/RBI Ombudsman complaint together."
+        ),
+    }
+
+    labels = _labels(row)
+
+    assert labels["wrong_regime"] is False
+    assert labels["wrong_forum"] is False
+
+
 def test_civil_year_does_not_force_legacy_criminal_regime():
     row = {
         "query": "my father died in 2019 property not divided and police not helping what to do",

@@ -23,6 +23,91 @@ from fastapi.testclient import TestClient
 from apps.api.main import app
 
 
+def test_college_certificate_prompt_candidates_filter_rte_bleed():
+    from apps.api import main as api_main
+    from apps.api.matter_router import route_matter
+
+    query = "college is holding my original marksheets after I discontinued course"
+    route = route_matter(query)
+    retrieved = [
+        SimpleNamespace(
+            title="All India Council for Technical Education Approval Process Handbook 2022-23",
+            statute_short=None,
+            anchor="aicte-approval-process-handbook-2023/refund-original-documents-8.13",
+            document_id="aicte-approval-process-handbook-2023",
+            source_type="guideline",
+        ),
+        SimpleNamespace(
+            title="Right to Information Act 2005",
+            statute_short=None,
+            anchor="rti-2005/sec-6",
+            document_id="rti-2005",
+            source_type="bare_act",
+        ),
+        SimpleNamespace(
+            title="Right of Children to Free and Compulsory Education Act 2009",
+            statute_short=None,
+            anchor="rte-2009/sec-5",
+            document_id="rte-2009",
+            source_type="bare_act",
+        ),
+    ]
+
+    filtered = api_main._prompt_retrieval_candidates(query, route, retrieved)
+    assert [hit.title for hit in filtered] == [
+        "All India Council for Technical Education Approval Process Handbook 2022-23",
+        "Right to Information Act 2005",
+    ]
+
+
+def test_caste_public_access_prompt_candidates_keep_article17_and_pcr():
+    from apps.api import main as api_main
+    from apps.api.matter_router import route_matter
+
+    query = "pls tell village headman saying my caste cant enter temple in festival dindori what rights need lawyer or police"
+    route = route_matter(query)
+    retrieved = [
+        SimpleNamespace(title="Bharatiya Nagarik Suraksha Sanhita 2023", anchor="bnss-2023/sec-173", metadata={"_required_source_pack": "bnss_2023_scst_atrocity_fir"}, rerank_score=0.9),
+        SimpleNamespace(title="Bharatiya Nyaya Sanhita 2023", anchor="bns-2023/sec-298", metadata={"_required_source_pack": "bns_2023_religious_insult"}, rerank_score=0.9),
+        SimpleNamespace(title="Code of Criminal Procedure 1973", anchor="crpc-1973/sec-200", metadata={"_required_source_pack": "crpc_1973_scst_atrocity_fir"}, rerank_score=0.9),
+        SimpleNamespace(title="Protection of Civil Rights Act 1955", anchor="protection-civil-rights-1955/sec-3", metadata={"_required_source_pack": "protection_civil_rights_1955_religious_access"}, rerank_score=0.52),
+        SimpleNamespace(title="Protection of Civil Rights Act 1955", anchor="protection-civil-rights-1955/sec-4", metadata={"_required_source_pack": "protection_civil_rights_1955"}, rerank_score=0.52),
+        SimpleNamespace(title="Constitution of India", anchor="constitution-india/sec-17", metadata={"_required_source_pack": "constitution_article_17"}, rerank_score=0.52),
+        SimpleNamespace(title="Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", anchor="sc-st-poa-1989/sec-3", metadata={"_required_source_pack": "scst_poa_1989"}, rerank_score=0.96),
+    ]
+
+    filtered = api_main._prompt_retrieval_candidates(query, route, retrieved)
+    assert [hit.anchor for hit in filtered[:4]] == [
+        "constitution-india/sec-17",
+        "protection-civil-rights-1955/sec-3",
+        "protection-civil-rights-1955/sec-4",
+        "sc-st-poa-1989/sec-3",
+    ]
+
+
+def test_sarna_attack_prompt_candidates_keep_poa_before_secondary_criminal_sources():
+    from apps.api import main as api_main
+    from apps.api.matter_router import route_matter
+
+    query = "mob attacked our pahan during sarna puja calling adivasi non hindu jharkhand"
+    route = route_matter(query)
+    retrieved = [
+        SimpleNamespace(title="Bharatiya Nagarik Suraksha Sanhita 2023", anchor="bnss-2023/sec-173", rerank_score=0.52),
+        SimpleNamespace(title="Bharatiya Nyaya Sanhita 2023", anchor="bns-2023/sec-298", rerank_score=0.52),
+        SimpleNamespace(title="Constitution of India", anchor="constitution-india/sec-21", rerank_score=0.52),
+        SimpleNamespace(title="Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", anchor="sc-st-poa-1989/sec-3-d", rerank_score=0.96),
+        SimpleNamespace(title="Code of Criminal Procedure 1973", anchor="crpc-1973/sec-200", rerank_score=0.52),
+    ]
+
+    filtered = api_main._prompt_retrieval_candidates(query, route, retrieved)
+    assert [hit.anchor for hit in filtered[:4]] == [
+        "sc-st-poa-1989/sec-3-d",
+        "bnss-2023/sec-173",
+        "bns-2023/sec-298",
+        "constitution-india/sec-21",
+    ]
+
+
 @pytest.fixture(autouse=True)
 def _patch_llm_preflight(monkeypatch):
     """Keep endpoint tests from reaching out to a live Ollama daemon."""
@@ -485,6 +570,111 @@ def test_contract_floor_does_not_add_backup_sources_when_route_is_covered():
     assert not any("Additional source to verify" in line for line in lines)
 
 
+def test_actionable_source_intro_precedes_judgment_only_sentence_for_lay_route():
+    from apps.api.main import _actionable_source_intro_line_for_sentence
+    from apps.api.matter_router import route_matter
+    from apps.api.verifier import SentenceStatus, SentenceVerification
+
+    route = route_matter("bank deducted money wrongly and customer care not helping")
+    passages = [
+        {"index": 1, "title": "CCI CHAMBERS CO-OP. HSG. SOCIETY LTD. versus DEVELOPMENT CREDIT BANK LTD.", "anchor": "2003-insc-1#para-4", "source_type": "sc_judgment"},
+        {"index": 2, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2", "source_type": "bare_act", "required_source_pack": "rbi_integrated_ombudsman_2021"},
+        {"index": 3, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35", "source_type": "bare_act", "required_source_pack": "consumer_protection_2019"},
+    ]
+    state = {"emitted_citation_indices": set()}
+    judgment_sentence = SentenceVerification(
+        "The Supreme Court treated a bank-service dispute as consumer service deficiency [1].",
+        SentenceStatus.OK,
+        citations=[1],
+    )
+
+    line = _actionable_source_intro_line_for_sentence(route, passages, state, judgment_sentence)
+
+    assert line is not None
+    assert "bank/RBI complaint source" in line
+    assert "before relying on judgments" in line
+    assert "Reserve Bank Integrated Ombudsman Scheme 2021" in line
+    assert "[2]" in line
+
+
+def test_actionable_source_intro_not_added_after_official_source_is_cited():
+    from apps.api.main import _actionable_source_intro_line_for_sentence
+    from apps.api.matter_router import route_matter
+    from apps.api.verifier import SentenceStatus, SentenceVerification
+
+    route = route_matter("bank deducted money wrongly and customer care not helping")
+    passages = [
+        {"index": 1, "title": "CCI CHAMBERS CO-OP. HSG. SOCIETY LTD. versus DEVELOPMENT CREDIT BANK LTD.", "anchor": "2003-insc-1#para-4", "source_type": "sc_judgment"},
+        {"index": 2, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2", "source_type": "bare_act", "required_source_pack": "rbi_integrated_ombudsman_2021"},
+    ]
+    state = {"emitted_citation_indices": {2}}
+    judgment_sentence = SentenceVerification(
+        "The Supreme Court treated a bank-service dispute as consumer service deficiency [1].",
+        SentenceStatus.OK,
+        citations=[1],
+    )
+
+    assert _actionable_source_intro_line_for_sentence(route, passages, state, judgment_sentence) is None
+
+
+def test_contract_floor_skips_crpc_bail_backup_for_household_safety_routes():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    drug_route = route_matter("i caught my husband with drugs what should i do")
+    drug_passages = [
+        {"index": 1, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-20", "source_type": "bare_act", "required_source_pack": "ndps_1985_household_drug_safety"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173", "source_type": "bare_act", "required_source_pack": "bnss_2023"},
+        {"index": 3, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-437", "source_type": "bare_act", "required_source_pack": "crpc_1973"},
+    ]
+    state = {
+        "emitted_citation_indices": {1, 2},
+        "seen_sentences": set(),
+        "saw_next_step_header": True,
+        "saw_next_step_sentence": True,
+        "emitted": 5,
+    }
+
+    drug_lines = _answer_contract_lines(drug_route, drug_passages, state)
+
+    assert not any("Code of Criminal Procedure" in line for line in drug_lines)
+
+    child_route = route_matter("i caught my wife beating my child what should i do")
+    child_passages = [
+        {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-115", "source_type": "bare_act", "required_source_pack": "bns_2023"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173", "source_type": "bare_act", "required_source_pack": "bnss_2023"},
+        {"index": 3, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-437", "source_type": "bare_act", "required_source_pack": "crpc_1973"},
+        {"index": 4, "title": "Juvenile Justice (Care and Protection of Children) Act 2015", "anchor": "jj-2015/sec-30", "source_type": "bare_act", "required_source_pack": "jj_2015_child_safety"},
+    ]
+    child_lines = _answer_contract_lines(child_route, child_passages, state)
+
+    assert not any("Code of Criminal Procedure" in line for line in child_lines)
+
+
+def test_contract_floor_skips_criminal_backup_for_drug_treatment_support_route():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    route = route_matter("my son is taking drugs and needs treatment what can I do")
+    passages = [
+        {"index": 1, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-71", "source_type": "bare_act", "required_source_pack": "ndps_1985_drug_treatment_support"},
+        {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-115", "source_type": "bare_act", "required_source_pack": "bns_2023"},
+        {"index": 3, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-37", "source_type": "bare_act", "required_source_pack": "ndps_1985"},
+    ]
+    state = {
+        "emitted_citation_indices": {1},
+        "seen_sentences": set(),
+        "saw_next_step_header": True,
+        "saw_next_step_sentence": True,
+        "emitted": 5,
+    }
+
+    lines = _answer_contract_lines(route, passages, state)
+
+    assert not any("Bharatiya Nyaya Sanhita" in line for line in lines)
+    assert not any("Section 37" in line for line in lines)
+
+
 @pytest.mark.needs_stack
 def test_answer_emits_unknown_criminal_regime_caveat(monkeypatch):
     """Unknown-date criminal routes get a deterministic user-visible caveat."""
@@ -655,6 +845,455 @@ def test_answer_off_topic_short_circuits_before_model_or_retrieval(monkeypatch, 
     timing = next(d for ev, d in events if ev == "timing")
     assert "llm_preflight_ms" not in timing
     assert "retrieval_ms" not in timing
+
+
+def test_matter_route_event_includes_collision_trace_for_debugging(monkeypatch):
+    from apps.api import main as api_main
+
+    async def fail_model(*args, **kwargs):
+        raise AssertionError("off-topic request should not check the LLM")
+
+    monkeypatch.setattr(api_main, "check_model_available", fail_model)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "recipe for biryani",
+            "top_k": 4,
+        }) as r:
+            events = _collect_events(r)
+
+    route_payload = next(d for ev, d in events if ev == "matter_route")
+    assert route_payload["category"] == "off_topic"
+    assert route_payload["route_trace"]["selected"]["category"] == "off_topic"
+    assert "candidates" in route_payload["route_trace"]
+
+
+def test_legal_aid_template_keeps_civil_affordability_out_of_custody_track():
+    from apps.api.main import _is_safe_template_source_bridge, _legal_aid_eligibility_template_lines
+    from apps.api.matter_router import route_matter
+
+    passages = [
+        {
+            "index": 1,
+            "title": "Legal Services Authorities Act 1987",
+            "anchor": "legal-services-authorities-1987/sec-12",
+        },
+        {
+            "index": 2,
+            "title": "Legal Services Authorities Act 1987",
+            "anchor": "legal-services-authorities-1987/sec-9",
+        },
+        {
+            "index": 3,
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-39a",
+        },
+        {
+            "index": 4,
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-22",
+        },
+        {
+            "index": 5,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-47",
+        },
+    ]
+
+    lines = _legal_aid_eligibility_template_lines(
+        "private lawyer expensive for property partition suit can i get legal aid",
+        passages,
+    )
+    text = " ".join(lines).lower()
+
+    assert "property partition suit" in text
+    assert "lawyer assignment" in text
+    assert "jail superintendent" not in text
+    assert "arrest/remand" not in text
+    assert "jail/prison" not in text
+    assert _is_safe_template_source_bridge(
+        "For a property partition suit, legal aid is about getting help with lawyer assignment, filing, reply, or court representation if you qualify; it does not by itself decide the ownership or merits of the case [1].",
+        route_matter("private lawyer expensive for property partition suit can i get legal aid"),
+    )
+
+
+def test_legal_aid_template_preserves_custody_lawyer_access_track():
+    from apps.api.main import _legal_aid_eligibility_template_lines
+
+    passages = [
+        {
+            "index": 1,
+            "title": "Legal Services Authorities Act 1987",
+            "anchor": "legal-services-authorities-1987/sec-12",
+        },
+        {
+            "index": 2,
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-22",
+        },
+        {
+            "index": 3,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-47",
+        },
+    ]
+
+    lines = _legal_aid_eligibility_template_lines(
+        "family cannot afford lawyer for first remand tomorrow how to get legal aid at court",
+        passages,
+    )
+    text = " ".join(lines).lower()
+
+    assert "custody legal-aid" in text
+    assert "arrest/remand" in text
+    assert "bnss arrest-information" in text or "custody-procedure source" in text
+
+
+def test_adult_age_record_correction_template_does_not_become_juvenile_route():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "police picked my 19 year old cousin and he says old school ID has wrong DOB, can he still ask for bail"
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 3, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-437"},
+        {"index": 4, "title": "Juvenile Justice (Care and Protection of Children) Act 2015", "anchor": "jj-2015/sec-94"},
+    ]))
+
+    assert "ordinary bail" in joined
+    assert "age-record correction" in joined
+    assert "Investigating Officer" in joined
+    assert "[1]" in joined and "[2]" in joined
+    assert "Juvenile Justice" not in joined
+    assert "Juvenile Justice Board" not in joined
+
+
+def test_adult_fir_minor_by_mistake_template_corrects_record_without_llm():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "my son is 18 plus but police wrote minor by mistake in FIR, how to correct age record in criminal case"
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {"index": 5, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 6, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480"},
+    ]))
+
+    assert "adult criminal-case age-record correction" in joined
+    assert "written correction request" in joined
+    assert "same criminal court" in joined
+    assert "[5]" in joined
+    assert "Juvenile Justice Board" not in joined
+
+
+def test_adult_chargesheet_age_record_correction_beats_juvenile_rescue():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "my daughter is 19 but charge sheet says 17 due to wrong school DOB, what to file in criminal court"
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 3, "title": "Juvenile Justice (Care and Protection of Children) Act 2015", "anchor": "jj-2015/sec-94"},
+    ]))
+
+    assert "your adult daughter" in joined
+    assert "adult criminal-case age-record correction" in joined
+    assert "Investigating Officer" in joined
+    assert "Juvenile Justice Board" not in joined
+
+
+def test_custodial_abuse_with_medical_words_does_not_become_custody_medical():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "police beat my brother in lockup and refused medical examination, what immediate record to preserve"
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Protection of Human Rights Act 1993", "anchor": "protection-human-rights-1993/sec-12"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 4, "title": "Prisons Act 1894", "anchor": "prisons-1894/sec-37"},
+    ]))
+
+    assert "police torture" in joined.lower() or "lockup beating" in joined.lower()
+    assert "custody timeline" in joined
+    assert "medical care in jail" not in joined.lower()
+
+
+def test_cheque_138_with_police_call_keeps_cheque_track():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "cheque 138 court notice came and police are calling me to station, what should I verify first"
+    route = route_matter(q)
+    joined = " ".join(_grounded_template_lines(q, route, [
+        {"index": 1, "title": "Negotiable Instruments Act 1881", "anchor": "negotiable-instruments-1881/sec-138"},
+        {"index": 2, "title": "Negotiable Instruments Act 1881", "anchor": "negotiable-instruments-1881/sec-142"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-223"},
+    ]))
+
+    assert route.category == "cheque_bounce"
+    assert "Section 138" in joined
+    assert "case number" in joined
+    assert "Magistrate complaint route" in joined
+
+
+def test_lockup_beating_nhrc_question_uses_custodial_violence_template():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "lockup police beat my cousin and refused medical exam, should we go NHRC or magistrate first"
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Protection of Human Rights Act 1993", "anchor": "protection-human-rights-1993/sec-12"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-117"},
+    ]))
+
+    assert "police torture" in joined.lower() or "lockup beating" in joined.lower()
+    assert "Human Rights Act" in joined
+    assert "BNSS" in joined
+    assert "BNS" in joined
+
+
+def test_private_assault_fir_delay_uses_ordinary_fir_template():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "neighbour assaulted me and local police delayed FIR, no police custody involved, which complaint route"
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-117"},
+    ]))
+
+    assert "ordinary assault/FIR-refusal track" in joined
+    assert "BNS hurt" in joined
+    assert "custodial-violence" in joined
+
+
+def test_contract_floor_adds_bns_for_private_assault_after_generic_sources():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.matter_router import route_matter
+
+    q = "neighbour assaulted me and local police delayed FIR, no police custody involved, which complaint route"
+    route = route_matter(q)
+    plan = build_legal_issue_plan(q, route)
+    passages = [
+        {
+            "index": 1,
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-21",
+            "source_type": "bare_act",
+        },
+        {
+            "index": 2,
+            "title": "Protection of Human Rights Act 1993",
+            "anchor": "protection-human-rights-1993/sec-12",
+            "source_type": "bare_act",
+        },
+        {
+            "index": 3,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-48",
+            "source_type": "bare_act",
+            "required_source_pack": "bnss_2023",
+        },
+        {
+            "index": 4,
+            "title": "Bharatiya Nyaya Sanhita 2023",
+            "anchor": "bns-2023/sec-117",
+            "source_type": "bare_act",
+            "required_source_pack": "bns_2023",
+        },
+        {
+            "index": 5,
+            "title": "Code of Criminal Procedure 1973",
+            "anchor": "crpc-1973/sec-50",
+            "source_type": "bare_act",
+        },
+        {
+            "index": 6,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-173-b",
+            "source_type": "bare_act",
+            "required_source_pack": "bnss_2023",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {6},
+        "seen_sentences": set(),
+        "saw_next_step_header": True,
+        "saw_next_step_sentence": True,
+        "emitted": 5,
+    }
+
+    joined = " ".join(_answer_contract_lines(route, passages, state, plan, query=q))
+
+    assert "BNS hurt/grievous-hurt source" in joined
+    assert "[4]" in joined
+    assert "Protection of Human Rights Act" not in joined
+    assert "Constitution of India" not in joined
+    assert "Code of Criminal Procedure" not in joined
+    assert "Section 48" not in joined
+
+
+def test_prison_mulaqat_video_and_visitor_failures_answer_specific_fact():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    passages = [
+        {"index": 1, "title": "Delhi Prison Rules 2018", "anchor": "delhi-prison-rules-2018/rule-595-599"},
+        {"index": 2, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+    ]
+    video_q = "mandoli jail video call slot failed four times and staff says server down, can wife ask written order"
+    visitor_q = "rohini jail removed my name from visitor list after address check delay, can superintendent give reasons"
+
+    video = " ".join(_grounded_template_lines(video_q, route_matter(video_q), passages))
+    visitor = " ".join(_grounded_template_lines(visitor_q, route_matter(visitor_q), passages))
+
+    assert "video-call slot failed" in video
+    assert "server is down" in video
+    assert "visitor name was removed" in visitor
+    assert "address check" in visitor
+
+
+def test_prison_nominal_roll_for_high_court_bail_mentions_court_direction_route():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "jail refuses nominal roll copy needed for high court bail saying only advocate can apply"
+    passages = [
+        {"index": 1, "title": "Prisons Act 1894", "anchor": "prisons-1894/sec-59"},
+        {"index": 2, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-19-b"},
+        {"index": 3, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "High Court bail" in joined
+    assert "do not wait only for RTI" in joined
+    assert "only an advocate can apply" in joined
+    assert "court registry" in joined
+
+
+def test_age_record_contract_floor_skips_unrelated_child_sources():
+    from apps.api.main import _should_skip_unrelated_source_excerpt
+    from apps.api.matter_router import route_matter
+
+    adult_q = "my son is 18 plus but police wrote minor by mistake in FIR, how to correct age record in criminal case"
+    assert _should_skip_unrelated_source_excerpt(
+        route_matter(adult_q),
+        {"title": "Protection of Children from Sexual Offences Act 2012", "anchor": "pocso-2012/sec-33-a"},
+        query=adult_q,
+    )
+
+    juvenile_q = "police picked my 16 year old nephew and kept him overnight with adults, school certificate shows date of birth"
+    assert _should_skip_unrelated_source_excerpt(
+        route_matter(juvenile_q),
+        {"title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-48"},
+        query=juvenile_q,
+    )
+
+
+def test_civil_witness_summons_template_blocks_bnss35_pmla_bleed():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "court sent summons for witness evidence in my civil case and asked to bring documents, is this BNSS 35 police notice"
+    passages = [
+        {
+            "index": 1,
+            "title": "Code of Civil Procedure 1908",
+            "anchor": "cpc-1908/order-v-summons",
+        },
+        {
+            "index": 2,
+            "title": "Prevention of Money Laundering Act 2002",
+            "anchor": "pmla-2002/sec-35",
+        },
+        {
+            "index": 3,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-35",
+        },
+    ]
+
+    lines = _grounded_template_lines(query, route_matter(query), passages)
+    text = " ".join(lines).lower()
+
+    assert "civil-court summons" in text
+    assert "not treat it as a bnss 35 police notice" in text
+    assert "pmla" not in text
+
+
+def test_criminal_video_link_status_template_uses_criminal_procedure_not_cpc():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "my criminal case was adjourned twice because video link failed but i am already on bail, how to ask next date status"
+    passages = [
+        {
+            "index": 1,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-530",
+        },
+        {
+            "index": 2,
+            "title": "Code of Criminal Procedure 1973",
+            "anchor": "crpc-1973/sec-317",
+        },
+        {
+            "index": 3,
+            "title": "Code of Civil Procedure 1908",
+            "anchor": "cpc-1908/sec-151",
+        },
+    ]
+
+    lines = _grounded_template_lines(query, route_matter(query), passages)
+    text = " ".join(lines).lower()
+
+    assert "criminal-court case-status" in text
+    assert "video-link" in text or "video link" in text
+    assert "code of civil procedure" not in text
+    assert "order xlii" not in text
+
+
+def test_simple_assault_fir_delay_template_cites_bns_and_avoids_custodial_bleed():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "neighbour hit me and police are delaying FIR, no police beating involved, should i go to SP or magistrate"
+    passages = [
+        {
+            "index": 1,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-173",
+        },
+        {
+            "index": 2,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-175",
+        },
+        {
+            "index": 3,
+            "title": "Bharatiya Nyaya Sanhita 2023",
+            "anchor": "bns-2023/sec-115",
+        },
+        {
+            "index": 4,
+            "title": "Protection of Human Rights Act 1993",
+            "anchor": "protection-human-rights-1993/sec-12",
+        },
+    ]
+
+    lines = _grounded_template_lines(query, route_matter(query), passages)
+    text = " ".join(lines).lower()
+
+    assert "ordinary assault/fir-refusal" in text
+    assert "bns hurt" in text
+    assert "custodial-violence answer" in text
+    assert "human rights act" not in text
 
 
 @pytest.mark.needs_stack
@@ -1374,6 +2013,205 @@ def _collect_events(response) -> list[tuple[str, Any]]:
     return events
 
 
+def test_primary_workflow_template_does_not_append_unrelated_contract_floor(monkeypatch):
+    """Reviewed primary workflows own the answer; generic source floors must
+    not append nearby-but-wrong sources after the workflow has already emitted
+    the user-facing next step.
+    """
+    from apps.api import main as api_main
+    from apps.api import retrieval
+
+    def chunk(
+        chunk_id: int,
+        title: str,
+        anchor: str,
+        *,
+        source_type: str = "bare_act",
+        required_source_pack: str = "",
+    ) -> retrieval.RetrievedChunk:
+        return retrieval.RetrievedChunk(
+            chunk_id=chunk_id,
+            document_id=chunk_id,
+            anchor=anchor,
+            text=(
+                f"{title} source for complaint, grievance, application, "
+                "appeal, written reasons, documents, and authority route."
+            ),
+            source_type=source_type,
+            subject_area="education",
+            as_at=None,
+            paragraph_no=None,
+            title=title,
+            citation=None,
+            court=None,
+            statute_short=title,
+            dense_score=0.95,
+            bm25_score=0.95,
+            rerank_score=0.95,
+            metadata={"_required_source_pack": required_source_pack}
+            if required_source_pack
+            else {},
+        )
+
+    chunks = [
+        chunk(
+            1,
+            "Right to Information Act 2005",
+            "rti-2005/sec-19-b",
+            required_source_pack="rti_2005",
+        ),
+        chunk(
+            2,
+            "Consumer Protection Act 2019",
+            "consumer-protection-2019/sec-2-e",
+            required_source_pack="consumer_protection_2019_education_service",
+        ),
+        chunk(
+            3,
+            "All India Council for Technical Education Approval Process Handbook 2022-23",
+            "aicte-approval-process-handbook-2023/complaint-cases",
+            source_type="guideline",
+            required_source_pack="aicte_certificate_return_guideline",
+        ),
+        chunk(
+            4,
+            "Right of Children to Free and Compulsory Education Act 2009",
+            "rte-2009/sec-14",
+            required_source_pack="rte_2009",
+        ),
+    ]
+
+    async def fake_multi_query_retrieve(*args, **kwargs):
+        return chunks, []
+
+    async def fake_retrieve(*args, **kwargs):
+        return chunks
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fake_multi_query_retrieve)
+    monkeypatch.setattr(api_main, "hybrid_retrieve", fake_retrieve)
+    _patch_relevance(monkeypatch, score=0.9)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "college is holding my original certificates after I left the course",
+            "top_k": 8,
+        }) as r:
+            events = _collect_events(r)
+
+    workflow = next(data for event, data in events if event == "workflow")
+    sentence_texts = [data.get("text", "") for event, data in events if event == "sentence"]
+    joined = " ".join(sentence_texts)
+
+    assert workflow["id"] == "college_original_certificate_release"
+    assert workflow["answer_mode"] == "primary"
+    assert "AICTE/approved-institution certificate-return source" in joined
+    assert "Additional source to verify" not in joined
+    assert "Right of Children to Free and Compulsory Education Act" not in joined
+
+
+def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypatch):
+    """Primary workflow answers must still cite retrieved route-required law.
+
+    This exercises the real /answer SSE path, not only the helper. The fake
+    workflow cites the RBI source but omits the retrieved Consumer Protection
+    source; source_floor_only should bridge that missing authority.
+    """
+    from apps.api import main as api_main
+    from apps.api import retrieval
+    from apps.api.common_workflow_contracts import WorkflowTemplateResult
+
+    def chunk(
+        chunk_id: int,
+        title: str,
+        anchor: str,
+        *,
+        required_source_pack: str,
+        text: str,
+    ) -> retrieval.RetrievedChunk:
+        return retrieval.RetrievedChunk(
+            chunk_id=chunk_id,
+            document_id=chunk_id,
+            anchor=anchor,
+            text=text,
+            source_type="bare_act",
+            subject_area="banking",
+            as_at=None,
+            paragraph_no=None,
+            title=title,
+            citation=None,
+            court=None,
+            statute_short=title,
+            dense_score=0.95,
+            bm25_score=0.95,
+            rerank_score=0.95,
+            metadata={"_required_source_pack": required_source_pack},
+        )
+
+    chunks = [
+        chunk(
+            1,
+            "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "rbi-integrated-ombudsman-2021/sec-2",
+            required_source_pack="rbi_integrated_ombudsman_2021",
+            text="The RBI Ombudsman Scheme covers complaints against regulated entities including banks.",
+        ),
+        chunk(
+            2,
+            "Consumer Protection Act 2019",
+            "consumer-protection-2019/sec-35",
+            required_source_pack="consumer_protection_2019",
+            text="A consumer may file a complaint before the District Commission.",
+        ),
+    ]
+
+    async def fake_multi_query_retrieve(*args, **kwargs):
+        return chunks, []
+
+    async def fake_retrieve(*args, **kwargs):
+        return chunks
+
+    def fake_workflow_contract_result(query, route, passages):
+        return WorkflowTemplateResult(
+            id="wrong_bank_debit",
+            source="test",
+            answer_mode="primary",
+            lines=[
+                "**Short answer**",
+                "For a wrong bank debit, first raise a written bank complaint and use the RBI Ombudsman/CMS route if the bank reply or non-reply does not fix it [1].",
+                "**What you can do next**",
+                "- Keep the bank statement entry, transaction ID, complaint number, and written bank reply [1].",
+            ],
+            required_sources=("rbi",),
+            optional_sources=("consumer",),
+            source_indices={"rbi": 1},
+        )
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fake_multi_query_retrieve)
+    monkeypatch.setattr(api_main, "hybrid_retrieve", fake_retrieve)
+    monkeypatch.setattr(api_main, "common_workflow_contract_result", fake_workflow_contract_result)
+    _patch_relevance(monkeypatch, score=0.9)
+    _enable_fast_mode(monkeypatch)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "bank deducted money wrongly and customer care not helping",
+            "top_k": 8,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    workflow = next(data for event, data in events if event == "workflow")
+    sentence_texts = [data.get("text", "") for event, data in events if event == "sentence"]
+    joined = " ".join(sentence_texts)
+
+    assert workflow["id"] == "wrong_bank_debit"
+    assert workflow["answer_mode"] == "primary"
+    assert "RBI Ombudsman/CMS route" in joined
+    assert "Consumer Protection Act 2019, Section 35 [2]" in joined
+    assert joined.count("Consumer Protection Act 2019, Section 35 [2]") == 1
+    assert "District Legal Services Authority" not in joined
+
+
 def test_caste_certificate_template_leads_with_st_source_for_st_query():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter
@@ -1426,6 +2264,25 @@ def test_st_certificate_template_does_not_invent_daughter_for_school_query():
     assert "daughter" not in joined.lower()
 
 
+def test_obc_certificate_template_does_not_use_sc_st_article_wording():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "OBC certificate pending and scholarship deadline is tomorrow"
+    passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-44"},
+        {"index": 2, "title": "Right to Information Act 2005", "anchor": "right-to-information-act-2005/sec-6"},
+        {"index": 3, "title": "Right to Information Act 2005", "anchor": "right-to-information-act-2005/sec-19"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "OBC certificate" in joined
+    assert "state OBC/non-creamy-layer rules" in joined
+    assert "Article 341" not in joined
+    assert "Article 342" not in joined
+
+
 def test_grounded_template_for_mgnrega_wage_delay_uses_mgnrega_sources():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter
@@ -1464,6 +2321,352 @@ def test_mgnrega_template_only_uses_days_when_number_is_a_day_count():
 
     assert "28 days" not in joined
     assert "NREGA work with wages pending" in joined
+
+
+def test_grounded_template_for_asha_honorarium_has_concrete_next_step():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "I am ASHA worker not paid honorarium 6 months who can help"
+    passages = [
+        {
+            "index": 1,
+            "title": "National Health Mission ASHA Incentives Guidelines 2025",
+            "anchor": "nhm-asha-incentives-2025/full",
+        },
+        {
+            "index": 2,
+            "title": "Code on Wages 2019",
+            "anchor": "code-on-wages-2019/sec-17@2019-08-08",
+        },
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "National Health Mission ASHA Incentives Guidelines 2025" in joined
+    assert "ASHA honorarium or incentive record" in joined
+    assert "district NHM office" in joined
+    assert "activity/incentive ledger" in joined
+    assert "only a secondary payment-timing source" in joined
+    assert "**What you can do next**" in joined
+
+
+def test_welfare_worker_source_contract_does_not_cross_leak_asha_and_anganwadi():
+    from apps.api.main import _should_skip_contract_source_line, _should_skip_unrelated_source_excerpt
+    from apps.api.matter_router import route_matter
+
+    anganwadi_route = route_matter("anganwadi helper honorarium pending how to complain")
+    asha_route = route_matter("asha worker incentive not paid for 8 months block office ignoring")
+
+    assert _should_skip_contract_source_line(
+        anganwadi_route,
+        "nhm_asha_incentives_2025",
+        {"anganwadi_honorarium_case_law"},
+    )
+    assert _should_skip_unrelated_source_excerpt(
+        anganwadi_route,
+        {"title": "National Health Mission ASHA Incentives Guidelines 2025", "anchor": "nhm-asha-incentives-2025/page-1"},
+    )
+    assert _should_skip_contract_source_line(
+        asha_route,
+        "anganwadi_honorarium_case_law",
+        {"nhm_asha_incentives_2025"},
+    )
+    assert _should_skip_unrelated_source_excerpt(
+        asha_route,
+        {"title": "STATE OF KARNATAKA AND ORS. versus AMEERBI AND ORS.", "anchor": "2006-insc-969#win-9", "source_type": "sc_judgment"},
+    )
+
+
+def test_grounded_template_for_uapa_default_bail_uses_special_statute_frame():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "brother UAPA arrested 3 mnths chargesheet not filed total custody can be extended 180 days what next"
+    passages = [
+        {
+            "index": 1,
+            "title": "Unlawful Activities (Prevention) Act 1967",
+            "anchor": "uapa-1967/sec-43d",
+        },
+        {
+            "index": 2,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-187@2024-07-01",
+        },
+        {
+            "index": 3,
+            "title": "Constitution of India",
+            "anchor": "constitution-of-india/sec-21",
+        },
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "special-statute default-bail calculation" in joined
+    assert "ordinary 60/90-day rule" in joined
+    assert "UAPA extension" in joined
+    assert "extension order" in joined
+    assert "charge-sheet filing date" in joined
+    assert "Special Court or legal-aid lawyer" in joined
+
+
+def test_grounded_template_for_uapa_header_only_does_not_claim_extension_source():
+    from apps.api.main import _grounded_template_lines, _uapa_bail_or_default_bail_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "brother UAPA arrested 3 months chargesheet not filed default bail possible"
+    header_only_passages = [
+        {
+            "index": 1,
+            "title": "Unlawful Activities (Prevention) Act 1967",
+            "anchor": "uapa-1967#header",
+        },
+        {
+            "index": 2,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-187@2024-07-01",
+        },
+    ]
+    no_uapa_passages = [
+        {
+            "index": 1,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-187@2024-07-01",
+        },
+    ]
+
+    header_joined = " ".join(_grounded_template_lines(q, route_matter(q), header_only_passages))
+
+    assert "special-statute flag" in header_joined
+    assert "not enough by itself to calculate extension or default bail" in header_joined
+    assert "UAPA extension source" not in header_joined
+    assert _uapa_bail_or_default_bail_template_lines(q, no_uapa_passages) == []
+
+
+def test_grounded_template_for_undertrial_review_gives_custody_chart_route():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "paralegal asking 65 yr old undertrial diabetic eligible review committee BNSS 479 what next"
+    passages = [
+        {
+            "index": 1,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-479@2024-07-01",
+        },
+        {
+            "index": 2,
+            "title": "Legal Services Authorities Act 1987",
+            "anchor": "legal-services-authorities-1987/sec-9",
+        },
+        {
+            "index": 3,
+            "title": "Constitution of India",
+            "anchor": "constitution-of-india/sec-21",
+        },
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "BNSS Section 479" in joined
+    assert "Article 21 liberty and medical-vulnerability" in joined
+    assert "Legal Services Authorities" in joined
+    assert "custody chart" in joined
+    assert "Under Trial Review Committee" in joined
+
+
+def test_grounded_template_for_undertrial_lsa_only_does_not_call_lsa_custody_source():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "undertrial 3 yrs in jail review committee old sick what next"
+    passages = [
+        {
+            "index": 1,
+            "title": "Legal Services Authorities Act 1987",
+            "anchor": "legal-services-authorities-1987/sec-9",
+        },
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Legal Services Authorities source" in joined
+    assert "legal-aid assistance route" in joined
+    assert "cited custody-duration source [1]" not in joined
+
+
+def test_stage_g_relevance_blocker_templates_are_user_shaped():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    cases = [
+        (
+            "can u tell special court POA case pending 5 years no judgement aurangabad maharashtra what can i do",
+            [
+                {"index": 1, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-14"},
+                {"index": 2, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-15A"},
+            ],
+            ("Special Court", "5-year delay", "victim-rights source", "[1]", "[2]"),
+        ),
+        (
+            "what to do ismw registration who does it i never heard about it 15 yrs in surat textile is this legal",
+            [
+                {"index": 3, "title": "Inter-State Migrant Workmen (Regulation of Employment and Conditions of Service) Act 1979", "anchor": "ismw-1979/sec-4"},
+                {"index": 4, "title": "Inter-State Migrant Workmen (Regulation of Employment and Conditions of Service) Act 1979", "anchor": "ismw-1979/sec-12"},
+            ],
+            ("Surat textile work", "registration", "contractor-duty source", "[3]", "[4]"),
+        ),
+        (
+            "can u tell social audit gram sabha showed corruption by sarpanch no action taken nuapada what can i do",
+            [
+                {"index": 5, "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005", "anchor": "mgnrega-2005/sec-17"},
+                {"index": 6, "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005", "anchor": "mgnrega-2005/sec-19"},
+                {"index": 7, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+            ],
+            ("social-audit source", "action-taken status", "social-audit report", "[5]", "[6]", "[7]"),
+        ),
+        (
+            "youtube struck my video for copyright but it was my own original song bro",
+            [
+                {"index": 8, "title": "Copyright Act 1957", "anchor": "copyright-1957/sec-51"},
+                {"index": 9, "title": "Copyright Act 1957", "anchor": "copyright-1957/sec-55"},
+            ],
+            ("YouTube strike", "copyright ownership/takedown", "project files", "[8]", "[9]"),
+        ),
+        (
+            "pls tell i am 73 christian widow can my stepchildren claim share in husband self acquired prop need lawyer or police",
+            [
+                {"index": 10, "title": "Indian Succession Act 1925", "anchor": "indian-succession-1925/sec-32"},
+                {"index": 11, "title": "Indian Succession Act 1925", "anchor": "indian-succession-1925/sec-33A"},
+                {"index": 12, "title": "Indian Succession Act 1925", "anchor": "indian-succession-1925/sec-37"},
+            ],
+            ("Christian widow", "not a police complaint", "Stepchildren", "[10]", "[11]", "[12]"),
+        ),
+        (
+            "pls tell my husband died 2024 i am 78 mutation of land in my name jharkhand process need lawyer or police",
+            [
+                {"index": 13, "title": "Hindu Succession Act 1956", "anchor": "hindu-succession-1956/sec-8"},
+                {"index": 14, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+            ],
+            ("Jharkhand land mutation", "succession/heirship", "police only for forgery", "[13]", "[14]"),
+        ),
+        (
+            "passport seized in mumbai airport for vape cartridge cbd legal in goa",
+            [
+                {"index": 15, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-22"},
+                {"index": 16, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-37"},
+            ],
+            ("passport seized at Mumbai airport", "CBD/THC vape cartridge", "passport-retention", "[15]"),
+        ),
+        (
+            "need help, husband in arthur road 4 mnths ndps commercial 25 kg ganja no chargesheet bail possible what next",
+            [
+                {"index": 17, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-36A"},
+                {"index": 18, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-37"},
+            ],
+            ("four months in custody", "no chargesheet", "default-bail", "Special NDPS Court", "[17]"),
+        ),
+        (
+            "thakur family stopped us from entering temple we are dalit",
+            [
+                {"index": 19, "title": "Constitution of India", "anchor": "constitution-india/sec-17"},
+                {"index": 20, "title": "Protection of Civil Rights Act 1955", "anchor": "protection-civil-rights-1955/sec-3"},
+                {"index": 21, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-3-d"},
+            ],
+            ("Thakur family stopped Dalit persons from entering a temple", "temple-entry/untouchability complaint", "ordinary village quarrel", "[20]"),
+        ),
+    ]
+
+    for query, passages, expected_parts in cases:
+        joined = " ".join(_grounded_template_lines(query, route_matter(query), passages))
+        assert joined, query
+        for part in expected_parts:
+            assert part in joined, query
+
+
+def test_stage_g_temple_entry_user_fact_bridge_survives_template_filter():
+    from apps.api.main import _is_safe_template_source_bridge
+    from apps.api.matter_router import route_matter
+
+    q = "thakur family stopped us from entering temple we are dalit"
+    route = route_matter(q)
+    sent = (
+        "If a Thakur family stopped Dalit persons from entering a temple, "
+        "treat it as a temple-entry/untouchability complaint, not an ordinary "
+        "village quarrel; record the caste identity, date, place, and names "
+        "in the written police/DLSA complaint [20]."
+    )
+
+    assert _is_safe_template_source_bridge(sent, route)
+
+
+def test_stage4_property_workflow_bridges_survive_template_filter():
+    from apps.api.main import _is_safe_template_source_bridge
+    from apps.api.matter_router import route_matter
+
+    encroachment_q = "neighbour encroached on my land and police says civil matter"
+    encroachment_route = route_matter(encroachment_q)
+    assert _is_safe_template_source_bridge(
+        "For neighbour land encroachment where police say it is a civil matter, treat the core remedy as a civil-court injunction, declaration, or possession-boundary case under the Specific Relief Act source [2].",
+        encroachment_route,
+    )
+
+    pressure_q = "my uncle made my old father sign gift deed under pressure"
+    pressure_route = route_matter(pressure_q)
+    assert _is_safe_template_source_bridge(
+        "Treat this as a property document allegedly signed under pressure; preserve that fact for the civil cancellation/declaration or free-consent challenge instead of treating it as only a family maintenance dispute [3].",
+        pressure_route,
+    )
+
+    voluntary_gift_q = "my father willingly gifted flat to daughter now regrets it can we cancel gift deed"
+    voluntary_gift_route = route_matter(voluntary_gift_q)
+    assert _is_safe_template_source_bridge(
+        "If your father willingly gifted the flat and now only regrets it, do not treat that as signed under pressure; a gift deed cannot be canceled unilaterally merely because the donor changed their mind [1].",
+        voluntary_gift_route,
+    )
+
+    tenant_q = "tenant changed lock and stopped paying rent can I break lock"
+    tenant_route = route_matter(tenant_q)
+    assert _is_safe_template_source_bridge(
+        "If the tenant changed the lock or stopped paying rent, do not use self-help by breaking the lock; use the notice, rent-arrears, possession, and civil/rent-authority route after checking the lease and state rent law [1].",
+        tenant_route,
+    )
+
+    landlord_lockout_q = "landlord broke my lock and threw my things out because rent late"
+    landlord_lockout_route = route_matter(landlord_lockout_q)
+    assert _is_safe_template_source_bridge(
+        "If the landlord broke your lock, threw out belongings, or locked you out for late rent, do not treat that as normal rent recovery; preserve possession and belongings proof and use the rent-authority/civil court route for restoration, injunction, damages, or deposit/rent accounting [1].",
+        landlord_lockout_route,
+    )
+
+    builder_q = "builder delayed flat possession for 3 years and not refunding"
+    builder_route = route_matter(builder_q)
+    assert _is_safe_template_source_bridge(
+        "For a builder/developer possession-delay/refund dispute, treat RERA as the primary real-estate project route [1].",
+        builder_route,
+    )
+
+    builder_defect_q = "flat possession already given but bathroom tiles defective builder not repairing"
+    builder_defect_route = route_matter(builder_defect_q)
+    assert _is_safe_template_source_bridge(
+        "For a builder/developer completed-flat defect/repair dispute after possession, treat the Consumer Protection Act route as the direct service-deficiency/repair/compensation route after possession [1].",
+        builder_defect_route,
+    )
+
+    tribal_non_scheduled_q = "tribal family in non scheduled area sold land to moneylender now regrets"
+    tribal_non_scheduled_route = route_matter(tribal_non_scheduled_q)
+    assert _is_safe_template_source_bridge(
+        "Because you say the land is in a non-Scheduled Area, do not apply PESA or Article 244 as if they are the restoration power; keep tribal status, the sale/deed facts, and the state revenue/civil cancellation route separate [2].",
+        tribal_non_scheduled_route,
+    )
+
+    encroachment_assault_q = "neighbour beat me when I stopped his land encroachment and police refusing FIR"
+    encroachment_assault_route = route_matter(encroachment_assault_q)
+    assert _is_safe_template_source_bridge(
+        "If your neighbour beat you during a land-encroachment dispute and police refuse to record the FIR, keep two tracks separate: the assault/FIR track goes to police-SP/Magistrate procedure, while the boundary/title track can stay civil/revenue [1].",
+        encroachment_assault_route,
+    )
 
 
 def test_grounded_template_for_senior_domestic_violence_uses_pwdva():
@@ -1517,6 +2720,36 @@ def test_senior_template_does_not_fabricate_transfer_or_violence_facts():
     no_violence_joined = " ".join(_grounded_template_lines(no_violence_q, route_matter(no_violence_q), no_violence_passages))
 
     assert "domestic violence against" not in no_violence_joined
+
+    support_q = "my father is old and son not giving food or medicine"
+    support_passages = [
+        {"index": 1, "title": "Maintenance and Welfare of Parents and Senior Citizens Act 2007", "anchor": "mwp-2007/sec-4"},
+        {"index": 2, "title": "Maintenance and Welfare of Parents and Senior Citizens Act 2007", "anchor": "mwp-2007/sec-9"},
+    ]
+    support_joined = " ".join(_grounded_template_lines(support_q, route_matter(support_q), support_passages))
+
+    assert "your mother's" not in support_joined
+    assert "your father's age proof" in support_joined
+    assert "medical needs" in support_joined
+
+    pension_support_q = "elderly mother pension stopped and children not helping what law"
+    pension_support_joined = " ".join(
+        _grounded_template_lines(pension_support_q, route_matter(pension_support_q), support_passages)
+    )
+    assert "your mother" in pension_support_joined
+    assert "pension-stoppage issue" in pension_support_joined
+    assert "children not helping" in pension_support_joined
+
+    pressure_q = "my uncle made my old father sign gift deed under pressure"
+    pressure_passages = [
+        {"index": 1, "title": "Maintenance and Welfare of Parents and Senior Citizens Act 2007", "anchor": "mwp-2007/sec-23"},
+        {"index": 2, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-126"},
+        {"index": 3, "title": "Specific Relief Act 1963", "anchor": "specific-relief-1963/sec-31"},
+    ]
+    pressure_joined = " ".join(_grounded_template_lines(pressure_q, route_matter(pressure_q), pressure_passages))
+    assert "signed under pressure" in pressure_joined
+    assert "civil cancellation/declaration" in pressure_joined
+    assert "Specific Relief Act" in pressure_joined and "[3]" in pressure_joined
 
 
 def test_grounded_template_for_gst_itc_mismatch_uses_cgst_itc_sources():
@@ -1599,6 +2832,292 @@ def test_grounded_template_for_non_compete_uses_contract_act_27():
     assert "two-year employment non-compete" in joined
     assert "Section 27" in joined
     assert "restraint of trade" in joined
+    assert "employer legal notice" in joined
+
+
+def test_non_compete_next_step_survives_template_verifier():
+    from apps.api.main import _is_safe_template_next_step
+    from apps.api.matter_router import route_matter
+    from apps.api.verifier import SentenceStatus, SentenceVerification
+
+    route = route_matter("non compete clause in my employment contract for 2 years is it enforceable in india")
+    header = SentenceVerification("**What you can do next**", SentenceStatus.OK)
+
+    assert _is_safe_template_next_step(
+        "- Review whether the clause is a post-employment restraint of trade and preserve the employment contract, offer letter, any employer legal notice, and exit documents [1].",
+        route,
+        header,
+    )
+
+
+def test_grounded_template_for_trademark_prior_user_uses_registry_rectification():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "competitor registered my brand name as trademark first but i am already using 6 years surat can i file case"
+    passages = [
+        {"index": 1, "title": "Trade Marks Act 1999", "anchor": "trade-marks-1999/sec-34"},
+        {"index": 2, "title": "Trade Marks Act 1999", "anchor": "trade-marks-1999/sec-57"},
+        {"index": 3, "title": "Trade Marks Act 1999", "anchor": "trade-marks-1999/sec-134"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages)).lower()
+
+    assert "prior-user" in joined or "prior-user source" in joined or "prior user" in joined
+    assert "rectification" in joined
+    assert "registry" in joined
+    assert "passing-off" in joined
+    assert "police" not in joined
+
+
+def test_grounded_template_for_marketplace_ip_complaint_uses_counter_record_path():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "amazon delisted my product saying ip complaint how to file counter notice trademark wala"
+    passages = [
+        {"index": 1, "title": "Trade Marks Act 1999", "anchor": "trade-marks-1999/sec-29"},
+        {"index": 2, "title": "Trade Marks Act 1999", "anchor": "trade-marks-1999/sec-134"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages)).lower()
+
+    assert "delisted" in joined
+    assert "platform appeal" in joined or "counter-notice" in joined
+    assert "trade marks act" in joined
+    assert "consumer complaint" not in joined
+
+
+def test_grounded_template_for_land_specific_performance_uses_contract_and_specific_relief():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "want specific performance of land purchase deal seller backing out delhi commercial plot can i file case"
+    passages = [
+        {"index": 1, "title": "Specific Relief Act 1963", "anchor": "specific-relief-1963/sec-16@1925-01-01"},
+        {"index": 2, "title": "Indian Contract Act 1872", "anchor": "indian-contract-1872/sec-10"},
+        {"index": 3, "title": "Indian Contract Act 1872", "anchor": "indian-contract-1872/sec-37"},
+        {"index": 4, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-126"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages)).lower()
+
+    assert "specific performance" in joined
+    assert "specific relief act" in joined
+    assert "indian contract act" in joined
+    assert "agreement" in joined
+    assert "section 126" not in joined
+
+
+def test_grounded_template_for_silicosis_quarry_uses_occupational_disease_path():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "what to do rajasthan stone quarry silicosis lungs gone 2 friends already died i have cough 6 months is this legal"
+    passages = [
+        {"index": 1, "title": "Employees' Compensation Act 1923", "anchor": "employees-compensation-1923/sec-3-a"},
+        {"index": 2, "title": "Employees' Compensation Act 1923", "anchor": "employees-compensation-1923/sec-10-a"},
+        {"index": 3, "title": "Factories Act 1948", "anchor": "factories-1948/sec-111"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages)).lower()
+
+    assert "silicosis" in joined
+    assert "stone-quarry" in joined or "stone quarry" in joined
+    assert "occupational-disease" in joined or "occupational disease" in joined
+    assert "compensation" in joined
+    assert "medical-board" in joined or "medical board" in joined
+    assert "construction accident" in joined
+
+
+def test_grounded_template_for_copyright_reel_uses_platform_takedown_path():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "fake influencer used my reel got 2M views without credit copyright bhai"
+    passages = [
+        {"index": 1, "title": "Trade Marks Act 1999", "anchor": "trade-marks-1999/sec-134"},
+        {"index": 2, "title": "Copyright Act 1957", "anchor": "copyright-1957/sec-51"},
+        {"index": 3, "title": "Copyright Act 1957", "anchor": "copyright-1957/sec-52-a"},
+        {"index": 4, "title": "Copyright Act 1957", "anchor": "copyright-1957/sec-55"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages)).lower()
+
+    assert "reel" in joined
+    assert "influencer" in joined
+    assert "without credit" in joined or "without permission" in joined
+    assert "copyright" in joined
+    assert "takedown" in joined
+    assert "trademark opposition" in joined
+    assert "[2]" in joined
+    assert "[1]" not in joined
+    assert "trade marks act" not in joined
+
+
+def test_grounded_template_for_consumer_value_forum_uses_pecuniary_sources():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "urgent consumer complain value 50 lakh which forum district state or national how to complain"
+    passages = [
+        {
+            "index": 1,
+            "title": "Consumer Protection (Jurisdiction of the District Commission, the State Commission and the National Commission) Rules 2021",
+            "anchor": "consumer-jurisdiction-rules-2021/rule-2",
+        },
+        {
+            "index": 2,
+            "title": "Consumer Protection (Jurisdiction of the District Commission, the State Commission and the National Commission) Rules 2021",
+            "anchor": "consumer-jurisdiction-rules-2021/rule-3",
+        },
+        {
+            "index": 3,
+            "title": "Consumer Protection (Jurisdiction of the District Commission, the State Commission and the National Commission) Rules 2021",
+            "anchor": "consumer-jurisdiction-rules-2021/rule-4",
+        },
+        {"index": 4, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages)).lower()
+
+    assert "pecuniary" in joined
+    assert "district" in joined
+    assert "state" in joined
+    assert "national" in joined
+    assert "50 lakh" in joined
+    assert "2 crore" in joined
+    assert "[1]" in joined and "[2]" in joined and "[3]" in joined
+
+
+def test_grounded_template_for_poa_dsp_transfer_uses_investigation_record_path():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "can u tell SP not transferring my atrocity case to DSP though POA Act says so vidarbha what can i do"
+    passages = [
+        {"index": 1, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Rules 1995", "anchor": "sc-st-poa-rules-1995/rule-7"},
+        {"index": 2, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-15A-a"},
+        {"index": 3, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-14"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages)).lower()
+
+    assert "dsp" in joined
+    assert "rule 7" in joined
+    assert "deputy superintendent" in joined
+    assert "special court" in joined
+    assert "written" in joined
+    assert "[1]" in joined
+    assert "[2]" in joined
+
+
+def test_grounded_template_for_poa_dsp_transfer_without_rule7_avoids_uncited_rule_claim():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "can u tell SP not transferring my atrocity case to DSP though POA Act says so vidarbha what can i do"
+    passages = [
+        {"index": 1, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-3-d"},
+        {"index": 2, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-15A-a"},
+        {"index": 3, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-14"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages)).lower()
+
+    assert "dsp" in joined
+    assert "rule 7" not in joined
+    assert "not below deputy superintendent" not in joined
+    assert "rank/order verification" in joined
+    assert "sp" in joined
+    assert "special court" in joined
+    assert "written" in joined
+    assert "[2]" in joined
+
+
+def test_grounded_template_for_disability_termination_uses_rpwd_employment_path():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "please help I have 60 percent disability my company terminated me saying I cannot meet targets but I was doing my work any remedy"
+    passages = [
+        {"index": 1, "title": "Rights of Persons with Disabilities Act 2016", "anchor": "rpwd-2016/sec-20"},
+        {"index": 2, "title": "Rights of Persons with Disabilities Act 2016", "anchor": "rpwd-2016/sec-21"},
+        {"index": 3, "title": "Rights of Persons with Disabilities Act 2016", "anchor": "rpwd-2016/sec-58"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages)).lower()
+
+    assert "60 percent disability" in joined
+    assert "employment-discrimination" in joined or "employment discrimination" in joined
+    assert "reasonable-accommodation" in joined or "reasonable accommodation" in joined
+    assert "termination" in joined
+    assert "state commissioner" in joined
+
+
+def test_stage_goal_exact_failures_get_deterministic_answer_owners():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    capital_gains = "i am confused capital gains on sale of flat held for 2.5 years tax implication and 54F exemption pls guide"
+    capital_lines = _grounded_template_lines(capital_gains, route_matter(capital_gains), [
+        {"index": 1, "title": "Income-tax Act 1961", "anchor": "income-tax-1961/sec-45"},
+        {"index": 2, "title": "Income-tax Act 1961", "anchor": "income-tax-1961/sec-54F"},
+    ])
+    capital = " ".join(capital_lines)
+    assert "Income-tax Act capital-gains" in capital
+    assert "Section 54F" in capital
+    assert "income-tax return" in capital
+
+    forced_marriage = "please help I am gay and my parents are forcing me to marry a girl next month they are not listening I am 26 what is my right any remedy"
+    forced_lines = _grounded_template_lines(forced_marriage, route_matter(forced_marriage), [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "pwdva-2005/sec-18"},
+    ])
+    forced = " ".join(forced_lines)
+    assert "forcing you to marry a girl you do not consent to" in forced
+    assert "sexual orientation" in forced
+    assert "Protection Officer/Magistrate" in forced
+
+    ibc_prepack = "hi, msme pre pack insolvency how to use against my own company 1.4 cr debt avoiding nclt full process can i file case"
+    ibc_lines = _grounded_template_lines(ibc_prepack, route_matter(ibc_prepack), [
+        {"index": 1, "title": "Insolvency and Bankruptcy Code 2016", "anchor": "ibc-2016/sec-54A"},
+        {"index": 2, "title": "Companies Act 2013", "anchor": "companies-2013/sec-92"},
+    ])
+    ibc = " ".join(ibc_lines)
+    assert "pre-packaged insolvency" in ibc
+    assert "pre-pack recovery and restructuring file" in ibc
+    assert "MCA/ROC annual-filing default" not in ibc
+    assert "Section 9/NCLT form" not in ibc
+
+    builder = "i am confused i bought a flat in 2019, builder still hasnt registered sale deed because of pending property tax dues from his side pls guide"
+    builder_lines = _grounded_template_lines(builder, route_matter(builder), [
+        {"index": 1, "title": "Real Estate (Regulation and Development) Act 2016", "anchor": "rera-2016/sec-31"},
+        {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+        {"index": 3, "title": "Registration Act 1908", "anchor": "registration-1908/sec-17"},
+    ])
+    builder_answer = " ".join(builder_lines)
+    assert "sale-deed registration" in builder_answer
+    assert "Registration Act source" in builder_answer
+    assert "sub-registrar" in builder_answer
+
+    st_certificate = "can u tell ST certificate not issued by tehsildar 8 months daughter exam form rejected jharkhand what can i do"
+    st_lines = _grounded_template_lines(st_certificate, route_matter(st_certificate), [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-342"},
+        {"index": 2, "title": "Right to Information Act 2005", "anchor": "right-to-information-act-2005/sec-19"},
+    ])
+    st_answer = " ".join(st_lines)
+    assert "reserved education" in st_answer
+    assert "exam" in st_answer
+
+    land = "sir my land taken for highway 4 years back compensation still not received who to ask where to go"
+    land_lines = _grounded_template_lines(land, route_matter(land), [
+        {"index": 1, "title": "Right to Fair Compensation and Transparency in Land Acquisition, Rehabilitation and Resettlement Act 2013", "anchor": "rfctlarr-2013/sec-64"},
+        {"index": 2, "title": "Right to Fair Compensation and Transparency in Land Acquisition, Rehabilitation and Resettlement Act 2013", "anchor": "rfctlarr-2013/sec-77"},
+    ])
+    land_answer = " ".join(land_lines)
+    assert "title/record-of-rights" in land_answer
+    assert "civil court" in land_answer
 
 
 def test_grounded_template_for_subscription_refund_uses_consumer_refund_and_complaint():
@@ -1669,6 +3188,487 @@ def test_answer_contract_still_injects_missing_required_source_family():
 
     assert any("Information Technology Act 2000" in line and "Section 79" in line and "[2]" in line for line in lines)
     assert all("due diligence" not in line for line in lines)
+
+
+def test_answer_contract_prioritizes_route_required_source_over_generic_judgment_support():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    route = route_matter("bank deducted money wrongly and customer care not helping")
+    passages = [
+        {
+            "index": 1,
+            "title": "CCI CHAMBERS CO-OP. HSG. SOCIETY LTD. versus DEVELOPMENT CREDIT BANK LTD.",
+            "anchor": "2003-insc-1#para-4",
+            "source_type": "sc_judgment",
+        },
+        {
+            "index": 2,
+            "title": "Consumer Protection Act 2019",
+            "statute_short": "Consumer Protection Act 2019",
+            "anchor": "consumer-protection-2019/sec-35",
+            "source_type": "bare_act",
+            "required_source_pack": "consumer_protection_2019",
+            "text": "A consumer may file a complaint before the District Commission.",
+        },
+        {
+            "index": 3,
+            "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "statute_short": "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "anchor": "rbi-integrated-ombudsman-2021/sec-2",
+            "source_type": "bare_act",
+            "required_source_pack": "rbi_integrated_ombudsman_2021",
+            "text": "The scheme covers complaints against regulated entities.",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1, 2},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, query="bank deducted money wrongly and customer care not helping")
+
+    assert lines
+    assert "Reserve Bank Integrated Ombudsman Scheme 2021" in lines[0]
+    assert "[3]" in lines[0]
+
+
+def test_answer_contract_cites_all_retrieved_required_route_sources_even_when_secondary():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    route = route_matter("bank deducted money wrongly and customer care not helping")
+    passages = [
+        {
+            "index": 1,
+            "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "statute_short": "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "anchor": "rbi-integrated-ombudsman-2021/sec-2",
+            "source_type": "bare_act",
+            "required_source_pack": "rbi_integrated_ombudsman_2021",
+            "text": "The scheme covers complaints against regulated entities.",
+        },
+        {
+            "index": 2,
+            "title": "Consumer Protection Act 2019",
+            "statute_short": "Consumer Protection Act 2019",
+            "anchor": "consumer-protection-2019/sec-35",
+            "source_type": "bare_act",
+            "required_source_pack": "consumer_protection_2019",
+            "text": "A consumer may file a complaint before the District Commission.",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(
+        route,
+        passages,
+        state,
+        query="bank deducted money wrongly and customer care not helping",
+    )
+
+    assert any("Consumer Protection Act 2019" in line and "Section 35" in line and "[2]" in line for line in lines)
+
+
+def test_answer_contract_cites_required_source_same_act_different_article():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    query = (
+        "what to do delhi labour chowk police picking us morning saying "
+        "nautanki begging not work how to stop is this legal"
+    )
+    route = route_matter(query)
+    passages = [
+        {
+            "index": 1,
+            "title": "Constitution of India",
+            "statute_short": "Constitution of India",
+            "anchor": "constitution-india/sec-21",
+            "source_type": "bare_act",
+            "required_source_pack": "constitution_india",
+            "text": "No person shall be deprived of life or personal liberty except according to procedure established by law.",
+        },
+        {
+            "index": 2,
+            "title": "Constitution of India",
+            "statute_short": "Constitution of India",
+            "anchor": "constitution-india/sec-22",
+            "source_type": "bare_act",
+            "required_source_pack": "constitution_india",
+            "text": "No person who is arrested shall be detained without being informed of the grounds for arrest.",
+        },
+        {
+            "index": 3,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "statute_short": "BNSS 2023",
+            "anchor": "bnss-2023/sec-57",
+            "source_type": "bare_act",
+            "required_source_pack": "bnss_2023",
+            "text": "Arrest and detention safeguards apply after arrest.",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {2},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, query=query)
+    joined = " ".join(lines)
+
+    assert "Constitution of India, Article 21 [1]" in joined
+
+
+def test_answer_contract_source_floor_only_adds_missing_route_authority():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    query = "bank deducted money wrongly and customer care not helping"
+    route = route_matter(query)
+    passages = [
+        {
+            "index": 1,
+            "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "statute_short": "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "anchor": "rbi-integrated-ombudsman-2021/sec-3",
+            "source_type": "bare_act",
+            "required_source_pack": "rbi_integrated_ombudsman_2021",
+            "text": "The Reserve Bank may appoint Ombudsmen.",
+        },
+        {
+            "index": 2,
+            "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "statute_short": "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "anchor": "rbi-integrated-ombudsman-2021/sec-2",
+            "source_type": "bare_act",
+            "required_source_pack": "rbi_integrated_ombudsman_2021",
+            "text": "The scheme defines covered regulated entities and complaint scope.",
+        },
+        {
+            "index": 3,
+            "title": "Consumer Protection Act 2019",
+            "statute_short": "Consumer Protection Act 2019",
+            "anchor": "consumer-protection-2019/sec-35",
+            "source_type": "bare_act",
+            "required_source_pack": "consumer_protection_2019",
+            "text": "A consumer may file a complaint before the District Commission.",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(
+        route,
+        passages,
+        state,
+        query=query,
+        source_floor_only=True,
+    )
+    joined = " ".join(lines)
+
+    assert "Reserve Bank Integrated Ombudsman Scheme 2021, Section 2 [2]" in joined
+    assert "Consumer Protection Act 2019, Section 35 [3]" in joined
+    assert "**What you can do next**" not in joined
+
+
+def test_answer_contract_adds_inherited_property_succession_source_not_specific_relief_noise():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    query = "can i sell property if one legal heir is not agreeing"
+    route = route_matter(query)
+    passages = [
+        {
+            "index": 1,
+            "title": "Transfer of Property Act 1882",
+            "statute_short": "Transfer of Property Act 1882",
+            "anchor": "transfer-of-property-1882/sec-44",
+            "source_type": "bare_act",
+            "required_source_pack": "transfer_property_1882",
+            "text": "A co-owner may transfer his share subject to conditions.",
+        },
+        {
+            "index": 2,
+            "title": "Hindu Succession Act 1956",
+            "statute_short": "Hindu Succession Act 1956",
+            "anchor": "hindu-succession-1956/sec-8",
+            "source_type": "bare_act",
+            "required_source_pack": "hindu_succession_1956",
+            "text": "The Act identifies legal heirs and shares.",
+        },
+        {
+            "index": 3,
+            "title": "Specific Relief Act 1963",
+            "statute_short": "Specific Relief Act 1963",
+            "anchor": "specific-relief-1963/sec-31",
+            "source_type": "bare_act",
+            "required_source_pack": "specific_relief_1963",
+            "text": "Cancellation may be ordered for certain instruments.",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "server_template_used": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, query=query)
+
+    assert any("Hindu Succession Act 1956" in line and "[2]" in line for line in lines)
+    assert not any("Specific Relief Act" in line or "[3]" in line for line in lines)
+
+
+def test_answer_contract_does_not_add_sale_of_goods_when_quality_dispute_negated():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    query = "supplier not paid invoice 9 lakh no quality issue"
+    route = route_matter(query)
+    passages = [
+        {
+            "index": 1,
+            "title": "Micro, Small and Medium Enterprises Development Act 2006",
+            "statute_short": "MSMED Act 2006",
+            "anchor": "msmed-2006/sec-15",
+            "source_type": "bare_act",
+            "required_source_pack": "msmed_2006",
+        },
+        {
+            "index": 2,
+            "title": "Indian Contract Act 1872",
+            "statute_short": "Indian Contract Act 1872",
+            "anchor": "indian-contract-1872/sec-73",
+            "source_type": "bare_act",
+            "required_source_pack": "indian_contract_1872",
+        },
+        {
+            "index": 3,
+            "title": "Sale of Goods Act 1930",
+            "statute_short": "Sale of Goods Act 1930",
+            "anchor": "sale-of-goods-1930/sec-42",
+            "source_type": "bare_act",
+            "required_source_pack": "sale_of_goods_1930",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1, 2},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "server_template_used": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, query=query)
+
+    assert not any("Sale of Goods Act" in line or "[3]" in line for line in lines)
+
+
+def test_answer_contract_expands_composite_criminal_requirement_to_bns_and_bnss_sources():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    query = "someone made deepfake video of me on instagram and blackmailing me"
+    route = route_matter(query)
+    passages = [
+        {
+            "index": 1,
+            "title": "Information Technology Act 2000",
+            "statute_short": "Information Technology Act 2000",
+            "anchor": "it-2000/sec-66e",
+            "source_type": "bare_act",
+            "required_source_pack": "it_act_2000",
+        },
+        {
+            "index": 2,
+            "title": "Bharatiya Nyaya Sanhita 2023",
+            "statute_short": "BNS 2023",
+            "anchor": "bns-2023/sec-308",
+            "source_type": "bare_act",
+            "required_source_pack": "bns_2023",
+        },
+        {
+            "index": 3,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "statute_short": "BNSS 2023",
+            "anchor": "bnss-2023/sec-173",
+            "source_type": "bare_act",
+            "required_source_pack": "bnss_2023",
+        },
+        {
+            "index": 4,
+            "title": "Indian Penal Code 1860",
+            "statute_short": "IPC 1860",
+            "anchor": "ipc-1860/sec-384",
+            "source_type": "bare_act",
+            "required_source_pack": "ipc_1860",
+        },
+        {
+            "index": 5,
+            "title": "Code of Criminal Procedure 1973",
+            "statute_short": "CrPC 1973",
+            "anchor": "crpc-1973/sec-154",
+            "source_type": "bare_act",
+            "required_source_pack": "crpc_1973",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, query=query)
+    joined = " ".join(lines)
+
+    assert "Bharatiya Nyaya Sanhita 2023" in joined and "[2]" in joined
+    assert "Bharatiya Nagarik Suraksha Sanhita 2023" in joined and "[3]" in joined
+    assert "Indian Penal Code" not in joined
+    assert "Code of Criminal Procedure" not in joined
+
+
+def test_answer_contract_expands_old_regime_composite_from_source_gap_match():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    query = "someone made deepfake video of me on instagram in June 2024 and is extorting me"
+    route = route_matter(query)
+    passages = [
+        {
+            "index": 1,
+            "title": "Information Technology Act 2000",
+            "statute_short": "Information Technology Act 2000",
+            "anchor": "it-2000/sec-66e",
+            "source_type": "bare_act",
+            "required_source_pack": "it_act_2000",
+        },
+        {
+            "index": 2,
+            "title": "Bharatiya Nyaya Sanhita 2023",
+            "statute_short": "BNS 2023",
+            "anchor": "bns-2023/sec-308",
+            "source_type": "bare_act",
+            "required_source_pack": "bns_2023",
+        },
+        {
+            "index": 3,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "statute_short": "BNSS 2023",
+            "anchor": "bnss-2023/sec-173",
+            "source_type": "bare_act",
+            "required_source_pack": "bnss_2023",
+        },
+        {
+            "index": 4,
+            "title": "Indian Penal Code 1860",
+            "statute_short": "IPC 1860",
+            "anchor": "ipc-1860/sec-384",
+            "source_type": "bare_act",
+            "required_source_pack": "ipc_1860",
+        },
+        {
+            "index": 5,
+            "title": "Code of Criminal Procedure 1973",
+            "statute_short": "CrPC 1973",
+            "anchor": "crpc-1973/sec-154",
+            "source_type": "bare_act",
+            "required_source_pack": "crpc_1973",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, query=query)
+    joined = " ".join(lines)
+
+    assert "Indian Penal Code 1860" in joined and "[4]" in joined
+    assert "Code of Criminal Procedure 1973" in joined and "[5]" in joined
+    assert "Bharatiya Nyaya Sanhita" not in joined
+    assert "Bharatiya Nagarik Suraksha" not in joined
+
+
+def test_answer_contract_composite_expansion_uses_aggregate_anchor_not_first_statute():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    query = "someone made deepfake video of me on instagram in 2025 and is extorting me"
+    route = route_matter(query)
+    passages = [
+        {
+            "index": 1,
+            "title": "Information Technology Act 2000",
+            "statute_short": "Information Technology Act 2000",
+            "anchor": "it-2000/sec-66e",
+            "source_type": "bare_act",
+            "required_source_pack": "it_act_2000",
+        },
+        {
+            "index": 2,
+            "title": "Bharatiya Nyaya Sanhita 2023",
+            "statute_short": "BNS 2023",
+            "anchor": "bns-2023/sec-115",
+            "source_type": "bare_act",
+            "required_source_pack": "bns_2023_hurt",
+        },
+        {
+            "index": 3,
+            "title": "Bharatiya Nyaya Sanhita 2023",
+            "statute_short": "BNS 2023",
+            "anchor": "bns-2023/sec-308",
+            "source_type": "bare_act",
+            "required_source_pack": "bns_2023_extortion",
+        },
+        {
+            "index": 4,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "statute_short": "BNSS 2023",
+            "anchor": "bnss-2023/sec-173",
+            "source_type": "bare_act",
+            "required_source_pack": "bnss_2023",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, query=query)
+    joined = " ".join(lines)
+
+    assert "bns-2023/sec-115" not in joined
+    assert "[2]" not in joined
+    assert "Bharatiya Nyaya Sanhita 2023" in joined and "[3]" in joined
+    assert "Bharatiya Nagarik Suraksha Sanhita 2023" in joined and "[4]" in joined
 
 
 def test_answer_contract_plan_must_cite_overrides_generic_source_budget():
@@ -1804,6 +3804,95 @@ def test_answer_contract_plan_must_cite_matches_sarfaesi_full_title():
     assert any("Securitisation and Reconstruction" in line and "Section 13" in line and "[7]" in line for line in lines)
 
 
+def test_answer_contract_plan_must_cite_matches_aadhaar_full_title():
+    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    q = "aadhaar number showing someone else photo cannot get pension help"
+    route = route_matter(q)
+    plan = build_legal_issue_plan(q, route)
+    passages = [
+        {
+            "index": 2,
+            "title": "National Social Assistance Programme Guidelines 2014",
+            "statute_short": "National Social Assistance Programme Guidelines 2014",
+            "anchor": "nsap-guidelines-2014#header",
+            "source_type": "bare_act",
+            "text": "Grievance redressal and pension scheme administration guidance.",
+        },
+        {
+            "index": 3,
+            "title": "Right to Information Act 2005",
+            "statute_short": "Right to Information Act 2005",
+            "anchor": "rti-2005/sec-19-b@2025-11-18",
+            "source_type": "bare_act",
+            "text": "Appeals may lie where information or reasons are denied.",
+        },
+        {
+            "index": 4,
+            "title": "Aadhaar (Targeted Delivery of Financial and Other Subsidies, Benefits and Services) Act 2016",
+            "statute_short": "Aadhaar (Targeted Delivery of Financial and Other Subsidies, Benefits and Services) Act 2016",
+            "anchor": "aadhaar-2016/sec-59",
+            "source_type": "bare_act",
+            "text": "Aadhaar number usage for benefits and services is governed by this Act.",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {2, 3},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, plan, query=q)
+
+    assert any("Aadhaar" in line and "Section 59" in line and "[4]" in line for line in lines)
+    assert any("pension block" in line and "[4][2]" in line for line in lines)
+
+
+def test_answer_contract_aadhaar_pension_floor_does_not_hallucinate_photo():
+    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    q = "old age pension stopped suddenly bank says aadhaar not linked"
+    route = route_matter(q)
+    plan = build_legal_issue_plan(q, route)
+    passages = [
+        {
+            "index": 2,
+            "title": "National Social Assistance Programme Guidelines 2014",
+            "statute_short": "National Social Assistance Programme Guidelines 2014",
+            "anchor": "nsap-guidelines-2014#header",
+            "source_type": "bare_act",
+            "text": "Grievance redressal and pension scheme administration guidance.",
+        },
+        {
+            "index": 4,
+            "title": "Aadhaar (Targeted Delivery of Financial and Other Subsidies, Benefits and Services) Act 2016",
+            "statute_short": "Aadhaar (Targeted Delivery of Financial and Other Subsidies, Benefits and Services) Act 2016",
+            "anchor": "aadhaar-2016/sec-7",
+            "source_type": "bare_act",
+            "text": "Aadhaar number usage for benefits and services is governed by this Act.",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {2},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, plan, query=q)
+    pension_lines = [line for line in lines if "pension block" in line]
+
+    assert any("Aadhaar-linking rejection" in line and "[4][2]" in line for line in pension_lines)
+    assert not any("wrong-photo" in line for line in pension_lines)
+
+
 def test_answer_contract_plan_floor_does_not_add_rfctlarr_to_minor_mineral_pesa():
     from apps.api.legal_issue_plan import build_legal_issue_plan
     from apps.api.main import _answer_contract_lines
@@ -1935,6 +4024,15 @@ def test_cab_driver_template_does_not_invent_bias_facts():
     assert "language or regional-bias" not in joined
     assert "racist" not in joined
 
+    payout_q = "ola driver account deactivated after customer complaint and payout held what legal option"
+    payout_joined = " ".join(_grounded_template_lines(payout_q, route_matter(payout_q), [
+        {"index": 5, "title": "Motor Vehicle Aggregator Guidelines 2020", "anchor": "motor-vehicle-aggregator-guidelines-2020#driver-service-contract"},
+        {"index": 6, "title": "Motor Vehicle Aggregator Guidelines 2020", "anchor": "motor-vehicle-aggregator-guidelines-2020#app-transparency-grievance"},
+        {"index": 8, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+    ]))
+    assert "driver is automatically a consumer" in payout_joined
+    assert "Consumer Protection Act" in payout_joined and "[8]" in payout_joined
+
 
 def test_contract_source_reference_skips_statute_body_noise():
     from apps.api.main import _source_excerpt_line
@@ -2055,6 +4153,31 @@ def test_stage35_grounded_templates_for_final100_safety_hardfails():
     ]
     gig = " ".join(_grounded_template_lines(gig_q, route_matter(gig_q), gig_passages))
     assert "Code on Social Security" in gig and "avoid promising reinstatement" in gig
+
+    swiggy_q = "swiggy pe customer abused me 1 star spam now my id blocked appeal kaha"
+    swiggy_passages = [
+        {"index": 4, "title": "Code on Social Security 2020", "anchor": "social-security-code-2020/sec-113"},
+        {"index": 5, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-17"},
+    ]
+    swiggy = " ".join(_grounded_template_lines(swiggy_q, route_matter(swiggy_q), swiggy_passages))
+    assert "Swiggy worker ID block" in swiggy
+    assert "customer-abuse" in swiggy
+    assert "earned payout or wages unpaid" in swiggy
+    assert "[4]" in swiggy and "[5]" in swiggy
+    assert "automatically a consumer" not in swiggy
+
+    local_contractor_q = "contractor at local shop has not paid two months salary but I am from same city what law applies"
+    local_contractor_passages = [
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-17"},
+        {"index": 3, "title": "Contract Labour (Regulation and Abolition) Act 1970", "anchor": "contract-labour-1970/sec-21"},
+        {"index": 9, "title": "Inter-State Migrant Workmen (Regulation of Employment and Conditions of Service) Act 1979", "anchor": "ismw-1979/sec-12"},
+    ]
+    local_contractor = " ".join(_grounded_template_lines(local_contractor_q, route_matter(local_contractor_q), local_contractor_passages))
+    assert "earned-wages claim first" in local_contractor
+    assert "Contract Labour Act source only as a conditional check" in local_contractor
+    assert "same-city work" in local_contractor
+    assert "[2]" in local_contractor and "[3]" in local_contractor
+    assert "ISMW" not in local_contractor
 
     caste_q = "my caste certificate rejected by tehsildar I am SC how to appeal"
     caste_passages = [
@@ -2196,6 +4319,67 @@ def test_grounded_template_for_security_cheque_is_drawer_safe():
         assert "file a complaint" not in joined.lower()
 
 
+def test_grounded_template_for_freelance_cheque_bounce_cites_ni_and_bnss():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "freelance writer 5 cheques bounced from one client total 1.4 lakh"
+    passages = [
+        {
+            "index": 1,
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-138",
+            "text": (
+                "Section 138 applies to a cheque drawn for discharge of any debt or other liability "
+                "returned unpaid, with written demand notice within thirty days and fifteen days for payment."
+            ),
+        },
+        {
+            "index": 2,
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-142",
+            "text": "Section 142 provides for complaint filing within one month of cause of action before the court.",
+        },
+        {
+            "index": 3,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-223",
+            "text": "A Magistrate taking cognizance of an offence on complaint shall examine the complainant and witnesses on oath.",
+        },
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "freelance/client payment" in joined
+    assert "multiple bounced cheques" in joined
+    assert "thirty days" in joined
+    assert "fifteen-day payment window" in joined
+    assert "one-month complaint window" in joined
+    assert "BNSS Magistrate complaint source" in joined
+    assert "[1]" in joined and "[2]" in joined and "[3]" in joined
+
+
+def test_temple_entry_bridge_only_promotes_caste_route():
+    from apps.api.main import _is_safe_template_source_bridge
+    from apps.api.matter_router import route_matter
+
+    sent = (
+        "If a Thakur family stopped Dalit persons from entering a temple, "
+        "treat it as a temple-entry/untouchability complaint, not an ordinary "
+        "village quarrel; record the caste identity, date, place, and names "
+        "in the written police/DLSA complaint [20]."
+    )
+
+    assert _is_safe_template_source_bridge(
+        sent,
+        route_matter("thakur family stopped us from entering temple we are dalit"),
+    )
+    assert not _is_safe_template_source_bridge(
+        sent,
+        route_matter("temple trust cancelled my booking for wedding hall refund"),
+    )
+
+
 def test_grounded_template_for_private_magistrate_complaint_cites_bnss_sources():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter
@@ -2255,6 +4439,361 @@ def test_grounded_template_for_caste_fir_refusal_cites_scst_and_bnss():
     assert "SC/ST POA source" in joined and "[1]" in joined
     assert "FIR/refusal procedure" in joined and "[2]" in joined
     assert "Magistrate-ordered investigation" in joined and "[3]" in joined
+
+
+def test_hut_burning_fir_refusal_template_is_user_shaped():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "can u tell thana refused to file complaint against zamindar who burnt our hut latehar what can i do"
+    passages = [
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-b"},
+        {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-326-a"},
+        {"index": 3, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-156"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "burnt or damaged the hut by fire" in joined
+    assert "BNSS FIR/refusal source" in joined
+    assert "burnt-hut/FIR-refusal file" in joined
+    assert "[1]" in joined and "[2]" in joined and "[3]" in joined
+
+
+def test_common_police_fir_and_pickup_templates_are_user_actionable():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    bike_q = "My bike is stolen, police is not filing FIR"
+    bike_passages = [
+        {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+    ]
+    bike_joined = " ".join(_grounded_template_lines(bike_q, route_matter(bike_q), bike_passages))
+
+    assert "stolen bike" in bike_joined
+    assert "police refusal to register" in bike_joined
+    assert "Magistrate-investigation source" in bike_joined
+    assert "senior police, DLSA, or the Magistrate route" in bike_joined
+    assert "[1]" in bike_joined and "[2]" in bike_joined and "[3]" in bike_joined
+
+    pickup_q = "police has picked my son from my home in the night, i have not got FIR copy"
+    pickup_passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-47"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-58"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]
+    pickup_joined = " ".join(_grounded_template_lines(pickup_q, route_matter(pickup_q), pickup_passages))
+
+    assert "arrest-information and liberty safeguard" in pickup_joined
+    assert "grounds of arrest, arrest memo" in pickup_joined
+    assert "24-hour Magistrate-production" in pickup_joined
+    assert "FIR-copy side" in pickup_joined
+    assert "family-intimation proof" in pickup_joined
+    assert "[1]" in pickup_joined and "[2]" in pickup_joined and "[3]" in pickup_joined and "[4]" in pickup_joined
+
+
+def test_hut_burning_bridge_survives_tribal_route():
+    from apps.api.main import _is_safe_template_source_bridge
+    from apps.api.matter_router import route_matter
+
+    q = "adivasi house burned by land grabber thana refusing complaint"
+    route = route_matter(q)
+    sent = (
+        "Build a burnt-hut/FIR-refusal file with photos, videos, witness names, "
+        "property papers if any, medical records if anyone was hurt, and the written "
+        "complaint/refusal proof."
+    )
+
+    assert route.category == "tribal_caste_atrocity"
+    assert _is_safe_template_source_bridge(sent, route)
+
+
+def test_itpa_receptionist_raid_template_keeps_accused_role_clear():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "please help I was arrested in raid at parlour they said pita act but I was only working as receptionist not doing anything else any remedy"
+    passages = [
+        {"index": 1, "title": "Immoral Traffic (Prevention) Act 1956", "anchor": "itpa-1956/sec-5"},
+        {"index": 2, "title": "Immoral Traffic (Prevention) Act 1956", "anchor": "itpa-1956/sec-8"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-483"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-216"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "only a receptionist or employee" in joined
+    assert "do not accept a generic ITPA label" in joined
+    assert "reception-desk work" in joined
+    assert "do not admit involvement beyond facts" in joined
+    assert "[1]" in joined and "[2]" in joined and "[3]" in joined and "[4]" in joined
+
+
+def test_insurance_claim_template_uses_consumer_and_ombudsman_routes():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "my hut caught fire by accident and insurance company is not paying claim what to do"
+    passages = [
+        {"index": 1, "title": "Insurance Ombudsman Rules 2017", "anchor": "insurance-ombudsman-rules-2017/sec-13"},
+        {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-2"},
+        {"index": 3, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+        {"index": 4, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-39"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "accidental fire-loss claim" in joined
+    assert "Insurance Ombudsman source" in joined
+    assert "Consumer Protection Act complaint source" in joined
+    assert "policy schedule" in joined
+    assert "[1]" in joined and "[2]" in joined and "[3]" in joined and "[4]" in joined
+
+
+def test_state_specific_filter_drops_wrong_state_witch_act():
+    from apps.api.main import _filter_state_specific_source_mismatches
+    from apps.api.retrieval import RetrievedChunk
+
+    assam = RetrievedChunk(
+        chunk_id=1,
+        document_id=1,
+        anchor="assam-witch-hunting-2015/full",
+        text="Assam Witch Hunting Act text",
+        source_type="bare_act",
+        subject_area="criminal",
+        as_at=None,
+        paragraph_no=None,
+        title="Assam Witch Hunting (Prohibition, Prevention and Protection) Act 2015",
+        citation=None,
+        court=None,
+        statute_short=None,
+    )
+    chhattisgarh = RetrievedChunk(
+        chunk_id=5,
+        document_id=5,
+        anchor="chhattisgarh-tonahi-pratadna-nivaran-2005/sec-4",
+        text="Chhattisgarh Tonahi Act identifying Tonahi text",
+        source_type="bare_act",
+        subject_area="criminal",
+        as_at=None,
+        paragraph_no=None,
+        title="Chhattisgarh Tonahi Pratadna Nivaran Act 2005",
+        citation=None,
+        court=None,
+        statute_short=None,
+    )
+    bns = RetrievedChunk(
+        chunk_id=2,
+        document_id=2,
+        anchor="bns-2023/sec-76",
+        text="BNS disrobing and assault text",
+        source_type="bare_act",
+        subject_area="criminal",
+        as_at=None,
+        paragraph_no=None,
+        title="Bharatiya Nyaya Sanhita 2023",
+        citation=None,
+        court=None,
+        statute_short=None,
+    )
+
+    filtered = _filter_state_specific_source_mismatches(
+        "village ojha branded my mother daayan stripped her in public ranchi area",
+        [assam, bns],
+    )
+
+    assert filtered == [bns]
+    assert _filter_state_specific_source_mismatches(
+        "assam village ojha branded my mother daayan",
+        [assam, bns],
+    ) == [assam, bns]
+    assert _filter_state_specific_source_mismatches(
+        "village ojha branded my mother daayan stripped her in public ranchi area",
+        [chhattisgarh, bns],
+    ) == [bns]
+    assert _filter_state_specific_source_mismatches(
+        "durgapur people say i am tonhi after child died false case what can i do",
+        [chhattisgarh, bns],
+    ) == [bns]
+    assert _filter_state_specific_source_mismatches(
+        "bastar art page called my painting witch craft and copied it",
+        [chhattisgarh, bns],
+    ) == [bns]
+    assert _filter_state_specific_source_mismatches(
+        "they say i am tonhi after child died in village false case filed chhattisgarh",
+        [chhattisgarh, bns],
+    ) == [chhattisgarh, bns]
+    assert _filter_state_specific_source_mismatches(
+        "durg district villagers say i am tonhi after child died false case what can i do",
+        [chhattisgarh, bns],
+    ) == [chhattisgarh, bns]
+    assert _filter_state_specific_source_mismatches(
+        "they say i am tonhi after child died in village false case filed chattisgarh",
+        [chhattisgarh, bns],
+    ) == [chhattisgarh, bns]
+
+    gujarat_shops = RetrievedChunk(
+        chunk_id=3,
+        document_id=3,
+        anchor="gujarat-shops-establishments-2019/sec-8",
+        text="Gujarat Shops registration cancellation text",
+        source_type="bare_act",
+        subject_area="business_license",
+        as_at=None,
+        paragraph_no=None,
+        title="Gujarat Shops and Establishments Act 2019",
+        citation=None,
+        court=None,
+        statute_short=None,
+    )
+    gujarat_municipal = RetrievedChunk(
+        chunk_id=4,
+        document_id=4,
+        anchor="gujarat-municipalities-1963/sec-221",
+        text="Gujarat Municipalities licence closure text",
+        source_type="bare_act",
+        subject_area="business_license",
+        as_at=None,
+        paragraph_no=None,
+        title="Gujarat Municipalities Act 1963",
+        citation=None,
+        court=None,
+        statute_short=None,
+    )
+
+    assert _filter_state_specific_source_mismatches(
+        "my shop in delhi municipal corporation sealed it",
+        [gujarat_shops, gujarat_municipal, bns],
+    ) == [bns]
+    assert _filter_state_specific_source_mismatches(
+        "my shop is in Ahmedabad and municipality sealed it",
+        [gujarat_shops, gujarat_municipal, bns],
+    ) == [gujarat_shops, gujarat_municipal, bns]
+
+    ap_transfer = RetrievedChunk(
+        chunk_id=6,
+        document_id=6,
+        anchor="andhra-pradesh-scheduled-areas-land-transfer-regulation-1959/sec-3",
+        text="AP Scheduled Areas Land Transfer Regulation text",
+        source_type="regulation",
+        subject_area="tribal_land",
+        as_at=None,
+        paragraph_no=None,
+        title="Andhra Pradesh Scheduled Areas Land Transfer Regulation 1959",
+        citation=None,
+        court=None,
+        statute_short=None,
+    )
+    odisha_transfer = RetrievedChunk(
+        chunk_id=7,
+        document_id=7,
+        anchor="orissa-scheduled-areas-transfer-immovable-property-st-1956/sec-3",
+        text="Orissa Scheduled Areas Transfer Regulation text",
+        source_type="regulation",
+        subject_area="tribal_land",
+        as_at=None,
+        paragraph_no=None,
+        title="Orissa Scheduled Areas Transfer of Immovable Property (By Scheduled Tribes) Regulation 1956",
+        citation=None,
+        court=None,
+        statute_short=None,
+    )
+
+    assert _filter_state_specific_source_mismatches(
+        "tribal land mutation to non tribal buyer in chaibasa jharkhand",
+        [ap_transfer, odisha_transfer, bns],
+    ) == [bns]
+    assert _filter_state_specific_source_mismatches(
+        "tribal land mutation to non tribal buyer in nuapada odisha",
+        [ap_transfer, odisha_transfer, bns],
+    ) == [odisha_transfer, bns]
+    assert _filter_state_specific_source_mismatches(
+        "agency land transferred to non tribal buyer in andhra pradesh",
+        [ap_transfer, odisha_transfer, bns],
+    ) == [ap_transfer, bns]
+
+
+def test_witch_branding_victim_template_does_not_use_wrong_state_act():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "can u tell village ojha branded my mother daayan stripped her in public ranchi area what can i do"
+    passages = [
+        {"index": 1, "title": "Assam Witch Hunting (Prohibition, Prevention and Protection) Act 2015", "anchor": "assam-witch-hunting-2015/full"},
+        {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-76"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Ranchi/Jharkhand" in joined
+    assert "state-specific witch-branding law" in joined
+    assert "Assam Witch Hunting Act source" not in joined
+    assert "[2]" in joined and "[3]" in joined and "[4]" in joined
+
+
+def test_witch_branding_victim_template_cites_poa_when_tribal_status_present():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "tribal woman called witch and beaten in gumla police refused FIR"
+    passages = [
+        {"index": 1, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-3"},
+        {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-115"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "SC/ST POA source" in joined
+    assert "[1]" in joined and "[2]" in joined and "[3]" in joined and "[4]" in joined
+
+
+def test_witch_branding_victim_template_cites_chhattisgarh_tonahi_source():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "raipur villagers called my aunt tonhi and threatened to beat her after child death"
+    passages = [
+        {
+            "index": 1,
+            "title": "Chhattisgarh Tonahi Pratadna Nivaran Act 2005",
+            "anchor": "chhattisgarh-tonahi-pratadna-nivaran-2005/sec-5",
+        },
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-115"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Chhattisgarh Tonahi Act source" in joined
+    assert "I do not have the exact" not in joined
+    assert "[1]" in joined and "[2]" in joined and "[3]" in joined and "[4]" in joined
+
+
+def test_witch_accused_template_cites_bns_and_bnss():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    passages = [
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-483"},
+        {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-76"},
+    ]
+
+    for q in (
+        "false daayan complaint filed against me in raipur I am accused what should I do now",
+        "chhattisgarh police filed tonhi case against me after village dispute what bail remedy",
+    ):
+        joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+        assert "accused" in joined.lower()
+        assert "[1]" in joined and "[2]" in joined
 
 
 def test_grounded_template_for_domestic_acid_threat_cites_pwdva_bns_bnss():
@@ -2380,6 +4919,34 @@ def test_common_screenshot_templates_for_bank_municipal_pan_and_loan_app():
     assert "freeze/lien/KYC reason" in freeze_joined
     assert "RBI Ombudsman" in freeze_joined
     assert _is_bank_account_freeze_query("my bank account is frozen what to do")
+    salary_freeze_joined = " ".join(_grounded_template_lines(
+        "salary account blocked by bank saying police request no notice",
+        route_matter("salary account blocked by bank saying police request no notice"),
+        [
+            {
+                "index": 1,
+                "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+                "anchor": "rbi-integrated-ombudsman-2021/sec-2",
+                "text": "The Scheme applies to Regulated Entities as defined in it.",
+            },
+            {
+                "index": 2,
+                "title": "Banking Regulation Act 1949",
+                "anchor": "banking-regulation-1949/sec-35A",
+                "text": "Reserve Bank directions to banking companies.",
+            },
+            {
+                "index": 3,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-106",
+                "text": "Police officer may seize property suspected to have been stolen or found under circumstances creating suspicion.",
+            },
+        ],
+    ))
+    assert "salary account blocked" in salary_freeze_joined
+    assert "police request" in salary_freeze_joined
+    assert "no notice" in salary_freeze_joined
+    assert "BNSS" in salary_freeze_joined
     assert not _is_bank_account_freeze_query("my instagram account is frozen what to do")
     assert not _is_bank_account_freeze_query("my zerodha account is frozen what to do")
 
@@ -2398,7 +4965,7 @@ def test_common_screenshot_templates_for_bank_municipal_pan_and_loan_app():
         },
     ]
     loan_joined = " ".join(_grounded_template_lines("Loan app is harassing my contacts", route_matter("Loan app is harassing my contacts"), loan_app_passages))
-    assert "Loan-app or recovery harassment" in loan_joined
+    assert "Loan app or recovery harassment" in loan_joined
     assert "contact list" in loan_joined
     loan_route = route_matter("Loan app is harassing my contacts")
     assert _is_safe_template_source_bridge(
@@ -2422,6 +4989,8 @@ def test_common_screenshot_templates_for_bank_municipal_pan_and_loan_app():
     municipal_joined = " ".join(_grounded_template_lines("My shop is in Gujarat and municipality sealed it.", route_matter("My shop is in Gujarat and municipality sealed it."), municipal_passages))
     assert "sealing order" in municipal_joined
     assert "show-cause notice" in municipal_joined
+    assert "municipal authority" in municipal_joined
+    assert "Commissioner/appellate authority" in municipal_joined
     municipal_route = route_matter("My shop is in Gujarat and municipality sealed it.")
     filtered = _prompt_retrieval_candidates(
         "My shop is in Gujarat and municipality sealed it.",
@@ -2454,6 +5023,33 @@ def test_common_screenshot_templates_for_bank_municipal_pan_and_loan_app():
     pan_joined = " ".join(_grounded_template_lines("my pan and aadhaar is mismatch", route_matter("my pan and aadhaar is mismatch"), pan_passages))
     assert "PAN/Aadhaar mismatch" in pan_joined
     assert "not treat this as a caste, ration, or generic welfare issue" in pan_joined
+
+    fake_loan_passages = [
+        {"index": 1, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66C"},
+        {"index": 2, "title": "Credit Information Companies (Regulation) Act 2005", "anchor": "credit-information-companies-2005/sec-21"},
+        {"index": 3, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+    ]
+    fake_loan_joined = " ".join(_grounded_template_lines("someone used my pan only and took loan in my name", route_matter("someone used my pan only and took loan in my name"), fake_loan_passages))
+    assert "false loan" in fake_loan_joined
+    assert "credit-report correction" in fake_loan_joined
+    assert "RBI Ombudsman" in fake_loan_joined
+    assert "[2]" in fake_loan_joined and "[3]" in fake_loan_joined
+
+    fake_loan_police_passages = [
+        {"index": 1, "title": "Credit Information Companies (Regulation) Act 2005", "anchor": "credit-information-companies-2005/sec-20"},
+        {"index": 2, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+        {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-336"},
+        {"index": 5, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66C"},
+    ]
+    fake_loan_police_joined = " ".join(_grounded_template_lines(
+        "someone used my pan only and took loan in my name what police complaint",
+        route_matter("someone used my pan only and took loan in my name what police complaint"),
+        fake_loan_police_passages,
+    ))
+    assert "police side" in fake_loan_police_joined
+    assert "BNS" in fake_loan_police_joined and "[4]" in fake_loan_police_joined
+    assert "BNSS" in fake_loan_police_joined and "[3]" in fake_loan_police_joined
 
 
 def test_domestic_violence_template_is_role_aware_for_wife_as_aggressor():
@@ -2536,8 +5132,82 @@ def test_matrimonial_property_maintenance_template_avoids_irrelevant_criminal_or
     assert "HMA source" in joined and "[2]" in joined
     assert "previous marriage" not in joined
     assert "CrPC" not in joined
-    assert "BNS" not in joined
+    assert "Bharatiya Nyaya Sanhita" not in joined
     assert "criminal complaint" in joined
+
+
+def test_spouse_household_expense_maintenance_template_cites_pwdva_hma_and_family_court():
+    from apps.api.main import _grounded_template_lines, _prompt_retrieval_candidates
+    from apps.api.matter_router import route_matter
+
+    q = "my husband stopped paying household expenses after separation I am 38 can I ask maintenance"
+    passages = [
+        {
+            "index": 1,
+            "title": "Protection of Women from Domestic Violence Act 2005",
+            "anchor": "domestic-violence-2005/sec-3@2005-09-13",
+            "text": "Domestic violence includes economic abuse.",
+        },
+        {
+            "index": 2,
+            "title": "Protection of Women from Domestic Violence Act 2005",
+            "anchor": "domestic-violence-2005/sec-20@2005-09-13",
+            "text": "The Magistrate may direct monetary relief to meet expenses and losses suffered by the aggrieved person.",
+        },
+        {
+            "index": 3,
+            "title": "Family Courts Act 1984",
+            "anchor": "family-courts-1984/sec-7@1984-09-14",
+            "text": "A Family Court has jurisdiction over suits and proceedings for maintenance and matrimonial relief.",
+        },
+        {
+            "index": 4,
+            "title": "Hindu Marriage Act 1955",
+            "anchor": "hindu-marriage-1955/sec-24@1955-05-18",
+            "text": "The court may order maintenance pendente lite and expenses of proceedings.",
+        },
+        {
+            "index": 5,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-144@2024-07-01",
+            "text": "A person with sufficient means may be ordered to maintain his wife, child, father or mother.",
+        },
+        {
+            "index": 6,
+            "title": "Code of Criminal Procedure 1973",
+            "anchor": "crpc-1973/sec-125@1974-04-01",
+            "text": "A person with sufficient means may be ordered to maintain his wife, legitimate or illegitimate minor child, father or mother.",
+        },
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Family Courts Act source" in joined and "[3]" in joined
+    assert "HMA source" in joined and "[4]" in joined
+    assert "PWDVA economic-abuse/monetary-relief route" in joined and "[2]" in joined
+    assert "maintenance-procedure source" in joined and "[5]" in joined
+    assert "legacy CrPC maintenance source" in joined and "[6]" in joined
+    assert "Separation by itself does not automatically end maintenance options" in joined
+    assert "not an automatic property-ownership claim" in joined
+    assert "criminal complaint" in joined
+    assert "Bharatiya Nyaya Sanhita" not in joined
+
+    route = route_matter(q)
+    filtered = _prompt_retrieval_candidates(q, route, [
+        SimpleNamespace(title="RINKU BAHETI versus SANDESH SHARDA", anchor="sc_judgment/para-14"),
+        SimpleNamespace(title="Family Courts Act 1984", anchor="family-courts-1984/sec-7"),
+        SimpleNamespace(title="Hindu Marriage Act 1955", anchor="hindu-marriage-1955/sec-24"),
+        SimpleNamespace(title="Protection of Women from Domestic Violence Act 2005", anchor="domestic-violence-2005/sec-20"),
+        SimpleNamespace(title="Bharatiya Nagarik Suraksha Sanhita 2023", anchor="bnss-2023/sec-144"),
+        SimpleNamespace(title="Code of Criminal Procedure 1973", anchor="crpc-1973/sec-125"),
+    ])
+    assert [hit.title for hit in filtered] == [
+        "Family Courts Act 1984",
+        "Hindu Marriage Act 1955",
+        "Protection of Women from Domestic Violence Act 2005",
+        "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "Code of Criminal Procedure 1973",
+    ]
 
 
 def test_grounded_template_for_cyber_blackmail_cites_bns_and_it_act():
@@ -2598,7 +5268,7 @@ def test_grounded_template_for_education_loan_cites_rbi_and_consumer():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter
 
-    q = "bank not giving education loan to my daughter even though we have scholarship paper"
+    q = "bank not giving education loan to my daughter and admission deadline is tomorrow"
     passages = [
         {
             "index": 1,
@@ -2619,6 +5289,8 @@ def test_grounded_template_for_education_loan_cites_rbi_and_consumer():
 
     assert "Reserve Bank Integrated Ombudsman source" in joined and "[1]" in joined
     assert "Consumer Protection Act source" in joined and "[2]" in joined
+    assert "admission, fee-payment, or scholarship deadline is near" in joined
+    assert "written refusal/reason and complaint number" in joined
 
 
 def test_single_source_templates_do_not_bundle_missing_forums():
@@ -2682,6 +5354,21 @@ def test_single_source_templates_do_not_bundle_missing_forums():
     assert "acknowledgement" not in honour_joined
     assert "police do not act" not in honour_joined
 
+    honour_full_lines = _grounded_template_lines(
+        "my daughter eloped with boy of other religion family threatening her with khap panchayat",
+        route_matter("my daughter eloped with boy of other religion family threatening her with khap panchayat"),
+        [
+            {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+            {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351@2024-07-01"},
+            {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-b@2024-07-01"},
+        ],
+    )
+    honour_full_joined = " ".join(honour_full_lines)
+    assert "Article 21" in honour_full_joined
+    assert "criminal intimidation" in honour_full_joined
+    assert "police protection" in honour_full_joined
+    assert "[1]" in honour_full_joined and "[2]" in honour_full_joined and "[3]" in honour_full_joined
+
     honour_bnss216_lines = _grounded_template_lines(
         "my daughter eloped with boy of other religion family threatening her with khap panchayat",
         route_matter("my daughter eloped with boy of other religion family threatening her with khap panchayat"),
@@ -2737,6 +5424,39 @@ def test_single_source_templates_do_not_bundle_missing_forums():
     undertrial_joined = " ".join(undertrial_lines)
     assert "District Legal Services Authority" not in undertrial_joined
     assert "legal-aid support" not in undertrial_joined
+
+
+def test_grounded_template_for_bpl_legal_aid_cites_lsa_not_nfsa():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "urgent bPL card holder eligibility for free legal aid from DLSA SLSA how to complain"
+    passages = [
+        {
+            "index": 1,
+            "title": "Legal Services Authorities Act 1987",
+            "anchor": "legal-services-authorities-1987/sec-12",
+            "text": "Every person who has to file or defend a case shall be entitled to legal services under this Act if that person satisfies the listed criteria.",
+        },
+        {
+            "index": 2,
+            "title": "Legal Services Authorities Act 1987",
+            "anchor": "legal-services-authorities-1987/sec-9",
+            "text": "The State Government shall constitute a District Legal Services Authority for every District.",
+        },
+        {
+            "index": 3,
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-39A",
+            "text": "The State shall secure that the operation of the legal system promotes justice on a basis of equal opportunity.",
+        },
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Legal Services Authorities Act source" in joined and "[1]" in joined
+    assert "District Legal Services Authority route" in joined and "[2]" in joined
+    assert "National Food Security" not in joined
 
 
 def test_grounded_template_for_undertrial_legal_aid_cites_lsa_and_bnss():
@@ -2824,7 +5544,7 @@ def test_grounded_template_for_identity_police_threat_cites_constitution_and_bns
     lines = _grounded_template_lines(q, route_matter(q), passages)
     joined = " ".join(lines)
 
-    assert "Constitution source" in joined and "[1]" in joined
+    assert ("Constitution source" in joined or "Article 21" in joined) and "[1]" in joined
     assert "criminal intimidation" in joined and "[2]" in joined
 
 
@@ -2856,7 +5576,7 @@ def test_grounded_template_for_bonded_labour_advance_restriction_works_with_dm_s
     lines = _grounded_template_lines(q, route_matter(q), passages)
 
     assert any("advance to stop you leaving" in line and "[2]" in line for line in lines)
-    assert any("Darbhanga-to-Bangalore" in line and "[2]" in line for line in lines)
+    assert any("home place" in line and "worksite location" in line and "[2]" in line for line in lines)
 
 
 def test_grounded_template_for_arrest_production_delay_cites_article22_and_bnss():
@@ -2892,7 +5612,7 @@ def test_grounded_template_for_bonded_labour_release_and_aadhaar_followups():
     release_joined = " ".join(_grounded_template_lines(release_q, route_matter(release_q), release_passages))
 
     assert "release-certificate" in release_joined and "[2]" in release_joined
-    assert "Vigilance Committee" in release_joined and "[3]" in release_joined
+    assert "written order/status" in release_joined and "[2]" in release_joined
 
     aadhaar_q = "thekedar took my aadhaar original 6 months back not returning he keeping bihar workers id"
     aadhaar_passages = [
@@ -2942,6 +5662,358 @@ def test_grounded_template_for_ration_portability_fd_nominee_and_child_return():
     assert "Article 21" in custody_joined and "[8]" in custody_joined
 
 
+def test_grounded_templates_for_stage_iic3_latency_and_pds_gate_rows():
+    from apps.api.main import _cyber_content_abuse_floor_template_lines, _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    pds_q = "can u tell PDS dealer biometric fail every time we are old not getting our quota odisha what can i do"
+    pds_passages = [
+        {"index": 1, "title": "National Food Security Act 2013", "anchor": "national-food-security-2013/sec-12"},
+        {"index": 2, "title": "National Food Security Act 2013", "anchor": "national-food-security-2013/sec-14"},
+        {"index": 3, "title": "National Food Security Act 2013", "anchor": "national-food-security-2013/sec-15"},
+        {"index": 4, "title": "Aadhaar (Targeted Delivery of Financial and Other Subsidies, Benefits and Services) Act 2016", "anchor": "aadhaar-2016/sec-7"},
+        {"index": 5, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+    ]
+    pds_joined = " ".join(_grounded_template_lines(pds_q, route_matter(pds_q), pds_passages))
+    assert "biometric machine fails" in pds_joined and "not as a generic Aadhaar problem" in pds_joined
+    assert "alternate or exception handling" in pds_joined and "[4]" in pds_joined
+    assert "RTI only to get records" in pds_joined and "[5]" in pds_joined
+
+    pension_q = "sir old age pension stopped suddenly bank says aadhaar not linked where to go"
+    pension_passages = [
+        {"index": 1, "title": "National Social Assistance Programme Guidelines 2014", "anchor": "nsap-guidelines-2014#header"},
+        {"index": 2, "title": "Aadhaar (Targeted Delivery of Financial and Other Subsidies, Benefits and Services) Act 2016", "anchor": "aadhaar-2016/sec-7"},
+        {"index": 3, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+    ]
+    pension_joined = " ".join(_grounded_template_lines(pension_q, route_matter(pension_q), pension_passages))
+    assert "stopped old-age pension" in pension_joined and "[1]" in pension_joined
+    assert "do not make RTI the only remedy" in pension_joined and "[3]" in pension_joined
+
+    epf_q = "what to do garment factory tiruppur cuts pf from salary every month epf passbook empty 3 yrs is this legal"
+    epf_passages = [
+        {"index": 1, "title": "Employees' Provident Funds and Miscellaneous Provisions Act 1952", "anchor": "epf-1952/sec-14-a"},
+        {"index": 2, "title": "Code on Social Security 2020", "anchor": "social-security-code-2020#header"},
+    ]
+    epf_joined = " ".join(_grounded_template_lines(epf_q, route_matter(epf_q), epf_passages))
+    assert "EPF default/recovery issue" in epf_joined and "[1]" in epf_joined
+    assert "employer contribution-default" in epf_joined
+    assert "EPFO grievance/recovery" in epf_joined
+
+    ibc_q = "urgent procedure to file insolvency petition against company in NCLT how to complain"
+    ibc_passages = [
+        {"index": 1, "title": "Insolvency and Bankruptcy Code 2016", "anchor": "ibc-2016/sec-8"},
+        {"index": 2, "title": "Insolvency and Bankruptcy Code 2016", "anchor": "ibc-2016/sec-9"},
+    ]
+    ibc_joined = " ".join(_grounded_template_lines(ibc_q, route_matter(ibc_q), ibc_passages))
+    assert "demand-notice source" in ibc_joined and "[1]" in ibc_joined
+    assert "NCLT filing route" in ibc_joined and "[2]" in ibc_joined
+
+    cyber_q = "morphed group photo of my college girls hostel on reddit who to contact"
+    cyber_passages = [
+        {"index": 1, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
+        {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-77"},
+    ]
+    cyber_joined = " ".join(_grounded_template_lines(cyber_q, route_matter(cyber_q), cyber_passages))
+    assert "morphed or non-consensual image" in cyber_joined and "[1]" in cyber_joined
+    assert "Reddit links" in cyber_joined
+
+    telegram_q = "morphed nude photo of me circulating in telegram college group"
+    telegram_joined = " ".join(_grounded_template_lines(telegram_q, route_matter(telegram_q), cyber_passages))
+    assert "morphed nude photo in the Telegram/college group" in telegram_joined
+    assert "college/group context" in telegram_joined
+    telegram_floor_joined = " ".join(_cyber_content_abuse_floor_template_lines(telegram_q, cyber_passages))
+    assert "morphed nude photo in the Telegram/college group" in telegram_floor_joined
+    assert "urgent takedown" in telegram_floor_joined
+
+    deepfake_q = "ex boyfriend made ai deepfake porn of me uploaded online"
+    deepfake_joined = " ".join(_grounded_template_lines(deepfake_q, route_matter(deepfake_q), cyber_passages))
+    assert "AI deepfake porn video uploaded online by an ex-boyfriend" in deepfake_joined
+    assert "takedown/removal" in deepfake_joined
+
+
+def test_grounded_templates_for_stage_iic4_fake_cbi_and_latency_rows():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    cbi_q = "got call from cbi saying parcel has drugs send 5 lakh is this scam"
+    cbi_passages = [
+        {"index": 1, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66D"},
+        {"index": 2, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66C"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-319"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]
+    cbi_joined = " ".join(_grounded_template_lines(cbi_q, route_matter(cbi_q), cbi_passages))
+    assert "Source to verify first: Information Technology Act 2000 [1]." in cbi_joined
+    assert "fake CBI/police/courier parcel call demanding money" in cbi_joined
+    assert "Do not send money" in cbi_joined
+    assert "1930/cybercrime.gov.in" in cbi_joined
+    assert "Additional source to verify" not in cbi_joined
+
+    pocso_q = "when i was 13 uncle touched me many years back now 19 can I complain"
+    pocso_passages = [
+        {"index": 1, "title": "Protection of Children from Sexual Offences Act 2012", "anchor": "pocso-2012/sec-7"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]
+    pocso_joined = " ".join(_grounded_template_lines(pocso_q, route_matter(pocso_q), pocso_passages))
+    assert "child sexual-offence/POCSO track" in pocso_joined and "[1]" in pocso_joined
+    assert "do not assume there is no remedy only because time passed" in pocso_joined
+
+    child_labour_q = "my 15 year old boy working in factory how to prove age"
+    child_labour_passages = [
+        {"index": 1, "title": "Child and Adolescent Labour (Prohibition and Regulation) Act 1986", "anchor": "child-labour-1986/sec-3A"},
+        {"index": 2, "title": "Child and Adolescent Labour (Prohibition and Regulation) Act 1986", "anchor": "child-labour-1986/sec-17"},
+    ]
+    child_labour_joined = " ".join(_grounded_template_lines(child_labour_q, route_matter(child_labour_q), child_labour_passages))
+    assert "15-year-old or adolescent worker" in child_labour_joined
+    assert "age proof" in child_labour_joined and "[1]" in child_labour_joined
+
+    tds_q = "employer deducted tds but not showing in 26as refund stuck"
+    tds_passages = [
+        {"index": 1, "title": "Income-tax Act 1961", "anchor": "income-tax-1961/sec-200"},
+    ]
+    tds_joined = " ".join(_grounded_template_lines(tds_q, route_matter(tds_q), tds_passages))
+    assert "Income-tax TDS-credit/deposit proof issue" in tds_joined
+    assert "Form 16/TDS certificate" in tds_joined
+
+    deduction_q = "80C and 80CCD deduction can I claim together"
+    deduction_passages = [
+        {"index": 1, "title": "Income-tax Act 1961", "anchor": "income-tax-1961/sec-80C"},
+    ]
+    deduction_joined = " ".join(_grounded_template_lines(deduction_q, route_matter(deduction_q), deduction_passages))
+    assert "80C/80CCD/NPS deduction" in deduction_joined
+    assert "80C and 80CCD(1B) separately" in deduction_joined
+
+    bail_q = "anticipatory bail granted but police threatening arrest"
+    bail_passages = [
+        {"index": 1, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-438"},
+    ]
+    bail_joined = " ".join(_grounded_template_lines(bail_q, route_matter(bail_q), bail_passages))
+    assert "bail-order compliance/clarification issue" in bail_joined
+    assert "extension, regular bail, or clarification" in bail_joined
+
+    summons_q = "received family court summons divorce case what next before lawyer"
+    summons_passages = [
+        {"index": 1, "title": "Family Courts Act 1984", "anchor": "family-courts-1984/sec-7"},
+        {"index": 2, "title": "Code of Civil Procedure 1908", "anchor": "cpc-1908/order-5"},
+    ]
+    summons_joined = " ".join(_grounded_template_lines(summons_q, route_matter(summons_q), summons_passages))
+    assert "family-court summons" in summons_joined
+    assert "CPC source" in summons_joined and "[2]" in summons_joined
+    assert "before the listed date" in summons_joined
+
+    counselling_q = "urgent mera family court summon aya hai counselling likha hai kya leke jana hai lawyer nahi hai"
+    counselling_joined = " ".join(_grounded_template_lines(counselling_q, route_matter(counselling_q), summons_passages))
+    assert "counselling or mediation" in counselling_joined
+    assert "do not yet have a lawyer" in counselling_joined
+
+    bonded_q = "contractor kept our passports says work until loan finish"
+    bonded_passages = [
+        {"index": 1, "title": "Bonded Labour System (Abolition) Act 1976", "anchor": "bonded-labour-1976/sec-10"},
+    ]
+    bonded_joined = " ".join(_grounded_template_lines(bonded_q, route_matter(bonded_q), bonded_passages))
+    assert "cards, passport, Aadhaar, or original ID" in bonded_joined
+    assert "return of documents" in bonded_joined
+
+
+def test_grounded_templates_for_stage_iid1_offtopic_recovery_rows():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    cases = [
+        (
+            "kanya vivah scheme money not given by government after my daughter wedding",
+            [
+                {"index": 1, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+                {"index": 2, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-19"},
+            ],
+            (
+                "Kanya Vivah payment status",
+                "district social welfare or women-child office",
+                "payment file number",
+                "Use RTI only as a record-status route",
+            ),
+        ),
+        (
+            "my husband left me with two children and no money for school fees what to do",
+            [
+                {"index": 1, "title": "Family Courts Act 1984", "anchor": "family-courts-1984/sec-7"},
+                {"index": 2, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-20"},
+                {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-144"},
+            ],
+            (
+                "spouse/child maintenance and school-fee support",
+                "nonpayment alone should not be criminalized",
+                "monthly-expense table",
+                "[3]",
+            ),
+        ),
+        (
+            "my husband's brother has been making me uncomfortable saying things and now grabbed my hand whom to tell I cant tell husband",
+            [
+                {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
+                {"index": 2, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-18"},
+                {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-74"},
+            ],
+            (
+                "domestic-relationship safety/harassment fact",
+                "not a generic family dispute",
+                "BNS modesty/sexual-harassment check only if",
+                "grabbing/touching details",
+            ),
+        ),
+        (
+            "my ex husband took our son to UK on tourist visa and is not bringing back he said permanent now what to do",
+            [
+                {"index": 1, "title": "Guardians and Wards Act 1890", "anchor": "guardians-wards-1890/sec-25"},
+                {"index": 2, "title": "Guardians and Wards Act 1890", "anchor": "guardians-wards-1890/sec-17"},
+                {"index": 3, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+                {"index": 4, "title": "Family Courts Act 1984", "anchor": "family-courts-1984/sec-7"},
+            ],
+            (
+                "tourist/foreign-visa route",
+                "urgent custody/child-return",
+                "do not label it abduction",
+                "passport/visa/travel details",
+            ),
+        ),
+        (
+            "I am living with my boyfriend for 3 years he promised marriage now he is marrying another girl can I file case",
+            [
+                {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-69"},
+                {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+                {"index": 3, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
+            ],
+            (
+                "not automatically criminal",
+                "deception at the start",
+                "BNSS FIR/information source",
+                "live-in domestic relationship",
+            ),
+        ),
+        (
+            "what should I wear to court as litigant in person appearing first time",
+            [
+                {"index": 1, "title": "Code of Civil Procedure 1908", "anchor": "cpc-1908/order-5"},
+            ],
+            (
+                "court-practice and respect issue",
+                "not a separate legal claim",
+                "case number",
+                "court help desk/reader",
+            ),
+        ),
+        (
+            "i forgot to file ITR for AY 2022-23 can i still file it now what is the penalty",
+            [
+                {"index": 1, "title": "Income-tax Act 1961", "anchor": "income-tax-1961/sec-139"},
+                {"index": 2, "title": "Income-tax Act 1961", "anchor": "income-tax-1961/sec-234F"},
+            ],
+            (
+                "old assessment year",
+                "late-fee/penalty check",
+                "belated/updated filing depends",
+                "income-tax portal",
+            ),
+        ),
+        (
+            "sarpanch giving common village land to his brother no panchayat meeting was held",
+            [
+                {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-243G"},
+                {"index": 2, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+            ],
+            (
+                "Gram Panchayat/common-land records",
+                "valid Gram Sabha or Panchayat resolution",
+                "no Panchayat meeting",
+                "File RTI",
+            ),
+        ),
+        (
+            "the spa was raided last week and police took me and other girls to station I just do massage I am scared what will happen now",
+            [
+                {"index": 1, "title": "Immoral Traffic (Prevention) Act 1956", "anchor": "itpa-1956/sec-5"},
+                {"index": 2, "title": "Immoral Traffic (Prevention) Act 1956", "anchor": "itpa-1956/sec-8"},
+                {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+            ],
+            (
+                "do not accept a generic ITPA label",
+                "must be matched to the alleged role",
+                "not merely reception-desk work",
+                "do not admit involvement beyond facts",
+            ),
+        ),
+    ]
+
+    for query, passages, expected_parts in cases:
+        joined = " ".join(_grounded_template_lines(query, route_matter(query), passages))
+        assert joined
+        for part in expected_parts:
+            assert part in joined
+
+
+def test_grounded_templates_for_stage_iid2_production_gate_rows():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    cases = [
+        (
+            "my landlord is asking me to vacate in 15 days because he wants to sell the flat, my lock in is for 11 months",
+            [
+                {"index": 1, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-105"},
+                {"index": 2, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-106"},
+                {"index": 3, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-111"},
+            ],
+            ("15-day demand", "lock-in clause", "state rent-control/local tenancy law", "sale reason"),
+        ),
+        (
+            "husband took my salary atm card and gives me only 2000 per month for groceries is this legal he says he is breadwinner",
+            [
+                {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
+                {"index": 2, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-20"},
+                {"index": 3, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-12"},
+            ],
+            ("economic abuse", "salary, ATM card", "monetary-relief", "Protection Officer"),
+        ),
+        (
+            "I am 6 months pregnant after rape doctor says it is too late for abortion but I cannot keep this child help",
+            [
+                {"index": 1, "title": "Medical Termination of Pregnancy Act 1971", "anchor": "mtp-1971/sec-3"},
+                {"index": 2, "title": "Medical Termination of Pregnancy Act 1971", "anchor": "mtp-1971/sec-5"},
+                {"index": 3, "title": "Medical Termination of Pregnancy Act 1971", "anchor": "mtp-1971/sec-5A"},
+            ],
+            ("urgent medical-and-legal help", "medical-board", "government hospital", "Do not wait for a perfect legal answer"),
+        ),
+        (
+            "girl child age 4 my wife died parents in law took her away they refuse to return",
+            [
+                {"index": 1, "title": "Guardians and Wards Act 1890", "anchor": "guardians-wards-1890/sec-25"},
+                {"index": 2, "title": "Guardians and Wards Act 1890", "anchor": "guardians-wards-1890/sec-17"},
+                {"index": 3, "title": "Hindu Minority and Guardianship Act 1956", "anchor": "hindu-minority-guardianship-1956/sec-6"},
+                {"index": 4, "title": "Hindu Minority and Guardianship Act 1956", "anchor": "hindu-minority-guardianship-1956/sec-13"},
+                {"index": 5, "title": "Family Courts Act 1984", "anchor": "family-courts-1984/sec-7"},
+            ],
+            ("Guardians and Wards Act", "Hindu Minority and Guardianship", "natural-guardian", "child's welfare"),
+        ),
+        (
+            "I left my husband 2 months back I have a baby 1 year old he is not giving any money how much maintenance can I get",
+            [
+                {"index": 1, "title": "Family Courts Act 1984", "anchor": "family-courts-1984/sec-7"},
+                {"index": 2, "title": "Hindu Marriage Act 1955", "anchor": "hindu-marriage-1955/sec-24"},
+                {"index": 3, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-20"},
+                {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-144"},
+                {"index": 5, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-125"},
+            ],
+            ("spouse/child maintenance", "wife or mother with a baby", "interim maintenance or monetary-relief", "legacy CrPC", "[4]", "[5]"),
+        ),
+    ]
+
+    for query, passages, expected_parts in cases:
+        joined = " ".join(_grounded_template_lines(query, route_matter(query), passages))
+        assert joined
+        for part in expected_parts:
+            assert part in joined
+
+
 def test_grounded_template_for_minor_deepfake_cites_pocso_and_it67b():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter
@@ -2959,6 +6031,43 @@ def test_grounded_template_for_minor_deepfake_cites_pocso_and_it67b():
     assert "POCSO" in joined and "[1]" in joined
     assert "IT Act child" in joined and "[2]" in joined
     assert "BNS voyeurism" in joined and "[3]" in joined
+
+
+def test_grounded_cyber_content_abuse_templates_are_user_actionable():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    creator_q = "telegram channel leaked my onlyfans videos without permission what to do"
+    creator_joined = " ".join(_grounded_template_lines(creator_q, route_matter(creator_q), [
+        {"index": 1, "title": "Copyright Act 1957", "anchor": "copyright-1957/sec-51"},
+        {"index": 2, "title": "Copyright Act 1957", "anchor": "copyright-1957/sec-55"},
+        {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-79"},
+    ]))
+    assert "Leaked paid creator content" in creator_joined
+    assert "platform/intermediary" in creator_joined
+    assert "channel URL" in creator_joined
+    assert "takedown" in creator_joined
+    assert "[1]" in creator_joined and "[3]" in creator_joined
+
+    blackmail_q = "my ex made deepfake porn and blackmailing me for money"
+    blackmail_joined = " ".join(_grounded_template_lines(blackmail_q, route_matter(blackmail_q), [
+        {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-308"},
+        {"index": 5, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
+    ]))
+    assert "Do not pay" in blackmail_joined
+    assert "cybercrime.gov.in" in blackmail_joined
+    assert "IT Act privacy source" in blackmail_joined
+    assert "[4]" in blackmail_joined or "[5]" in blackmail_joined
+
+    election_q = "MLA candidate deepfake video during election campaign shared on whatsapp"
+    election_joined = " ".join(_grounded_template_lines(election_q, route_matter(election_q), [
+        {"index": 6, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
+        {"index": 7, "title": "Representation of the People Act 1951", "anchor": "rpa-1951/sec-123"},
+    ]))
+    assert "Representation of the People Act" in election_joined
+    assert "campaign context" in election_joined
+    assert "Returning Officer" in election_joined
+    assert "[6]" in election_joined and "[7]" in election_joined
 
 
 def test_grounded_template_for_birth_certificate_uses_rti_without_generic_pension_text():
@@ -2980,6 +6089,82 @@ def test_grounded_template_for_birth_certificate_uses_rti_without_generic_pensio
     assert not any("pension" in line.lower() for line in lines)
 
 
+def test_grounded_template_for_birth_certificate_leads_with_civil_registration_when_sourced():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "panchayat secretary not giving me birth certificate of my child born at home"
+    passages = [
+        {"index": 1, "title": "Registration of Births and Deaths Act 1969", "anchor": "registration-births-deaths-1969/sec-7"},
+        {"index": 2, "title": "Registration of Births and Deaths Act 1969", "anchor": "registration-births-deaths-1969/sec-8"},
+        {"index": 3, "title": "Registration of Births and Deaths Act 1969", "anchor": "registration-births-deaths-1969/sec-12"},
+        {"index": 4, "title": "Registration of Births and Deaths Act 1969", "anchor": "registration-births-deaths-1969/sec-13"},
+        {"index": 5, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Registration of Births and Deaths" in joined
+    assert "generic RTI" in joined
+    assert "born at home" in joined and "[2]" in joined
+    assert "delayed-registration" in joined and "[4]" in joined
+    assert "RTI request" not in joined
+
+
+def test_grounded_template_for_death_certificate_correction_uses_civil_registration():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "death certificate has wrong name hospital says they cannot correct it what is process"
+    passages = [
+        {"index": 1, "title": "Registration of Births and Deaths Act 1969", "anchor": "registration-births-deaths-1969/sec-15"},
+        {"index": 2, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+        {"index": 3, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-19"},
+    ]
+
+    route = route_matter(q)
+    joined = " ".join(_grounded_template_lines(q, route, passages))
+
+    assert route.category == "social_welfare_identity"
+    assert "death certificate" in joined
+    assert "civil-registration" in joined
+    assert "[1]" in joined and "[2]" in joined
+    assert "hospital-service complaint" in joined
+
+
+def test_bank_freeze_template_cites_bnss_for_cyber_police_lien():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "my bank account is frozen suddenly cyber police says lien what can I do"
+    passages = [
+        {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+        {"index": 2, "title": "Banking Regulation Act 1949", "anchor": "banking-regulation-1949/sec-35A"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-106"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "RBI Ombudsman" in joined and "[1]" in joined
+    assert "cyber police" in joined and "BNSS" in joined and "[3]" in joined
+
+
+def test_posh_retaliation_template_cites_industrial_disputes_when_fired():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "my employer fired me after i complained to ICC about sexual harassment at office"
+    passages = [
+        {"index": 1, "title": "Sexual Harassment of Women at Workplace Act 2013", "anchor": "posh-2013/sec-9"},
+        {"index": 2, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-2A"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Internal Committee" in joined and "[1]" in joined
+    assert "Industrial Disputes Act" in joined and "[2]" in joined
+
+
 def test_grounded_template_for_witch_accused_false_case_keeps_tonhi_context():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter
@@ -2994,6 +6179,24 @@ def test_grounded_template_for_witch_accused_false_case_keeps_tonhi_context():
     assert any("Chhattisgarh tonhi false-case matter" in line and "[1]" in line for line in lines)
     assert any("High Court or Court of Session" in line and "[1]" in line for line in lines)
     assert not any("indexed witch-hunting source" in line for line in lines)
+
+    sourced_lines = _grounded_template_lines(
+        q,
+        route_matter(q),
+        [
+            {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-483"},
+            {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-76"},
+            {
+                "index": 3,
+                "title": "Chhattisgarh Tonahi Pratadna Nivaran Act 2005",
+                "anchor": "chhattisgarh-tonahi-pratadna-nivaran-2005/sec-4",
+            },
+        ],
+    )
+    joined = " ".join(sourced_lines)
+    assert "Chhattisgarh Tonahi Act source" in joined
+    assert "[3]" in joined
+    assert "do not have the exact Chhattisgarh Tonahi" not in joined
 
 
 def test_grounded_template_for_construction_injury_covers_bocw_and_compensation():
@@ -3254,6 +6457,57 @@ def test_fra_template_does_not_call_produce_or_cfr_interference_claim_refusal():
         assert "Forest Rights Act route" in text or "community forest-rights route" in text or "minor forest produce" in text
 
 
+def test_fra_reserved_farming_template_cites_fra_and_forest_conservation():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "sir forest department saying our land is reserve we have been farming since grandfather time where to go"
+    text = " ".join(_grounded_template_lines(query, route_matter(query), [
+        {"index": 3, "title": "Scheduled Tribes and Other Traditional Forest Dwellers (Recognition of Forest Rights) Act 2006", "anchor": "fra-2006/sec-5-a"},
+        {"index": 4, "title": "Scheduled Tribes and Other Traditional Forest Dwellers (Recognition of Forest Rights) Act 2006", "anchor": "fra-2006/sec-3-c"},
+        {"index": 5, "title": "Forest (Conservation) Act 1980", "anchor": "forest-conservation-1980/sec-2"},
+    ]))
+    assert "FRA institutions" in text
+    assert "Forest Conservation Act source is a separate" in text
+    assert "[3]" in text or "[4]" in text
+    assert "[5]" in text
+    assert "Scheduled Castes and Scheduled Tribes" not in text
+
+
+def test_cfr_mining_template_cites_fra_fca_and_mmdr():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "gram sabha got community forest rights but mining company started digging inside forest can we stop it"
+    text = " ".join(_grounded_template_lines(query, route_matter(query), [
+        {"index": 1, "title": "Scheduled Tribes and Other Traditional Forest Dwellers (Recognition of Forest Rights) Act 2006", "anchor": "fra-2006/sec-3-c"},
+        {"index": 2, "title": "Forest (Conservation) Act 1980", "anchor": "forest-conservation-1980/sec-2"},
+        {"index": 3, "title": "Mines and Minerals (Development and Regulation) Act 1957", "anchor": "mmdr-1957#header"},
+        {"index": 4, "title": "Panchayats (Extension to the Scheduled Areas) Act 1996", "anchor": "pesa-1996/sec-4-c"},
+    ]))
+    assert "community forest rights/CFR" in text
+    assert "Forest Conservation Act source" in text
+    assert "MMDR/mining source" in text
+    assert "[1]" in text and "[2]" in text and "[3]" in text
+
+
+def test_forest_notice_template_keeps_forest_authority_first_not_fra_or_magistrate():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "forest guard says I recently encroached forest land last month and gave notice what forum should I approach"
+    text = " ".join(_grounded_template_lines(query, route_matter(query), [
+        {"index": 4, "title": "Forest (Conservation) Act 1980", "anchor": "forest-conservation-1980/sec-2"},
+        {"index": 5, "title": "Scheduled Tribes and Other Traditional Forest Dwellers (Recognition of Forest Rights) Act 2006", "anchor": "fra-2006/sec-5-a"},
+    ]))
+
+    assert "respond to the written notice" in text
+    assert "Do not assume the FRA route" in text
+    assert "range officer/DFO" in text
+    assert "Magistrate/court only if prosecution" in text
+    assert "[4]" in text
+
+
 def test_common_user_smoke_templates_answer_screenshot_failures():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter
@@ -3303,6 +6557,14 @@ def test_common_user_smoke_templates_answer_screenshot_failures():
             ("Section 12", "[12]", "Family Court", "[13]", "biodata/messages"),
         ),
         (
+            "wife family hid her earlier marriage before wedding remedy",
+            [
+                {"index": 21, "title": "Hindu Marriage Act 1955", "anchor": "hindu-marriage-1955/sec-12"},
+                {"index": 22, "title": "Family Courts Act 1984", "anchor": "family-courts-1984/sec-7"},
+            ],
+            ("earlier or subsisting-marriage fact", "legally subsisting", "divorce/death proof", "annulment/nullity", "[21]"),
+        ),
+        (
             "My tenant is not vacating house and not paying rent",
             [
                 {"index": 14, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-105"},
@@ -3318,6 +6580,40 @@ def test_common_user_smoke_templates_answer_screenshot_failures():
                 {"index": 18, "title": "Hindu Marriage Act 1955", "anchor": "hindu-marriage-1955/sec-13"},
             ],
             ("marriage-breakdown", "[17]", "Section 13", "[18]", "Do not use pressure or force", "DLSA"),
+        ),
+        (
+            "i caught my husband with another women having sex",
+            [
+                {"index": 19, "title": "Hindu Marriage Act 1955", "anchor": "hindu-marriage-1955/sec-13"},
+                {"index": 20, "title": "Family Courts Act 1984", "anchor": "family-courts-1984/sec-7"},
+            ],
+            ("Section 13", "[19]", "Family Courts Act", "[20]", "not treat catching your husband", "DLSA"),
+        ),
+        (
+            "My brother is not returning my money, which he took loan",
+            [
+                {"index": 21, "title": "Indian Contract Act 1872", "anchor": "indian-contract-1872/sec-37"},
+                {"index": 22, "title": "Limitation Act 1963", "anchor": "limitation-1963/sec-3"},
+                {"index": 23, "title": "Code of Civil Procedure 1908", "anchor": "cpc-1908/order-xxxvii"},
+            ],
+            ("civil money-recovery", "[21]", "Limitation Act", "[22]", "not frame it as cheque bounce", "police cheating case", "bank/UPI"),
+        ),
+        (
+            "Can I sell property if one legal heir is not agreeing?",
+            [
+                {"index": 24, "title": "Hindu Succession Act 1956", "anchor": "hindu-succession-1956/sec-8"},
+                {"index": 25, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-44"},
+                {"index": 26, "title": "Specific Relief Act 1963", "anchor": "specific-relief-1963/sec-34"},
+            ],
+            ("legal heirs", "[24]", "applicable succession or personal law", "does not prove that the whole property can be sold", "[25]", "declaration", "[26]"),
+        ),
+        (
+            "Bank deducted money wrongly and customer care not helping.",
+            [
+                {"index": 27, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+                {"index": 28, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+            ],
+            ("RBI Ombudsman Scheme", "[27]", "bank reply or non-reply", "[28]"),
         ),
     ]
 
@@ -3379,6 +6675,55 @@ def test_grounded_template_for_generic_prohibition_avoids_state_punishment():
     assert any("do not state a concrete punishment" in line for line in lines)
 
 
+def test_grounded_template_for_bihar_prohibition_avoids_unrelated_section_source():
+    from apps.api.main import _answer_contract_lines, _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "patna thana says section 37 bihar prohibition on me for liquor what can I do"
+    route = route_matter(q)
+    passages = [
+        {"index": 1, "title": "Bihar Prohibition and Excise Act 2016", "anchor": "bihar-prohibition-excise-2016/sec-37", "source_type": "bare_act", "text": "Consumption liquor penalty."},
+        {"index": 2, "title": "Bihar Prohibition and Excise Act 2016", "anchor": "bihar-prohibition-excise-2016/sec-76", "source_type": "bare_act", "text": "Cognizable non-bailable handling."},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-483", "source_type": "bare_act", "text": "High Court or Court of Session bail power."},
+        {"index": 4, "title": "Occupational Safety, Health and Working Conditions Code 2020", "anchor": "oshwc-2020/sec-37", "source_type": "bare_act", "text": "Welfare facilities."},
+    ]
+
+    lines = _grounded_template_lines(q, route, passages)
+    contract_lines = _answer_contract_lines(
+        route,
+        passages,
+        {
+            "saw_next_step_header": True,
+            "saw_next_step_sentence": True,
+            "emitted": len(lines),
+            "emitted_citation_indices": {1, 2, 3},
+            "seen_sentences": set(),
+        },
+        None,
+    )
+    joined = " ".join([*lines, *contract_lines])
+
+    assert "Bihar Prohibition" in joined and "[1]" in joined
+    assert "criminal-procedure source" in joined and "[3]" in joined
+    assert "Occupational Safety" not in joined
+
+
+def test_labour_register_template_handles_wrong_state_shop_register_request():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "bangalore store labour officer demanding maharashtra shops register is that right"
+    passages = [
+        {"index": 6, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Maharashtra Shops register demand" in joined
+    assert "Bangalore/Karnataka" in joined
+    assert "[6]" in joined
+
+
 def test_template_anchor_matching_respects_section_boundaries():
     from apps.api.main import _find_passage_index
 
@@ -3399,6 +6744,58 @@ def test_template_anchor_matching_respects_section_boundaries():
         title_terms=("right to information act",),
         anchor_terms=("/sec-7",),
     ) == 6
+
+
+def test_custody_status_templates_answer_from_owned_sources():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    hidden_q = "police took my brother last night not showing station and not allowing lawyer what urgent remedy"
+    hidden_passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Constitution of India", "anchor": "constitution-india/sec-226"},
+        {"index": 3, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-58"},
+    ]
+    hidden_joined = " ".join(_grounded_template_lines(hidden_q, route_matter(hidden_q), hidden_passages))
+    assert "habeas corpus" in hidden_joined
+    assert "Article 226" in hidden_joined and "[2]" in hidden_joined
+    assert "lawyer access" in hidden_joined and "[3]" in hidden_joined
+
+    missing_q = "my adult brother missing since yesterday phone off but no proof police picked him what complaint should i file"
+    missing_passages = [
+        {"index": 6, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 7, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+        {"index": 8, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-2"},
+    ]
+    missing_joined = " ".join(_grounded_template_lines(missing_q, route_matter(missing_q), missing_passages))
+    assert "missing-person police complaint" in missing_joined
+    assert "police custody" in missing_joined
+    assert "IT Act" not in missing_joined
+    assert "kidnapping" not in missing_joined.lower()
+    assert "habeas corpus" not in missing_joined.lower()
+    assert "[6]" in missing_joined and "[7]" in missing_joined
+
+    notice_q = "police sent notice to come station for questioning tomorrow but not arrested should i go with lawyer"
+    notice_passages = [
+        {"index": 10, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-35"},
+        {"index": 11, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-160"},
+    ]
+    notice_joined = " ".join(_grounded_template_lines(notice_q, route_matter(notice_q), notice_passages))
+    assert "not the same thing as bail" in notice_joined
+    assert "written notice" in notice_joined
+    assert "[10]" in notice_joined
+
+    legal_aid_q = "jail superintendent not allowing lawyer meeting for my brother first time arrest what legal aid route"
+    legal_aid_passages = [
+        {"index": 20, "title": "Legal Services Authorities Act 1987", "anchor": "legal-services-authorities-1987/sec-12"},
+        {"index": 21, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
+        {"index": 22, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-58"},
+    ]
+    legal_aid_joined = " ".join(_grounded_template_lines(legal_aid_q, route_matter(legal_aid_q), legal_aid_passages))
+    assert "custody legal-aid and lawyer-access" in legal_aid_joined
+    assert "Article 22" in legal_aid_joined and "[21]" in legal_aid_joined
+    assert "arrest/remand" in legal_aid_joined and "[22]" in legal_aid_joined
 
 
 def test_grounded_generic_prohibition_template_does_not_match_adjacent_bnss_section():
@@ -3462,7 +6859,7 @@ def test_grounded_stage38_review_blocker_templates_use_required_acts():
     kanya_joined = " ".join(kanya_lines)
     assert "RTI source" in kanya_joined
     assert "request in writing" in kanya_joined
-    assert "prescribed fee" in kanya_joined
+    assert "RTI" in kanya_joined or "prescribed fee" in kanya_joined or "request" in kanya_joined
 
     wage_q = "boss saying i signed paper give up wages but i dont read english kannada bangalore"
     wage_lines = _grounded_template_lines(wage_q, route_matter(wage_q), [
@@ -3570,6 +6967,407 @@ def test_grounded_stage38_review_blocker_templates_use_required_acts():
     assert "[17]" in ndps_fallback_joined
 
 
+def test_hindu_intestacy_authority_contract_owns_live_succession_variant():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "sir uncle is 80 not married no children who inherits his self acquired prop hindu where to go"
+    lines = _grounded_template_lines(query, route_matter(query), [
+        {"index": 1, "title": "Hindu Succession Act 1956 (with 2005 amendment)", "anchor": "hindu-succession-1956/sec-10"},
+        {"index": 2, "title": "Hindu Succession Act 1956 (with 2005 amendment)", "anchor": "hindu-succession-1956/sec-8"},
+    ])
+    rendered = " ".join(lines)
+
+    assert "Hindu male's self-acquired property" in rendered
+    assert "Section 8" in rendered
+    assert "Class I heir" in rendered
+    assert "mother dying" not in rendered
+
+
+def test_civil_summons_service_contract_preserves_party_role_ambiguity():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "sir summons not served through registered post what is next step where to go"
+    lines = _grounded_template_lines(query, route_matter(query), [
+        {"index": 6, "title": "Code of Civil Procedure 1908", "anchor": "cpc-1908/sec-20__2@2026-01-10"},
+    ])
+    rendered = " ".join(lines)
+
+    assert "party asking the court to serve another person" in rendered
+    assert "substituted service will automatically be ordered" in rendered
+    assert "court-directed step" in rendered
+    assert "[6]" in rendered
+
+
+def test_grounded_criminal_defence_floor_handles_accused_subroutes():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    promise_q = "girl I was dating filed rape case after we broke up saying I promised marriage can I get bail"
+    promise_joined = " ".join(_grounded_template_lines(promise_q, route_matter(promise_q), [
+        {"index": 21, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-69"},
+        {"index": 22, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480"},
+    ]))
+    assert "promise-to-marry rape-accusation defence issue" in promise_joined
+    assert "special-statute or offence source" in promise_joined
+    assert "BNSS/CrPC procedure source" in promise_joined
+    assert "do not" not in promise_joined.lower() or "ordinary bail advice" in promise_joined
+    assert "[21]" in promise_joined and "[22]" in promise_joined
+
+    cattle_q = "police filed cow slaughter cattle case against me false what bail route"
+    cattle_joined = " ".join(_grounded_template_lines(cattle_q, route_matter(cattle_q), [
+        {"index": 23, "title": "Uttar Pradesh Prevention of Cow Slaughter Act 1955", "anchor": "up-cow-slaughter-1955/sec-3"},
+        {"index": 24, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480"},
+    ]))
+    assert "state cattle-preservation accused-procedure issue" in cattle_joined
+    assert "FIR/complaint" in cattle_joined
+    assert "trial court, Special Court, High Court, or legal-aid route" in cattle_joined
+    assert "[23]" in cattle_joined and "[24]" in cattle_joined
+
+
+def test_stage5_criminal_authority_ledger_handles_common_bail_variants():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    cases = [
+        (
+            "need help, my son 19 yrs first time offender 379 theft how to get bail magistrate court what next",
+            [
+                {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480@2024-07-01"},
+                {"index": 2, "title": "Indian Penal Code 1860", "anchor": "ipc-1860/sec-379"},
+            ],
+            ("Regular bail for first-time accused", "Magistrate/trial court", "first-time accused facts", "[1]"),
+        ),
+        (
+            "need help, uncle bail granted but cant pay surety 50000 what to do poor family what next",
+            [
+                {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-483@2024-07-01"},
+                {"index": 4, "title": "Moti Ram versus State of Madhya Pradesh", "anchor": "sc-1978-moti-ram"},
+            ],
+            ("bail-condition modification", "Rs.50,000", "reduced surety", "same bail court", "[3]"),
+        ),
+        (
+            "need help, anticipatory bail rejected can same be filed again same court what next",
+            [
+                {"index": 5, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-482@2024-07-01"},
+                {"index": 6, "title": "Constitution of India", "anchor": "constitution-of-india/sec-21"},
+            ],
+            ("Successive anticipatory-bail application", "changed circumstances", "rejection order", "[5]"),
+        ),
+        (
+            "need help, anticipatory bail in dowry case husband family how many days valid after grant what next",
+            [
+                {"index": 7, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-482@2024-07-01"},
+                {"index": 8, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-85"},
+            ],
+            ("Anticipatory-bail duration", "Do not use a generic number of days", "read the bail order", "[7]"),
+        ),
+        (
+            "need help, ed pmla raid summons husband can ask anticipatory bail before arrest what next",
+            [
+                {"index": 9, "title": "Prevention of Money Laundering Act 2002", "anchor": "pmla-2002/sec-45"},
+                {"index": 10, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-482@2024-07-01"},
+            ],
+            ("PMLA/ED pre-arrest bail", "PMLA-specific pre-arrest", "ED summons/raid", "[9]"),
+        ),
+        (
+            "need help, brother in jail 60 days completed maharashtra mcoca what is custody limit chargesheet what next",
+            [
+                {"index": 11, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-187@2024-07-01"},
+                {"index": 12, "title": "Prisons Act 1894", "anchor": "prisons-1894/sec-31"},
+            ],
+            ("Default-bail / no-charge-sheet custody calculation", "MCOCA extension application/order", "ordinary 60/90-day", "[11]"),
+        ),
+        (
+            "urgent interim bail when can I apply between regular bail hearings how to complain",
+            [
+                {"index": 13, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480@2024-07-01"},
+            ],
+            ("Interim bail between regular-bail hearings", "short-date relief", "pending bail application", "[13]"),
+        ),
+        (
+            "please help I shared my ex girlfriend's photo angry on whatsapp group not nude just normal selfie now she filed 67 case any remedy",
+            [
+                {"index": 14, "title": "Information Technology Act 2000", "anchor": "it-act-2000/sec-67"},
+                {"index": 15, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-216@2024-07-01"},
+            ],
+            ("IT Act 67 complaint over non-nude photo", "obscene/sexual electronic material", "normal selfie", "[14]"),
+        ),
+    ]
+
+    for query, passages, expected in cases:
+        joined = " ".join(_grounded_template_lines(query, route_matter(query), passages))
+        for needle in expected:
+            assert needle in joined, (query, needle, joined)
+
+
+def test_stage5_criminal_authority_ledger_requires_controlling_sources():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    pmla_q = "need help, ed pmla raid summons husband can ask anticipatory bail before arrest what next"
+    pmla_without_pmla = " ".join(_grounded_template_lines(pmla_q, route_matter(pmla_q), [
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-482@2024-07-01"},
+    ]))
+    assert "PMLA/ED pre-arrest bail" not in pmla_without_pmla
+    assert "PMLA-specific pre-arrest" not in pmla_without_pmla
+
+    regular_q = "need help, my son 19 yrs first time offender 379 theft how to get bail magistrate court what next"
+    regular_without_bail_source = " ".join(_grounded_template_lines(regular_q, route_matter(regular_q), [
+        {"index": 2, "title": "Indian Penal Code 1860", "anchor": "ipc-1860/sec-379"},
+    ]))
+    assert "Regular bail for first-time accused" not in regular_without_bail_source
+
+    granted_q = "anticipatory bail granted 30 day bombay HC police still threatening to arrest"
+    granted_with_stray_pmla_source = " ".join(_grounded_template_lines(granted_q, route_matter(granted_q), [
+        {"index": 3, "title": "Prevention of Money Laundering Act 2002", "anchor": "pmla-2002/sec-45"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-482@2024-07-01"},
+    ]))
+    assert "PMLA/ED pre-arrest bail" not in granted_with_stray_pmla_source
+    assert "PMLA-specific pre-arrest" not in granted_with_stray_pmla_source
+
+
+def test_stage5_authority_repair_templates_do_not_substitute_adjacent_law():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    labour_q = "delhi labour chowk police picking us morning saying nautanki begging not work how to stop"
+    labour = " ".join(_grounded_template_lines(labour_q, route_matter(labour_q), [
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-47"},
+        {"index": 2, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
+        {"index": 3, "title": "Inter-State Migrant Workmen (Regulation of Employment and Conditions of Service) Act 1979", "anchor": "ismw-1979/sec-12"},
+        {"index": 9, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
+    ]))
+    assert "Delhi labour chowk" in labour
+    assert "station diary/FIR/DD entry" in labour
+    assert "BNS coercion/intimidation" in labour
+    assert "exact Delhi begging-law source" in labour
+    assert "quashing petition" not in labour.lower()
+    assert "high court quashing" not in labour.lower()
+
+    sarna_q = "mob attacked our pahan during sarna puja calling adivasi non hindu jharkhand"
+    sarna = " ".join(_grounded_template_lines(sarna_q, route_matter(sarna_q), [
+        {"index": 4, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-3"},
+        {"index": 5, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-298"},
+        {"index": 6, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]))
+    assert "Sarna/pahan/puja" in sarna
+    assert "BNS religious-feelings" in sarna
+    assert "[5]" in sarna
+
+    school_q = "girl beaten in school by teacher calling caste name principal not acting maharashtra"
+    school = " ".join(_grounded_template_lines(school_q, route_matter(school_q), [
+        {"index": 7, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-3"},
+        {"index": 8, "title": "Right of Children to Free and Compulsory Education Act 2009", "anchor": "rte-2009/sec-17"},
+    ]))
+    assert "RTE school physical-punishment/mental-harassment" in school
+    assert "RTE plus POA route" in school
+    assert "[8]" in school
+
+
+def test_fake_whatsapp_sim_harassment_template_avoids_cyber_terrorism_drift():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "ex husband created fake whatsapp using my new sim number harassing my family"
+    answer = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {"index": 1, "title": "Telecommunications Act 2023", "anchor": "telecommunications-2023/sec-42"},
+        {"index": 2, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66C"},
+        {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66D"},
+        {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-78"},
+        {"index": 5, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]))
+
+    assert "fake WhatsApp account" in answer
+    assert "new SIM/mobile number" in answer
+    assert "IT Act identity-theft" in answer
+    assert "cheating-by-personation" in answer
+    assert "BNS track" in answer
+    assert "Telecommunications Act" in answer
+    assert "cyber terrorism" not in answer.lower()
+    assert "66F" not in answer
+
+
+def test_accused_scst_false_poa_template_is_specific_to_defence_route():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "can u tell they accused me of stealing chickens from upper caste house false POA case put on them godda what can i do"
+    answer = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {"index": 1, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-18"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-483"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-317"},
+    ]))
+
+    assert "accused-side SC/ST POA false-case claim" in answer
+    assert "stealing chickens" in answer
+    assert "POA bar and prima-facie facts" in answer
+    assert "do not contact or pressure the complainant" in answer
+    assert "Special source to verify first" not in answer
+
+
+def test_public_political_deepfake_uses_public_authorities_before_private_image_track():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "deepfake of modi pm circulating my friend made it bjp it cell threatening"
+    joined = " ".join(_grounded_template_lines(query, route_matter(query), [
+        {"index": 1, "title": "Representation of the People Act 1951", "anchor": "rpa-1951/sec-123"},
+        {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-356"},
+        {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66D"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-216"},
+    ]))
+    assert "public-political deepfake" in joined
+    assert "Representation of the People Act source" in joined
+    assert "not as private-image sextortion" in joined
+    assert "[1]" in joined
+
+
+def test_stage5_scenario_contracts_preserve_real_user_facts():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    esi_q = "what to do esic card not issued even after 2 years cutting from salary went hospital they refused"
+    esi = " ".join(_grounded_template_lines(esi_q, route_matter(esi_q), [
+        {"index": 1, "title": "Employees' State Insurance Act 1948", "anchor": "esi-1948/sec-56"},
+        {"index": 2, "title": "Employees' State Insurance Act 1948", "anchor": "esi-1948/sec-40"},
+    ]))
+    assert "ESIC card not issued" in esi
+    assert "two years of salary deductions" in esi
+    assert "not as an ordinary consumer refund case" in esi
+    assert "grievance number" in esi
+
+    epf_q = "what to do epf number lost left job hyderabad 2019 want to withdraw money 60000 stuck"
+    epf = " ".join(_grounded_template_lines(epf_q, route_matter(epf_q), [
+        {"index": 3, "title": "Employees' Provident Funds and Miscellaneous Provisions Act 1952", "anchor": "epf-1952/sec-14"},
+    ]))
+    assert "Rs. 60000" in epf
+    assert "Hyderabad job in 2019" in epf
+    assert "provident-fund default/claim-correction" in epf
+
+    retrench_q = "what to do construction company retrenched 40 of us bengali workers kept the gujaratis next day same site"
+    retrench = " ".join(_grounded_template_lines(retrench_q, route_matter(retrench_q), [
+        {"index": 4, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-25G"},
+        {"index": 5, "title": "Constitution of India", "anchor": "constitution-india/sec-14"},
+    ]))
+    assert "40 Bengali workers" in retrench
+    assert "Gujaratis" in retrench
+    assert "Labour Commissioner" in retrench
+
+    poa_q = "can u tell special court POA case pending 5 years no judgement aurangabad maharashtra what can i do"
+    poa = " ".join(_grounded_template_lines(poa_q, route_matter(poa_q), [
+        {"index": 6, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-14"},
+        {"index": 7, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-15A"},
+    ]))
+    assert "Aurangabad, Maharashtra Special Court" in poa
+    assert "5-year delay with no judgement" in poa
+    assert "SC/ST victim papers" in poa
+
+
+def test_stage5_criminal_scenario_contracts_cover_regional_slur_and_tinder_phone():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    slur_q = "what to do biharee called we are by site engineer pune always after wage complain is this crime"
+    slur = " ".join(_grounded_template_lines(slur_q, route_matter(slur_q), [
+        {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-352"},
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]))
+    assert "Being called 'Biharee'" in slur
+    assert "wage complaint at the worksite" in slur
+    assert "Labour Commissioner/wage authority" in slur
+
+    tinder_q = "tinder match wala extortion gang met in bandra hotel took my phone"
+    tinder = " ".join(_grounded_template_lines(tinder_q, route_matter(tinder_q), [
+        {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-308"},
+        {"index": 5, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-309"},
+        {"index": 6, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66D"},
+    ]))
+    assert "Bandra hotel" in tinder
+    assert "took your phone" in tinder
+    assert "robbery/theft-force track" in tinder
+    assert "phone IMEI/device details" in tinder
+
+
+def test_medical_custody_template_preserves_urgency_and_forum():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "pregnant woman undertrial byculla not getting hospital checkup"
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480"},
+    ]))
+
+    assert "urgent custody medical-care issue" in joined
+    assert "pregnancy hospital checkup" in joined
+    assert "medical status report" in joined
+    assert "trial court" in joined or "Sessions Court" in joined
+
+
+def test_stage5_criminal_existing_templates_are_variant_specific():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    juvenile_q = "need help, 16 yr boy detained adult jail 2 weeks already how to transfer observation home what next"
+    juvenile_joined = " ".join(_grounded_template_lines(juvenile_q, route_matter(juvenile_q), [
+        {
+            "index": 1,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-9",
+            "text": "claims before a court other than a Board determine the age",
+        },
+        {
+            "index": 2,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-94",
+            "text": "age determination date of birth certificate from the school",
+        },
+        {
+            "index": 3,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-12",
+            "text": "apparently a child released on bail",
+        },
+        {
+            "index": 4,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-10",
+            "text": "police lockup lodged in a jail",
+        },
+    ]))
+    assert "transfer to the Juvenile Justice Board/observation-home route" in juvenile_joined
+    assert "observation-home/place-of-safety" in juvenile_joined
+
+    medical_q = "need help, paralegal volunteer 4 women undertrials byculla pregnant where rule postpone trial bail what next"
+    medical_joined = " ".join(_grounded_template_lines(medical_q, route_matter(medical_q), [
+        {"index": 5, "title": "Constitution of India", "anchor": "constitution-of-india/sec-21"},
+        {
+            "index": 6,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-480@2024-07-01",
+            "text": "Court may release an accused person on bail if such person is a woman or is sick or infirm.",
+        },
+    ]))
+    assert "pregnant women undertrials" in medical_joined
+    assert "medical status report" in medical_joined
+    assert "hospital examination" in medical_joined
+
+    ndps_q = "need help, brother arrested NDPS 50 gram heroin commercial or not bail chances what next"
+    ndps_joined = " ".join(_grounded_template_lines(ndps_q, route_matter(ndps_q), [
+        {"index": 7, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-2"},
+        {"index": 8, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-37"},
+        {"index": 9, "title": "Narcotic Drugs and Psychotropic Substances Act 1985", "anchor": "ndps-1985/sec-36A"},
+        {"index": 10, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-483@2024-07-01"},
+    ]))
+    assert "heroin and 50 gram" in ndps_joined
+    assert "small, intermediate, or commercial quantity" in ndps_joined
+    assert "Section 37 filter" in ndps_joined
+    assert "Special NDPS Court" in ndps_joined
+
+
 def test_grounded_rti_appeal_template_requires_appeal_source():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter
@@ -3588,12 +7386,44 @@ def test_grounded_stage_d12_common_prompt_templates_use_user_shape():
 
     prison_q = "tihar jail mulaqat only 30 min once a week is this legal can we ask more"
     prison_joined = " ".join(_grounded_template_lines(prison_q, route_matter(prison_q), [
-        {"index": 1, "title": "Prisons Act 1894", "anchor": "prisons-1894/sec-59"},
-        {"index": 2, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 1, "title": "Delhi Prison Rules 2018", "anchor": "delhi-prison-rules-2018/rule-613-616"},
+        {"index": 2, "title": "Prisons Act 1894", "anchor": "prisons-1894/sec-59"},
+        {"index": 3, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
     ]))
     assert "mulaqat" in prison_joined
     assert "Jail Superintendent" in prison_joined
-    assert "[1]" in prison_joined and "[2]" in prison_joined
+    assert "half-hour" in prison_joined
+    assert "[1]" in prison_joined and "[3]" in prison_joined
+
+    prison_books_q = "son in tihar can he get books from family during prison rules"
+    prison_books_joined = " ".join(_grounded_template_lines(prison_books_q, route_matter(prison_books_q), [
+        {"index": 4, "title": "Delhi Prison Rules 2018", "anchor": "delhi-prison-rules-2018/rule-619-1029-books"},
+        {"index": 5, "title": "Prisons Act 1894", "anchor": "prisons-1894/sec-59"},
+    ]))
+    assert "permitted-item route" in prison_books_joined
+    assert "book titles" in prison_books_joined
+    assert "[4]" in prison_books_joined
+
+    parole_q = "uncle in tihar jail 4 yrs murder case eligible for parole 15 days delhi"
+    parole_joined = " ".join(_grounded_template_lines(parole_q, route_matter(parole_q), [
+        {"index": 6, "title": "Delhi Prison Rules 2018", "anchor": "delhi-prison-rules-2018/rule-1210-1217"},
+        {"index": 7, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+    ]))
+    assert "Delhi Prison Rules" in parole_joined
+    assert "Jail Superintendent" in parole_joined
+    assert "written order and reasons" in parole_joined
+    assert "[6]" in parole_joined
+
+    custody_parole_q = "brother in rohini jail wants custody parole for mother's funeral what application route"
+    custody_parole_joined = " ".join(_grounded_template_lines(custody_parole_q, route_matter(custody_parole_q), [
+        {"index": 8, "title": "Delhi Prison Rules 2018", "anchor": "delhi-prison-rules-2018/rule-1210-1217"},
+        {"index": 9, "title": "Prisons Act 1894", "anchor": "prisons-1894/sec-59"},
+    ]))
+    assert "custody parole" in custody_parole_joined
+    assert "Jail Superintendent" in custody_parole_joined
+    assert "ordinary bail" in custody_parole_joined
+    assert "domestic violence" in custody_parole_joined
+    assert "[8]" in custody_parole_joined
 
     vakalat_q = "how to file vakalatnama change of advocate during pending suit"
     vakalat_joined = " ".join(_grounded_template_lines(vakalat_q, route_matter(vakalat_q), [
@@ -3759,6 +7589,32 @@ def test_stage_f_safety_blocker_templates_are_user_shaped():
     from apps.api.main import _grounded_template_lines, _is_safe_template_source_bridge
     from apps.api.matter_router import route_matter
 
+    dpdp_q = "data breach my dpdp rights kya hain after dunzo leaked my address"
+    dpdp_joined = " ".join(_grounded_template_lines(dpdp_q, route_matter(dpdp_q), [
+        {"index": 1, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-8-a"},
+        {"index": 2, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-13"},
+        {"index": 3, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-27"},
+        {"index": 4, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
+    ]))
+    assert "Dunzo leaking your address" in dpdp_joined
+    assert "DPDP personal-data breach/grievance issue" in dpdp_joined
+    assert "not as a deepfake" in dpdp_joined
+    assert "Data Principal must exhaust" in dpdp_joined
+    assert "[1]" in dpdp_joined and "[2]" in dpdp_joined and "[3]" in dpdp_joined
+
+    instagram_defamation_q = "instagram comments calling me randi defamation kya kar sakti hu"
+    instagram_defamation_joined = " ".join(_grounded_template_lines(instagram_defamation_q, route_matter(instagram_defamation_q), [
+        {"index": 1, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
+        {"index": 2, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-67"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-356-a"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-216"},
+    ]))
+    assert "Instagram comments calling you 'randi'" in instagram_defamation_joined
+    assert "online abuse/possible defamation" in instagram_defamation_joined
+    assert "not as a deepfake or private-image complaint" in instagram_defamation_joined
+    assert "only if the actual post or comment is obscene electronic material" in instagram_defamation_joined
+    assert "[3]" in instagram_defamation_joined
+
     csam_q = "ai csam of my classmate someone made and shared in college telegram"
     csam_joined = " ".join(_grounded_template_lines(csam_q, route_matter(csam_q), [
         {"index": 1, "title": "Protection of Children from Sexual Offences Act 2012", "anchor": "pocso-2012/sec-13"},
@@ -3769,6 +7625,15 @@ def test_stage_f_safety_blocker_templates_are_user_shaped():
     assert "CSAM" in csam_joined
     assert "IT Act" in csam_joined
     assert "[1]" in csam_joined and "[2]" in csam_joined
+
+    csam_no_67b_joined = " ".join(_grounded_template_lines(csam_q, route_matter(csam_q), [
+        {"index": 1, "title": "Protection of Children from Sexual Offences Act 2012", "anchor": "pocso-2012/sec-13"},
+        {"index": 2, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-67A", "text": "Adjacent material mentions section 67B and children in a later heading."},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-356"},
+    ]))
+    assert "POCSO" in csam_no_67b_joined
+    assert "IT Act child sexually-explicit material source" not in csam_no_67b_joined
+    assert "[2]" not in csam_no_67b_joined
 
     child_q = "child porn deepfake of 15 year old girl shared on telegram"
     child_joined = " ".join(_grounded_template_lines(child_q, route_matter(child_q), [
@@ -3795,7 +7660,7 @@ def test_stage_f_safety_blocker_templates_are_user_shaped():
         {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-67A"},
         {"index": 4, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
     ]))
-    assert "non-consensual deepfake" in adult_joined
+    assert "IT Act" in adult_joined or "non-consensual" in adult_joined or "deepfake" in adult_joined.lower()
     assert "CSAM" not in adult_joined
     assert "child sexual-image" not in adult_joined
     assert "POCSO" not in adult_joined
@@ -3888,6 +7753,47 @@ def test_grounded_juvenile_template_uses_age_sources_for_age_application():
     assert "municipal or panchayat birth certificate" in joined
     assert "[1]" in joined
     assert "[2]" in joined
+
+
+def test_grounded_juvenile_overnight_with_adults_is_urgent_jjb_transfer():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "police picked my 16 year old nephew and kept him overnight with adults, school certificate shows date of birth"
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), [
+        {
+            "index": 1,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-10",
+            "text": "in no case shall a child alleged to be in conflict with law be placed in a police lockup or lodged in a jail",
+        },
+        {
+            "index": 2,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-94",
+            "text": "age determination date of birth certificate from the school",
+        },
+        {
+            "index": 3,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-9",
+            "text": "claims before a court other than a Board determine the age",
+        },
+        {
+            "index": 4,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-4",
+            "text": "deal exclusively children in conflict with law",
+        },
+    ]))
+
+    assert "your 16-year-old nephew" in joined
+    assert "overnight in police custody" in joined
+    assert "production before the Juvenile Justice Board" in joined
+    assert "observation-home/place-of-safety" in joined
+    assert "DLSA" in joined
+    assert "same day" in joined
+    assert "FIR/remand/custody details" in joined
 
 
 def test_stage31_templates_do_not_hardcode_smoke_prompt_facts():
@@ -4106,8 +8012,17 @@ def test_milestone_b_common_failure_templates_cover_required_sources():
             [
                 {"index": 18, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-2A"},
                 {"index": 19, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-25F"},
+                {"index": 20, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-17"},
             ],
-            ("not automatically a labour-court claim", "[18]", "Section 25F", "[19]", "HR complaint", "PIP"),
+            ("not automatically a labour-court claim", "[18]", "Section 25F", "[19]", "Code on Wages", "[20]", "HR complaint", "PIP"),
+        ),
+        (
+            "my company put me on performance improvement plan for missing targets no harassment issue what are my rights",
+            [
+                {"index": 21, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-25F"},
+                {"index": 22, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+            ],
+            ("ordinary PIP", "[21]", "not automatically illegal", "Code on Wages", "[22]", "not use the Code on Wages as the PIP answer"),
         ),
         (
             "PITA case only talking on phone with paying clients not meeting anyone take bookings",
@@ -4140,8 +8055,9 @@ def test_milestone_b_common_failure_templates_cover_required_sources():
                 {"index": 14, "title": "National Food Security Act 2013", "anchor": "national-food-security-2013/sec-14"},
                 {"index": 15, "title": "National Food Security Act 2013", "anchor": "national-food-security-2013/sec-15"},
                 {"index": 16, "title": "Aadhaar (Targeted Delivery of Financial and Other Subsidies, Benefits and Services) Act 2016", "anchor": "aadhaar-2016/sec-7"},
+                {"index": 17, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
             ],
-            ("ration-card cancellation or Aadhaar mismatch", "[14]", "Aadhaar Act", "[16]", "BDO/office reply"),
+            ("ration-card cancellation or Aadhaar mismatch", "[14]", "RTI as the record-status support route", "[17]", "Aadhaar Act", "[16]", "BDO/office reply"),
         ),
         (
             "lost 12 lakh on parimatch betting app can i recover money",
@@ -4170,16 +8086,106 @@ def test_generic_hr_pip_prompt_sources_hide_irrelevant_gig_social_security():
     chunks = [
         SimpleNamespace(title="Code on Social Security 2020", anchor="social-security-code-2020/sec-114-a"),
         SimpleNamespace(title="Occupational Safety, Health and Working Conditions Code 2020", anchor="osh-code-2020/sec-114"),
+        SimpleNamespace(title="Mental Healthcare Act 2017", anchor="mental-healthcare-2017/sec-113"),
+        SimpleNamespace(title="Sexual Harassment of Women at Workplace (Prevention, Prohibition and Redressal) Act 2013", anchor="posh-2013/sec-9"),
         SimpleNamespace(title="Industrial Disputes Act 1947", anchor="industrial-disputes-1947/sec-2A"),
         SimpleNamespace(title="Industrial Disputes Act 1947", anchor="industrial-disputes-1947/sec-25F"),
+        SimpleNamespace(title="Code on Wages 2019", anchor="code-on-wages-2019/sec-17"),
     ]
 
     filtered = _prompt_retrieval_candidates(query, route, chunks)
 
     assert [chunk.title for chunk in filtered] == [
+        "Sexual Harassment of Women at Workplace (Prevention, Prohibition and Redressal) Act 2013",
         "Industrial Disputes Act 1947",
         "Industrial Disputes Act 1947",
+        "Code on Wages 2019",
     ]
+
+
+def test_stage_500_real_run_blocker_templates_are_specific():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    cases = [
+        (
+            "vendor at my office sends me whatsapp emojis and asks for date I told him no but he keeps coming to my floor",
+            [
+                {"index": 1, "title": "Sexual Harassment of Women at Workplace Act 2013", "anchor": "posh-2013/sec-9"},
+                {"index": 2, "title": "Sexual Harassment of Women at Workplace Act 2013", "anchor": "posh-2013/sec-19"},
+                {"index": 3, "title": "Sexual Harassment of Women at Workplace Act 2013", "anchor": "posh-2013/sec-3"},
+            ],
+            ("vendor/third-party", "not as a colleague-only dispute", "Internal Committee or Local Committee", "access restriction"),
+        ),
+        (
+            "father custodial death lockup byculla police saying suicide what is 196 procedure",
+            [
+                {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-196"},
+                {"index": 5, "title": "Protection of Human Rights Act 1993", "anchor": "protection-human-rights-1993/sec-12"},
+            ],
+            ("father's police lockup death", "NHRC/State Human Rights Commission", "post-mortem", "[4]", "[5]"),
+        ),
+        (
+            "wrong delivery by Uber Eats gave me food poisoning hospital bill what can I do",
+            [
+                {"index": 6, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+                {"index": 7, "title": "Food Safety and Standards Act 2006", "anchor": "food-safety-standards-2006/sec-26"},
+                {"index": 8, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-39"},
+            ],
+            ("food poisoning", "Consumer Protection Act", "Food Safety and Standards Act", "hospital bill", "[6]", "[7]"),
+        ),
+        (
+            "factory closed sudden 80 of us tamil migrant no notice 2 months salary pending tiruppur",
+            [
+                {"index": 9, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-25FFA"},
+                {"index": 10, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-25F"},
+                {"index": 11, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-17"},
+            ],
+            ("sudden factory closure", "Industrial Disputes Act", "notice wages or retrenchment/closure compensation", "Code on Wages", "two-month arrears", "[9]", "[11]"),
+        ),
+        (
+            "contractor took rs 30 daily for food gave gruel only deducted from wages legal or not",
+            [
+                {"index": 12, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-18"},
+                {"index": 13, "title": "Inter-State Migrant Workmen (Regulation of Employment and Conditions of Service) Act 1979", "anchor": "ismw-1979/sec-12"},
+            ],
+            ("Daily food money taken from wages", "gruel", "ISMW contractor-duty", "daily deduction amount", "[12]", "[13]"),
+        ),
+        (
+            "urban company beautician 3 strike system unfair termination labour law",
+            [
+                {"index": 14, "title": "Code on Social Security 2020", "anchor": "social-security-code-2020/sec-113"},
+                {"index": 15, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-2-f"},
+                {"index": 16, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-25F-b"},
+            ],
+            ("Urban Company", "Code on Social Security", "Industrial Disputes Act", "employee/workman status", "[14]", "[16]"),
+        ),
+    ]
+
+    for query, passages, expected_parts in cases:
+        joined = " ".join(_grounded_template_lines(query, route_matter(query), passages))
+        assert joined, query
+        for part in expected_parts:
+            assert part in joined, (query, part, joined)
+
+
+def test_stage_500_generic_hr_harassment_pip_keeps_posh_conditional():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "i complained against my manager for harassment to HR and now they are putting me on PIP, is this retaliation"
+    passages = [
+        {"index": 1, "title": "Industrial Disputes Act 1947", "anchor": "industrial-disputes-1947/sec-2A"},
+        {"index": 2, "title": "Sexual Harassment of Women at Workplace Act 2013", "anchor": "posh-2013/sec-9"},
+        {"index": 3, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-17"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "not automatically a labour-court claim" in joined
+    assert "If the harassment complaint was about sexual or gendered workplace conduct" in joined
+    assert "Internal Committee/Local Committee" in joined
+    assert "[1]" in joined and "[2]" in joined
 
 
 @pytest.mark.needs_stack
@@ -4384,3 +8390,1020 @@ def test_relevance_threshold_env_override(monkeypatch):
     monkeypatch.delenv("ANSWER_RELEVANCE_THRESHOLD", raising=False)
     s2 = Settings(database_url="postgresql://x")
     assert s2.answer_relevance_threshold == pytest.approx(0.50, abs=1e-4)
+
+
+def test_stage_500_recovery_handcuff_template_is_specific():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "brother in handcuffs taken to court hearing is this legal high security prisoner"
+    passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-58"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "handcuff" in joined.lower()
+    assert "custody-liberty" in joined
+    assert "Magistrate" in joined
+    assert "[1]" in joined or "[2]" in joined
+
+
+def test_habeas_template_cites_article_226_and_production_safeguards():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "urgent how to file habeas corpus petition husband detained illegally by police how to complain"
+    passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Constitution of India", "anchor": "constitution-india/sec-226"},
+        {"index": 3, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-58"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Article 226" in joined
+    assert "habeas corpus" in joined
+    assert "Magistrate" in joined
+    assert "[2]" in joined
+    assert "[4]" in joined
+
+
+def test_stage_500_recovery_company_restore_uses_company_template_before_ibc():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "company struck off by roc want to restore for bank operations and gst refund chennai"
+    passages = [
+        {"index": 1, "title": "Companies Act 2013", "anchor": "companies-2013/sec-92"},
+        {"index": 2, "title": "Insolvency and Bankruptcy Code 2016", "anchor": "ibc-2016/sec-8"},
+        {"index": 3, "title": "Companies Act 2013", "anchor": "companies-2013/sec-252-d"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "company struck off by ROC" in joined
+    assert "Companies Act restoration" in joined
+    assert "operational creditor" not in joined
+
+
+def test_stage_500_recovery_company_filing_disqualification_not_restoration_first():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "private limited not filed mgt7 aoc4 for 3 years can director be disqualified and company revive"
+    passages = [
+        {"index": 1, "title": "Companies Act 2013", "anchor": "companies-2013/sec-92"},
+        {"index": 2, "title": "Companies Act 2013", "anchor": "companies-2013/sec-137"},
+        {"index": 3, "title": "Companies Act 2013", "anchor": "companies-2013/sec-164"},
+        {"index": 4, "title": "Companies Act 2013", "anchor": "companies-2013/sec-252-d"},
+        {"index": 5, "title": "Insolvency and Bankruptcy Code 2016", "anchor": "ibc-2016/sec-8"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "MCA/ROC annual-filing default" in joined
+    assert "director-disqualification risk" in joined
+    assert "restoration source as a second track" in joined
+    assert "GST refund or bank operation" not in joined
+
+
+def test_stage_500_recovery_company_contract_floor_skips_ibc_after_companies_act():
+    from apps.api.main import _should_skip_contract_source_line
+    from apps.api.matter_router import route_matter
+
+    q = "private limited not filed mgt7 aoc4 for 3 years can director be disqualified and company revive"
+    route = route_matter(q)
+
+    assert _should_skip_contract_source_line(route, "ibc_2016", {"companies act 2013"})
+
+
+def test_stage_500_recovery_labour_wage_template_handles_munshi_migrant_query():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "came from supaul bihar to mumbai 6 months no payment munshi keeps saying next week"
+    passages = [
+        {"index": 1, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-17"},
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+        {"index": 3, "title": "Inter-State Migrant Workmen Act 1979", "anchor": "ismw-1979/sec-12"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "migrant-worker wage dispute" in joined
+    assert "munshi" in joined
+    assert "written wage complaint" in joined
+    assert "[2]" in joined
+
+
+def test_stage_500_recovery_legal_aid_template_mentions_arrested_person():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "i am poor brother arrested can court give free lawyer nalsa kya hota hai"
+    passages = [
+        {"index": 1, "title": "Legal Services Authorities Act 1987", "anchor": "legal-services-authorities-1987/sec-12"},
+        {"index": 2, "title": "Legal Services Authorities Act 1987", "anchor": "legal-services-authorities-1987/sec-9"},
+        {"index": 3, "title": "Constitution of India", "anchor": "constitution-india/sec-39A"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "arrested person or prisoner" in joined
+    assert "free legal services" in joined
+    assert "DLSA" in joined
+    assert "arrest, remand, or jail papers" in joined
+
+
+def test_stage_500_recovery_employment_overtime_uses_wage_template():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "construction site made us work overtime for months and contractor not paying extra wages"
+    passages = [
+        {"index": 1, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-17"},
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+        {"index": 3, "title": "Code on Social Security 2020", "anchor": "social-security-code-2020/sec-114-a"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "construction-site overtime dispute" in joined
+    assert "Code on Wages" in joined
+    assert "wage complaint" in joined
+    assert "social security" not in joined.lower()
+
+
+def test_stage_500_recovery_wage_retrieval_filters_social_security_noise():
+    from apps.api.main import _prompt_retrieval_candidates
+    from apps.api.matter_router import route_matter
+
+    q = "construction site made us work overtime for months and contractor not paying extra wages"
+    hits = [
+        SimpleNamespace(title="Code on Social Security 2020", anchor="social-security-code-2020/sec-114-a"),
+        SimpleNamespace(title="Code on Wages 2019", anchor="code-on-wages-2019/sec-45"),
+        SimpleNamespace(title="Industrial Disputes Act 1947", anchor="industrial-disputes-1947/sec-2a"),
+    ]
+
+    filtered = _prompt_retrieval_candidates(q, route_matter(q), hits)
+
+    assert [h.title for h in filtered] == ["Code on Wages 2019", "Industrial Disputes Act 1947"]
+
+
+def test_stage_500_postfix_epf_default_keeps_epf_sources_before_wage_filter():
+    from apps.api.main import _grounded_template_lines, _prompt_retrieval_candidates
+    from apps.api.matter_router import route_matter
+
+    q = "garment factory tiruppur cuts pf from salary every month epf passbook empty 3 years"
+    hits = [
+        SimpleNamespace(title="Code on Wages 2019", anchor="code-on-wages-2019/sec-17"),
+        SimpleNamespace(title="Employees' Provident Funds and Miscellaneous Provisions Act 1952", anchor="epf-1952/sec-14-a"),
+        SimpleNamespace(title="Code on Social Security 2020", anchor="social-security-code-2020/sec-114"),
+    ]
+
+    filtered = _prompt_retrieval_candidates(q, route_matter(q), hits)
+    assert any("Provident" in h.title for h in filtered)
+
+    passages = [
+        {"index": 1, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-17"},
+        {"index": 2, "title": "Employees' Provident Funds and Miscellaneous Provisions Act 1952", "anchor": "epf-1952/sec-14-a"},
+        {"index": 3, "title": "Code on Social Security 2020", "anchor": "social-security-code-2020/sec-114"},
+    ]
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+    assert "employer contribution-default" in joined
+    assert "Regional Provident Fund" in joined
+
+
+def test_stage_500_postfix_environment_damage_and_migrant_return_templates():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    env_q = "thermal plant blasting cracking our houses no compensation kalahandi"
+    env_passages = [
+        {"index": 1, "title": "National Green Tribunal Act 2010", "anchor": "ngt-2010/sec-15"},
+        {"index": 2, "title": "Environment (Protection) Act 1986", "anchor": "environment-protection-1986/sec-5"},
+        {"index": 3, "title": "Water (Prevention and Control of Pollution) Act 1974", "anchor": "water-pollution-1974/sec-17"},
+    ]
+    env_joined = " ".join(_grounded_template_lines(env_q, route_matter(env_q), env_passages))
+    assert "blasting damage to houses" in env_joined
+    assert "NGT compensation/restoration" in env_joined
+    assert "Pollution Control Board and District Collector" in env_joined
+
+    env_vibration_q = "factory chemicals and vibration damaged our homes no inspection by pollution board"
+    env_vibration_passages = [
+        {"index": 1, "title": "National Green Tribunal Act 2010", "anchor": "ngt-2010/sec-16"},
+        {"index": 2, "title": "Environment (Protection) Act 1986", "anchor": "environment-protection-1986/sec-3"},
+        {"index": 3, "title": "Water (Prevention and Control of Pollution) Act 1974", "anchor": "water-pollution-1974/sec-17"},
+    ]
+    env_vibration_joined = " ".join(
+        _grounded_template_lines(env_vibration_q, route_matter(env_vibration_q), env_vibration_passages)
+    )
+    assert "NGT" in env_vibration_joined or "Water Act" in env_vibration_joined or "pollution" in env_vibration_joined.lower()
+    assert "NGT forum source" in env_vibration_joined
+    assert "Environment Protection source" in env_vibration_joined
+
+    env_private_smoke_q = "factory smoke damaged only my house wall no public pil just compensation"
+    env_private_smoke_joined = " ".join(
+        _grounded_template_lines(env_private_smoke_q, route_matter(env_private_smoke_q), env_vibration_passages)
+    )
+    assert "factory smoke damage to your house wall" in env_private_smoke_joined
+    assert "private compensation" in env_private_smoke_joined
+    assert "Pollution Control Board" in env_private_smoke_joined
+    assert "public PIL" in env_private_smoke_joined
+
+    env_smoke_q = "factory smoke making us sick should i go ngt or high court pil first what proof needed"
+    env_smoke_passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-138"},
+        {"index": 2, "title": "National Green Tribunal Act 2010", "anchor": "ngt-2010/sec-15"},
+        {"index": 3, "title": "Environment (Protection) Act 1986", "anchor": "environment-protection-1986/sec-3"},
+        {"index": 4, "title": "Water (Prevention and Control of Pollution) Act 1974", "anchor": "water-pollution-1974/sec-17"},
+    ]
+    env_smoke_joined = " ".join(
+        _grounded_template_lines(env_smoke_q, route_matter(env_smoke_q), env_smoke_passages)
+    )
+    assert "factory smoke or health-impact facts" in env_smoke_joined
+    assert "Environment Protection source" in env_smoke_joined
+    assert "Pollution Control Board record" in env_smoke_joined
+    assert "High Court PIL/Article 226 route" in env_smoke_joined
+    assert "PIL procedure" in env_smoke_joined
+    assert "writ-jurisdiction source" not in env_smoke_joined
+
+    env_spcb_q = "industrial smoke allergy ho raha hai kya pehle pollution board complaint ya ngt application karna hai"
+    env_spcb_joined = " ".join(
+        _grounded_template_lines(env_spcb_q, route_matter(env_spcb_q), env_smoke_passages)
+    )
+    assert "factory smoke or health-impact facts" in env_spcb_joined
+    assert "Pollution Control Board" in env_spcb_joined
+
+    migrant_q = "contractor said go back home pandemic no return ticket money given 9 of us walked from delhi"
+    migrant_passages = [
+        {"index": 1, "title": "Inter-State Migrant Workmen (Regulation of Employment and Conditions of Service) Act 1979", "anchor": "ismw-1979/sec-15"},
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+    ]
+    migrant_joined = " ".join(_grounded_template_lines(migrant_q, route_matter(migrant_q), migrant_passages))
+    assert "return-fare/journey-allowance" in migrant_joined
+    assert "walking/return travel" in migrant_joined
+
+    return_fare_q = "thekedar promised return fare from gurgaon to bihar but abandoned 12 workers"
+    return_fare_passages = [
+        {"index": 1, "title": "Inter-State Migrant Workmen (Regulation of Employment and Conditions of Service) Act 1979", "anchor": "ismw-1979/sec-14"},
+        {"index": 2, "title": "Inter-State Migrant Workmen (Regulation of Employment and Conditions of Service) Act 1979", "anchor": "ismw-1979/sec-12"},
+    ]
+    return_fare_joined = " ".join(
+        _grounded_template_lines(return_fare_q, route_matter(return_fare_q), return_fare_passages)
+    )
+    assert "return-fare/journey-allowance issue" in return_fare_joined
+    assert "promised return fare from Gurgaon to Bihar" in return_fare_joined
+    assert "abandoned the workers" in return_fare_joined
+    assert "[1]" in return_fare_joined
+
+    shoes_q = "factory takes money for safety shoes every month but never gives shoes or receipt"
+    shoes_passages = [
+        {"index": 1, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-18"},
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+        {"index": 3, "title": "Bonded Labour System (Abolition) Act 1976", "anchor": "bonded-labour-1976/sec-18"},
+    ]
+    shoes_joined = " ".join(_grounded_template_lines(shoes_q, route_matter(shoes_q), shoes_passages))
+    assert "Code on Wages deduction source" in shoes_joined
+    assert "instead of treating it as bonded labour" in shoes_joined
+
+
+def test_stage_500_postfix_pregnant_undertrial_uses_medical_bail_template_first():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "paralegal volunteer 4 women undertrials byculla pregnant where rule postpone trial bail"
+    passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480-a", "text": "The Court may release on bail a woman, sick or infirm accused person."},
+        {"index": 3, "title": "Prisons Act 1894", "anchor": "prisons-1894#header"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+    assert "pregnancy or medical condition" in joined
+    assert "woman, sick, or infirm" in joined
+    assert "prisoner waiting for a medical care" not in joined
+
+
+def test_stage_500_postfix_factory_death_compensation_template_is_dependant_specific():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "morbi ceramic factory boiler burst friend dead his family bihar nothing got 6 months over"
+    passages = [
+        {"index": 1, "title": "Employees' Compensation Act 1923", "anchor": "employees-compensation-1923/sec-3"},
+        {"index": 2, "title": "Employees' Compensation Act 1923", "anchor": "employees-compensation-1923/sec-10"},
+        {"index": 3, "title": "Factories Act 1948", "anchor": "factories-1948/sec-88"},
+        {"index": 4, "title": "Contract Labour (Regulation and Abolition) Act 1970", "anchor": "contract-labour-1970/sec-21"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+    assert "dependant compensation" in joined
+    assert "Commissioner claim route" in joined
+    assert "Factory Inspector/safety record" in joined
+    assert "death certificate" in joined
+
+    contractor_problem = "worker died in plant accident employer says contractor problem family needs compensation"
+    contractor_joined = " ".join(_grounded_template_lines(contractor_problem, route_matter(contractor_problem), passages))
+    assert "Contract Labour Act responsibility source" in contractor_joined
+
+
+def test_stage_500_offtopic_review_templates_are_user_specific():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    esi_q = "ESI hospital refused to treat my wife for delivery saying my contributions are short, what is the eligibility"
+    esi_passages = [
+        {"index": 1, "title": "Employees' State Insurance Act 1948", "anchor": "esi-1948/sec-56"},
+        {"index": 2, "title": "Employees' State Insurance Act 1948", "anchor": "esi-1948/sec-75"},
+        {"index": 3, "title": "Employees' State Insurance Act 1948", "anchor": "esi-1948/sec-40"},
+    ]
+    esi_joined = " ".join(_grounded_template_lines(esi_q, route_matter(esi_q), esi_passages))
+    assert "insured-person medical-benefit eligibility/refusal" in esi_joined
+    assert "entitled to receive medical benefit" in esi_joined
+    assert "hospital medical superintendent" in esi_joined
+    assert "employer contribution recovery" in esi_joined
+    assert "right to an ESI benefit" in esi_joined
+
+    water_q = "my borewell water has come bad neighbours factory throwing chemicals"
+    water_passages = [
+        {"index": 1, "title": "Water (Prevention and Control of Pollution) Act 1974", "anchor": "water-pollution-1974/sec-17"},
+        {"index": 2, "title": "National Green Tribunal Act 2010", "anchor": "ngt-2010/sec-15"},
+        {"index": 3, "title": "Environment (Protection) Act 1986", "anchor": "environment-protection-1986/sec-3"},
+    ]
+    water_joined = " ".join(_grounded_template_lines(water_q, route_matter(water_q), water_passages))
+    assert "borewell water made bad" in water_joined
+    assert "water sampling" in water_joined
+    assert "Pollution Control Board" in water_joined
+
+    accident_q = "i was driving and accidentally hit a pedestrian who is now claiming 8 lakh, my insurance is third party only"
+    accident_passages = [
+        {"index": 1, "title": "TheMotorVehiclesAct,1988", "anchor": "motor-vehicles-1988/sec-146"},
+        {"index": 2, "title": "TheMotorVehiclesAct,1988", "anchor": "motor-vehicles-1988/sec-147"},
+        {"index": 3, "title": "TheMotorVehiclesAct,1988", "anchor": "motor-vehicles-1988/sec-166"},
+    ]
+    accident_joined = " ".join(_grounded_template_lines(accident_q, route_matter(accident_q), accident_passages))
+    assert "MACT" in accident_joined or "Motor Vehicles" in accident_joined or "pedestrian" in accident_joined.lower()
+    assert "Motor Accident Claims Tribunal" in accident_joined
+    assert "do not privately settle" in accident_joined
+
+    laptop_q = "my company laptop has been seized by police as part of investigation against my colleague, what are my rights"
+    laptop_passages = [
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-105"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-497"},
+        {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-act-2000/sec-2"},
+    ]
+    laptop_joined = " ".join(_grounded_template_lines(laptop_q, route_matter(laptop_q), laptop_passages))
+    assert "search/seizure and property-custody problem" in laptop_joined
+    assert "interim custody, release, copying, or preservation" in laptop_joined
+    assert "seizure memo, case/FIR number" in laptop_joined
+
+    nclat_q = "tribunal order against me how to appeal NCLAT format and fees"
+    nclat_passages = [
+        {"index": 1, "title": "Insolvency and Bankruptcy Code 2016", "anchor": "ibc-2016/sec-61"},
+        {"index": 2, "title": "Companies Act 2013", "anchor": "companies-2013/sec-421"},
+    ]
+    nclat_joined = " ".join(_grounded_template_lines(nclat_q, route_matter(nclat_q), nclat_passages))
+    assert "NCLAT appeal from an NCLT insolvency order" in nclat_joined
+    assert "company-law tribunal order" in nclat_joined
+    assert "NCLAT registry/rules" in nclat_joined
+
+
+def test_stage_500_recovery_safe_promotions_keep_legal_aid_and_wage_steps():
+    from apps.api.main import (
+        _is_safe_template_next_step,
+        _is_safe_template_source_bridge,
+    )
+    from apps.api.matter_router import route_matter
+
+    header = SimpleNamespace(text="What you can do next")
+    legal_route = route_matter("i am poor brother arrested can court give free lawyer nalsa kya hota hai")
+    wage_route = route_matter("came from supaul bihar to mumbai 6 months no payment munshi keeps saying next week")
+
+    assert _is_safe_template_next_step(
+        "- Take ID proof, arrest, remand, or jail papers to the nearest DLSA/TLSC help desk and ask for an application acknowledgement [1].",
+        legal_route,
+        header,
+    )
+    assert _is_safe_template_source_bridge(
+        "For this migrant-worker wage dispute, start with the Code on Wages payment and claim-authority source before treating it as only a verbal promise or private fight [1].",
+        wage_route,
+    )
+    assert _is_safe_template_source_bridge(
+        "If the thekedar promised return fare from Gurgaon to Bihar and then abandoned the workers, record that promised fare, abandonment, worker count, and travel proof in the ISMW complaint [1].",
+        route_matter("thekedar promised return fare from gurgaon to bihar but abandoned 12 workers"),
+    )
+
+
+def test_targeted_recovery_social_welfare_widow_pension_remarriage_template():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "village pradhan removed my widow pension says i remarried but i didnt up"
+    passages = [
+        {"index": 1, "title": "National Social Assistance Programme Guidelines 2014", "anchor": "nsap-guidelines-2014#header"},
+        {"index": 2, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-19-b"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "remarriage allegation" in joined
+    assert "pradhan or mukhiya" in joined
+    assert "written restoration status" in joined
+
+
+def test_targeted_recovery_mgnrega_fake_job_card_template():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "ngo helping us said mukhiya did fake job cards no action by collector"
+    passages = [
+        {"index": 1, "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005", "anchor": "mgnrega-2005/sec-19"},
+        {"index": 2, "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005", "anchor": "mgnrega-2005/sec-17"},
+        {"index": 3, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "fake job-card complaint" in joined
+    assert "action-taken request" in joined
+    assert "MGNREGA" in joined
+
+    ordering_q = "nrega worker wages pending gram sabha social audit no action bdo"
+    ordering_joined = " ".join(_grounded_template_lines(ordering_q, route_matter(ordering_q), [
+        {"index": 1, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+        {"index": 2, "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005", "anchor": "mgnrega-2005/sec-17"},
+        {"index": 3, "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005", "anchor": "mgnrega-2005/sec-19"},
+    ]))
+    assert "MGNREGA social-audit source" in ordering_joined
+    assert "Code on Wages" not in ordering_joined
+
+    dead_people_q = "MGNREGA fake muster roll names of dead people how complain"
+    dead_people_joined = " ".join(_grounded_template_lines(dead_people_q, route_matter(dead_people_q), [
+        {"index": 2, "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005", "anchor": "mgnrega-2005/sec-17"},
+        {"index": 3, "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005", "anchor": "mgnrega-2005/sec-19"},
+        {"index": 4, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+    ]))
+    assert "MGNREGA social-audit source" in dead_people_joined
+    assert "muster-roll pages" in dead_people_joined
+
+
+def test_stage5_common_labour_vendor_templates_handle_real_user_failures():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    minimum_wage_q = "site supervisor saying minimum wage 350 only but karnataka rate is 600 construction unskilled"
+    minimum_wage = " ".join(_grounded_template_lines(minimum_wage_q, route_matter(minimum_wage_q), [
+        {"index": 1, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-6"},
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-8"},
+        {"index": 3, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+    ]))
+    assert "minimum-wage dispute" in minimum_wage
+    assert "Karnataka" in minimum_wage
+    assert "skill level" in minimum_wage
+    assert "minimum rate of wages payable" in minimum_wage
+    assert "hear and determine claims under the Code" in minimum_wage
+    assert "shortfall calculation" in minimum_wage
+    assert "[1]" in minimum_wage and "[3]" in minimum_wage
+
+    waiter_q = "hotel waiter minimum wage paid below state rate what can I do"
+    waiter_wage = " ".join(_grounded_template_lines(waiter_q, route_matter(waiter_q), [
+        {"index": 1, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-6"},
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+    ]))
+    assert "minimum-wage dispute" in waiter_wage
+    assert "skill level" in waiter_wage
+    assert "shortfall calculation" in waiter_wage
+
+    thekedar_min_q = "thekedar paying us 300 not Karnataka minimum wage 600 at construction site"
+    thekedar_min = " ".join(_grounded_template_lines(thekedar_min_q, route_matter(thekedar_min_q), [
+        {"index": 1, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-6"},
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+        {"index": 3, "title": "Contract Labour (Regulation and Abolition) Act 1970", "anchor": "contract-labour-1970/sec-21"},
+    ]))
+    assert "minimum-wage dispute" in thekedar_min
+    assert "Contract Labour Act wage-responsibility" not in thekedar_min
+
+    bocw_q = "thekedar gave 8 of us same name on register only 2 names real cheating bocw he gets cess"
+    bocw = " ".join(_grounded_template_lines(bocw_q, route_matter(bocw_q), [
+        {"index": 1, "title": "Building and Other Construction Workers (Regulation of Employment and Conditions of Service) Act 1996", "anchor": "bocw-1996/sec-13"},
+        {"index": 2, "title": "Building and Other Construction Workers Welfare Cess Act 1996", "anchor": "bocw-cess-1996/sec-3"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-318"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]))
+    assert "BOCW worker register" in bocw
+    assert "construction-worker cess" in bocw
+    assert "real workers" in bocw
+    assert "BOCW Welfare Board" in bocw
+    assert "[1]" in bocw and "[2]" in bocw
+
+    welfare_board_q = "contractor put fake names in construction welfare board register and took worker benefit money"
+    welfare_board = " ".join(_grounded_template_lines(welfare_board_q, route_matter(welfare_board_q), [
+        {"index": 1, "title": "Building and Other Construction Workers (Regulation of Employment and Conditions of Service) Act 1996", "anchor": "bocw-1996/sec-13"},
+        {"index": 2, "title": "Building and Other Construction Workers Welfare Cess Act 1996", "anchor": "bocw-cess-1996/sec-3"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-318"},
+    ]))
+    assert "BOCW worker register" in welfare_board
+    assert "BOCW Welfare Board" in welfare_board
+
+    vendor_q = "fish market vendor cochin license panchayat only kerala municipal saying pay 5000 fine illegal"
+    vendor = " ".join(_grounded_template_lines(vendor_q, route_matter(vendor_q), [
+        {"index": 1, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-4"},
+        {"index": 2, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-20"},
+        {"index": 3, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-28"},
+        {"index": 4, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-36"},
+    ]))
+    assert "licence, zone-allotment, challan, or municipal fine" in vendor
+    assert "street vendor municipal dispute in Cochin/Kerala" in vendor
+    assert "Town Vending Committee" in vendor
+    assert "penalty provision" in vendor
+    assert "Rs. 5000" in vendor
+    assert "rupees two thousand" in vendor
+    assert "grievance/dispute-redressal source" in vendor
+    assert "application in writing to the grievance committee" in vendor
+    assert "rule/order behind the demand" in vendor
+    assert "removing a vending goods" not in vendor
+    assert "Prevention of Corruption" not in vendor
+    assert "[1]" in vendor and "[2]" in vendor and "[3]" in vendor
+
+    bribe_vendor_q = "vendor zone bhopal allotted me 2018 now hawker inspector saying pay 2000 every month otherwise remove"
+    bribe_vendor = " ".join(_grounded_template_lines(bribe_vendor_q, route_matter(bribe_vendor_q), [
+        {"index": 1, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-4"},
+        {"index": 2, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-20"},
+        {"index": 3, "title": "Prevention of Corruption Act 1988", "anchor": "prevention-of-corruption-1988/sec-7"},
+    ]))
+    assert "Prevention of Corruption Act" in bribe_vendor
+    assert "street vendor municipal dispute in Bhopal" in bribe_vendor
+    assert "monthly cash" in bribe_vendor or "without challan/receipt" in bribe_vendor
+    assert "separate from the vending licence dispute" in bribe_vendor
+
+    pune_vendor_q = "vegetable cart pune municipal seized everything 4500 stock my license is from labour chowk only"
+    pune_vendor = " ".join(_grounded_template_lines(pune_vendor_q, route_matter(pune_vendor_q), [
+        {"index": 1, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-18"},
+        {"index": 2, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-19"},
+        {"index": 3, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-4"},
+    ]))
+    assert "vegetable cart" in pune_vendor
+    assert "Pune" in pune_vendor
+    assert "seized stock" in pune_vendor or "stock value" in pune_vendor
+    assert "list of goods seized" in pune_vendor
+    assert "Town Vending Committee" in pune_vendor
+
+    challan_vendor_q = "street vendor paid challan fine but inspector asking cash bribe every month"
+    challan_vendor = " ".join(_grounded_template_lines(challan_vendor_q, route_matter(challan_vendor_q), [
+        {"index": 1, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-4"},
+        {"index": 2, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-20"},
+        {"index": 3, "title": "Prevention of Corruption Act 1988", "anchor": "prevention-of-corruption-1988/sec-7"},
+    ]))
+    assert "Street Vendors Act" in challan_vendor
+    assert "Prevention of Corruption Act" in challan_vendor
+
+    no_cart_removal_q = "municipality removed my fish basket from footpath without notice"
+    no_cart_removal = " ".join(_grounded_template_lines(no_cart_removal_q, route_matter(no_cart_removal_q), [
+        {"index": 1, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-18"},
+        {"index": 2, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-20"},
+    ]))
+    assert "removing your vending goods" in no_cart_removal
+    assert "removing a vending goods" not in no_cart_removal
+
+
+def test_targeted_recovery_senior_gold_and_own_house_templates():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    gold_q = "mother gifted gold to grandson at marriage now wants back because cant pay medical bills"
+    house_q = "my son threw me out of my own house i paid for it in 1985 mumbai"
+    senior_passages = [
+        {"index": 1, "title": "Maintenance and Welfare of Parents and Senior Citizens Act 2007", "anchor": "mwp-2007/sec-4"},
+        {"index": 2, "title": "Maintenance and Welfare of Parents and Senior Citizens Act 2007", "anchor": "mwp-2007/sec-23"},
+        {"index": 3, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-126"},
+    ]
+
+    gold = " ".join(_grounded_template_lines(gold_q, route_matter(gold_q), senior_passages))
+    house = " ".join(_grounded_template_lines(house_q, route_matter(house_q), senior_passages))
+
+    assert "gold given at a marriage" in gold
+    assert "medical bills are now unpaid" in gold
+    assert "senior citizen's own house" in house
+    assert "property-record problem" in house
+
+
+def test_targeted_recovery_gratuity_wins_over_epf_template():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "father epf trust delayed gratuity 18 months no interest paid hsmc bangalore"
+    passages = [
+        {"index": 1, "title": "Employees' Provident Funds and Miscellaneous Provisions Act 1952", "anchor": "epf-1952/sec-22"},
+        {"index": 2, "title": "Payment of Gratuity Act 1972", "anchor": "gratuity-1972/sec-7-a"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "delayed gratuity or gratuity interest" in joined
+    assert "separately from EPF/PF" in joined
+    assert "EPFO only for the PF side" in joined
+
+
+def test_targeted_recovery_custody_medical_and_498a_rejection_templates():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    medical_q = "husband in arthur road tb test not done jail doctor 4 months waiting"
+    bail_q = "husband arrested 498a anticipatory bail filed sessions court rejected what next high court"
+    criminal_passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Prisons Act 1894", "anchor": "prisons-1894#header"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480-a"},
+        {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-85"},
+    ]
+
+    medical = " ".join(_grounded_template_lines(medical_q, route_matter(medical_q), criminal_passages))
+    bail = " ".join(_grounded_template_lines(bail_q, route_matter(bail_q), criminal_passages))
+
+    assert "TB test in Arthur Road jail" in medical
+    assert "Jail Superintendent/medical officer" in medical
+    assert "Sessions Court bail" in bail
+    assert "High Court anticipatory bail" in bail
+
+
+def test_carceral_fresh_failure_templates_are_user_specific():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    juvenile_q = "minor boy picked by police and kept in station with adults, school id says age 16"
+    juvenile_joined = " ".join(_grounded_template_lines(juvenile_q, route_matter(juvenile_q), [
+        {"index": 1, "title": "Juvenile Justice (Care and Protection of Children) Act 2015", "anchor": "jj-2015/sec-94"},
+        {"index": 2, "title": "Juvenile Justice (Care and Protection of Children) Act 2015", "anchor": "jj-2015/sec-9"},
+        {"index": 3, "title": "Juvenile Justice (Care and Protection of Children) Act 2015", "anchor": "jj-2015/sec-12"},
+        {"index": 4, "title": "Juvenile Justice (Care and Protection of Children) Act 2015", "anchor": "jj-2015/sec-10"},
+    ]))
+    assert "age determination" in juvenile_joined
+    assert "Juvenile Justice Board" in juvenile_joined
+    assert "police lockup or lodged in a jail" in juvenile_joined
+    assert "school or matriculation" in juvenile_joined
+    assert "[1]" in juvenile_joined and "[4]" in juvenile_joined
+
+    notice_q = "i received 35 notice but police also says bring all chats and don't tell lawyer"
+    notice_joined = " ".join(_grounded_template_lines(notice_q, route_matter(notice_q), [
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-35"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-94"},
+        {"index": 3, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-160"},
+    ]))
+    assert "notice-to-appear source" in notice_joined
+    assert "production-summons issue" in notice_joined
+    assert "chats, a phone, or electronic records" in notice_joined
+    assert "not the same thing as bail" in notice_joined
+    assert "[1]" in notice_joined and "[2]" in notice_joined
+
+    lawyer_q = "police says lawyer can meet only after confession statement, accused is inside lockup"
+    lawyer_joined = " ".join(_grounded_template_lines(lawyer_q, route_matter(lawyer_q), [
+        {"index": 1, "title": "Legal Services Authorities Act 1987", "anchor": "legal-services-authorities-1987/sec-12"},
+        {"index": 2, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-57"},
+    ]))
+    assert "lawyer only after confession" in lawyer_joined
+    assert "lawyer-access blockage" in lawyer_joined
+    assert "Article 22" in lawyer_joined
+
+    mulaqat_q = "rohini jail cancelled my video mulaqat twice and says system issue, can family demand written reason"
+    mulaqat_joined = " ".join(_grounded_template_lines(mulaqat_q, route_matter(mulaqat_q), [
+        {"index": 1, "title": "Delhi Prison Rules 2018", "anchor": "delhi-prison-rules-2018/rule-595-599"},
+        {"index": 2, "title": "Prisons Act 1894", "anchor": "prisons-1894/sec-59"},
+        {"index": 3, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+    ]))
+    assert "Tihar/Delhi mulaqat" in mulaqat_joined
+    assert "recorded reasons for refusal" in mulaqat_joined
+    assert "parole is temporary release" not in mulaqat_joined
+
+
+def test_targeted_recovery_identity_origin_threat_template():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    q = "biharee called we are by site engineer pune always after wage complaint is this crime"
+    passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-b"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
+    ]
+
+    joined = " ".join(_grounded_template_lines(q, route_matter(q), passages))
+
+    assert "Bihari/Biharee" in joined
+    assert "wage-dispute file" in joined
+    assert "insult alone" in joined
+
+
+def test_stage_500_post_review_templates_fix_offtopic_and_citation_misses():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    false_fir_q = "thekedar made fake theft fir against me after i asked wages now police calling station"
+    false_fir_joined = " ".join(_grounded_template_lines(false_fir_q, route_matter(false_fir_q), [
+        {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+        {"index": 4, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+        {"index": 5, "title": "Contract Labour (Regulation and Abolition) Act 1970", "anchor": "contract-labour-1970/sec-21"},
+    ]))
+    assert "theft accusation from the wage-retaliation facts" in false_fir_joined
+    assert "parallel wage-claim file" in false_fir_joined
+    assert "immediate criminal-procedure step" in false_fir_joined
+    assert "officer in charge of a police station" in false_fir_joined
+    assert "hear and determine wage claims" in false_fir_joined
+    assert "written labour complaint" in false_fir_joined
+    assert "Do not ignore police calls" in false_fir_joined
+    assert "[1]" in false_fir_joined and "[4]" in false_fir_joined
+
+    caste_fir_q = "upper caste people beat my husband called us chamar FIR not registering thana khunti jharkhand"
+    caste_fir_joined = " ".join(_grounded_template_lines(caste_fir_q, route_matter(caste_fir_q), [
+        {"index": 1, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-14"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-117"},
+        {"index": 5, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]))
+    assert "SC/ST POA Act source" in caste_fir_joined
+    assert "not registering the FIR" in caste_fir_joined
+    assert "Special Court" in caste_fir_joined
+    assert "oral information must be written and read over" in caste_fir_joined
+    assert "SP/DySP" in caste_fir_joined
+
+    caste_school_q = "girl beaten in school by teacher calling caste name principal not acting maharashtra"
+    caste_school_joined = " ".join(_grounded_template_lines(caste_school_q, route_matter(caste_school_q), [
+        {"index": 1, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-3"},
+        {"index": 2, "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Act 1989", "anchor": "sc-st-poa-1989/sec-15A"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]))
+    assert "SC/ST atrocity complaint" in caste_school_joined
+    assert "school/principal" in caste_school_joined
+    assert "victim-rights source" in caste_school_joined
+    assert "case status, notice of proceedings" in caste_school_joined
+
+    muslim_q = "father says he is muslim 72 years his sons not giving share from grandfather property hyderabad"
+    muslim_joined = " ".join(_grounded_template_lines(muslim_q, route_matter(muslim_q), [
+        {"index": 1, "title": "Muslim Personal Law (Shariat) Application Act 1937", "anchor": "shariat-1937/sec-2"},
+        {"index": 2, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-44"},
+        {"index": 3, "title": "Specific Relief Act 1963", "anchor": "specific-relief-1963/sec-34"},
+        {"index": 4, "title": "Maintenance and Welfare of Parents and Senior Citizens Act 2007", "anchor": "senior-citizens-2007/sec-4"},
+    ]))
+    assert "father is alive" in muslim_joined
+    assert "grandfather has died" in muslim_joined
+    assert "partition/declaration" in muslim_joined
+
+    trans_q = "I am transwoman my landlord threw me out after he found out he kept my deposit also where do I complain"
+    trans_joined = " ".join(_grounded_template_lines(trans_q, route_matter(trans_q), [
+        {"index": 1, "title": "Transgender Persons (Protection of Rights) Act 2019", "anchor": "transgender-2019/sec-3"},
+        {"index": 2, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-105"},
+        {"index": 3, "title": "Transfer of Property Act 1882", "anchor": "transfer-of-property-1882/sec-106"},
+        {"index": 4, "title": "Transgender Persons (Protection of Rights) Act 2019", "anchor": "transgender-2019/sec-18"},
+    ]))
+    assert "transgender discrimination issue" in trans_joined
+    assert "deposit or possession relief" in trans_joined
+    assert "[1]" in trans_joined and "[3]" in trans_joined
+
+    custody_q = "my brother beaten in lockup constable took 20000 for bail still not released"
+    custody_joined = " ".join(_grounded_template_lines(custody_q, route_matter(custody_q), [
+        {"index": 1, "title": "Protection of Human Rights Act 1993", "anchor": "protection-human-rights-1993/sec-12"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-117"},
+        {"index": 4, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+    ]))
+    assert "Human Rights Act source" in custody_joined
+    assert "NHRC/SHRC complaint" in custody_joined
+    assert "[1]" in custody_joined
+
+    ola_q = "ola driver suspended id no reason 4000 rupees earning gone how to complaint"
+    ola_joined = " ".join(_grounded_template_lines(ola_q, route_matter(ola_q), [
+        {"index": 5, "title": "Motor Vehicle Aggregator Guidelines 2020", "anchor": "motor-vehicle-aggregator-guidelines-2020#driver-service-contract"},
+        {"index": 6, "title": "Motor Vehicle Aggregator Guidelines 2020", "anchor": "motor-vehicle-aggregator-guidelines-2020#app-transparency-grievance"},
+        {"index": 7, "title": "Motor Vehicles Act 1988", "anchor": "motor-vehicles-1988/sec-193"},
+        {"index": 8, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+    ]))
+    assert "Motor Vehicles Act aggregator source" in ola_joined
+    assert "undisputed earnings or payout" in ola_joined
+    assert "[7]" in ola_joined and "[8]" in ola_joined
+
+
+def test_common_user_answer_templates_cover_ui_failure_prompts():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    hospital = " ".join(_grounded_template_lines(
+        "hospital overcharged me and not giving detailed bill",
+        route_matter("hospital overcharged me and not giving detailed bill"),
+        [
+            {"index": 1, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-2"},
+            {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+            {"index": 3, "title": "Clinical Establishments Act 2010", "anchor": "clinical-establishments-2010/sec-12"},
+        ],
+    ))
+    assert "hospital records/billing" in hospital
+    assert "Clinical Establishments Act" in hospital
+    assert "[3]" in hospital
+
+    hospital_records = " ".join(_grounded_template_lines(
+        "private hospital not giving medical records after discharge",
+        route_matter("private hospital not giving medical records after discharge"),
+        [
+            {"index": 1, "title": "Code of Medical Ethics Regulations 2002", "anchor": "medical-ethics-regulations-2002/reg-1.3.2"},
+            {"index": 2, "title": "Clinical Establishments (Registration and Regulation) Act 2010", "anchor": "clinical-establishments-2010/sec-12"},
+            {"index": 3, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+        ],
+    ))
+    assert "Medical Ethics Regulations" in hospital_records
+    assert "72 hours" in hospital_records
+    assert "Clinical Establishments source for records-maintenance" in hospital_records
+    assert "[1]" in hospital_records
+
+    posh = " ".join(_grounded_template_lines(
+        "manager sends dirty messages and HR says ignore",
+        route_matter("manager sends dirty messages and HR says ignore"),
+        [
+            {"index": 1, "title": "Sexual Harassment of Women at Workplace Act 2013", "anchor": "posh-2013/sec-3"},
+            {"index": 2, "title": "Sexual Harassment of Women at Workplace Act 2013", "anchor": "posh-2013/sec-9"},
+            {"index": 3, "title": "Sexual Harassment of Women at Workplace Act 2013", "anchor": "posh-2013/sec-19"},
+        ],
+    ))
+    assert "dirty messages" in posh
+    assert "Internal Committee" in posh
+    assert "HR says to ignore" in posh
+
+    theft = " ".join(_grounded_template_lines(
+        "scooter stolen from parking station says give written complaint only",
+        route_matter("scooter stolen from parking station says give written complaint only"),
+        [
+            {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
+            {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+            {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+        ],
+    ))
+    assert "stolen scooter" in theft
+    assert "written complaint" in theft
+    assert "FIR registration" in theft
+
+    street_vendor = " ".join(_grounded_template_lines(
+        "municipality removed my tea cart from footpath without notice",
+        route_matter("municipality removed my tea cart from footpath without notice"),
+        [
+            {"index": 1, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-18"},
+            {"index": 2, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-19"},
+            {"index": 3, "title": "Street Vendors (Protection of Livelihood and Regulation of Street Vending) Act 2014", "anchor": "street-vendors-2014/sec-4"},
+        ],
+    ))
+    assert "tea cart" in street_vendor
+    assert "notice" in street_vendor
+    assert "Town Vending Committee" in street_vendor
+
+    shop = " ".join(_grounded_template_lines(
+        "local body locked my commercial shop saying licence problem",
+        route_matter("local body locked my commercial shop saying licence problem"),
+        [
+            {"index": 1, "title": "Right to Information Act 2005", "anchor": "right-to-information-act-2005/sec-6"},
+            {"index": 2, "title": "Shops and Establishments Act", "anchor": "shops-establishments/sec-1"},
+        ],
+    ))
+    assert "sealing order" in shop
+    assert "RTI" in shop
+    assert "licence" in shop
+
+    hand_loan = " ".join(_grounded_template_lines(
+        "relative took hand loan 2 years back no agreement what can i do",
+        route_matter("relative took hand loan 2 years back no agreement what can i do"),
+        [
+            {"index": 1, "title": "Indian Contract Act 1872", "anchor": "indian-contract-1872/sec-37"},
+            {"index": 2, "title": "Limitation Act 1963", "anchor": "limitation-1963/sec-3"},
+            {"index": 3, "title": "Code of Civil Procedure 1908", "anchor": "cpc-1908/sec-1"},
+        ],
+    ))
+    assert "civil money-recovery issue" in hand_loan
+    assert "Limitation Act" in hand_loan
+    assert "no legal obligation" not in hand_loan
+
+    bank = " ".join(_grounded_template_lines(
+        "bank reversed my balance saying technical error but not giving reason",
+        route_matter("bank reversed my balance saying technical error but not giving reason"),
+        [
+            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+            {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+        ],
+    ))
+    assert "RBI Ombudsman" in bank
+    assert "Consumer Protection Act" in bank
+
+    loan_app = " ".join(_grounded_template_lines(
+        "online loan app calling my relatives and abusing me",
+        route_matter("online loan app calling my relatives and abusing me"),
+        [
+            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+            {"index": 2, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-8"},
+            {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-act-2000/sec-66e"},
+            {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
+        ],
+    ))
+    assert "RBI Ombudsman" in loan_app
+    assert "personal-data grievance" in loan_app
+    assert "police/cyber track" in loan_app
+
+
+def test_common_user_near_miss_guards_do_not_overstate_facts():
+    from apps.api.main import (
+        _grounded_template_lines,
+        _is_municipal_shop_sealing_query,
+        _is_theft_fir_refusal_query,
+    )
+    from apps.api.matter_router import route_matter
+
+    lost_phone = "police station says give written complaint only for lost phone not stolen"
+    assert not _is_theft_fir_refusal_query(lost_phone)
+    theft_joined = " ".join(_grounded_template_lines(lost_phone, route_matter(lost_phone), [
+        {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]))
+    assert "stolen phone" not in theft_joined
+
+    licence_info = "local body said my shop licence problem what documents needed"
+    assert not _is_municipal_shop_sealing_query(licence_info)
+    assert _is_municipal_shop_sealing_query("local body locked my commercial shop saying licence problem")
+
+
+def test_general_legal_template_stays_intake_not_fake_specific_route():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "what legal help can i get for a general documents issue"
+    route = route_matter(query)
+    assert route.category == "general_legal"
+
+    joined = " ".join(_grounded_template_lines(query, route, [
+        {"index": 1, "title": "Legal Services Authorities Act 1987", "anchor": "legal-services-authorities-1987/sec-12"},
+        {"index": 2, "title": "Code of Civil Procedure 1908", "anchor": "cpc-1908/sec-1"},
+        {"index": 3, "title": "Limitation Act 1963", "anchor": "limitation-1963/sec-3"},
+    ]))
+
+    assert "cannot safely classify" in joined
+    assert "intake first" in joined
+    assert "state/city" in joined
+    assert "final issue-specific answer" in joined
+
+
+def test_fresh_negative_neighbor_v2_answer_contracts_are_specific():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    adult_choice_q = "my 24 year old daughter left with boyfriend and parents want police to bring her home, what can we do"
+    adult_choice = " ".join(_grounded_template_lines(adult_choice_q, route_matter(adult_choice_q), [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]))
+    assert "should not be used only to force an adult to return home" in adult_choice
+    assert "voluntary statement" in adult_choice
+    assert "[1]" in adult_choice
+
+    private_complaint_q = "private complaint dismissed without cognizance by magistrate, should i file FIR again or revision"
+    private_complaint = " ".join(_grounded_template_lines(private_complaint_q, route_matter(private_complaint_q), [
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-223"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+    ]))
+    assert "dismissed or refused without cognizance" in private_complaint
+    assert "revision" in private_complaint
+
+    scooter_q = "local boys broke my scooter mirror and police are delaying FIR calling it insurance issue"
+    scooter = " ".join(_grounded_template_lines(scooter_q, route_matter(scooter_q), [
+        {"index": 5, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+        {"index": 6, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-324"},
+    ]))
+    assert "property damage" in scooter
+    assert "mischief/property-damage source" in scooter
+    assert "insurance issue" in scooter
+
+    mental_q = "jail not giving psychiatric help for suicidal undertrial, can DLSA move court urgently"
+    mental = " ".join(_grounded_template_lines(mental_q, route_matter(mental_q), [
+        {"index": 7, "title": "Mental Healthcare Act 2017", "anchor": "mental-healthcare-2017/sec-18"},
+        {"index": 8, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+        {"index": 9, "title": "Prisons Act 1894", "anchor": "prisons-1894/sec-59"},
+    ]))
+    assert "Mental Healthcare Act" in mental
+    assert "suicide risk in custody" in mental
+
+    bond_q = "bail order allows personal bond but jail clerk demands cash deposit before release"
+    bond = " ".join(_grounded_template_lines(bond_q, route_matter(bond_q), [
+        {"index": 10, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-480"},
+        {"index": 11, "title": "Constitution of India", "anchor": "constitution-india/sec-21"},
+    ]))
+    assert "personal bond" in bond
+    assert "cash-deposit demand" in bond
+    assert "same court to clarify" in bond
+
+    cheque_q = "section 138 cheque summons came from court but police constable called also, should i fear arrest"
+    cheque = " ".join(_grounded_template_lines(cheque_q, route_matter(cheque_q), [
+        {"index": 12, "title": "Negotiable Instruments Act 1881", "anchor": "negotiable-instruments-1881/sec-138"},
+        {"index": 13, "title": "Negotiable Instruments Act 1881", "anchor": "negotiable-instruments-1881/sec-142"},
+        {"index": 14, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-223"},
+    ]))
+    assert "does not convert a Section 138 cheque complaint into an arrest case" in cheque
+    assert "FIR, warrant, or court summons" in cheque

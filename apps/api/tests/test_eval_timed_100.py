@@ -5,12 +5,18 @@ from pathlib import Path
 
 from scripts.eval_timed_100 import (
     answer_quality_flags,
+    classify_required_source_requirement,
+    citation_integrity_metrics,
+    cited_source_order_metrics,
     expected_act_cited_hit,
     expected_act_hit,
     expected_act_keys,
     expected_procedure_anchor_coverage,
+    flatten_row,
     jsonl_dumps,
     load_eval_rows,
+    product_pass,
+    required_source_coverage,
 )
 
 
@@ -72,10 +78,41 @@ def test_expected_act_aliases_cover_human_like_mixed_hints():
         "ed tech company director received PMLA summons": "PMLA",
         "Rajasthan Shops & Commercial Establishments Act": "Shops and Establishments Act",
         "Article 21 handcuffing safeguards + Prem Shankar Shukla v Delhi Admin 1980": "Article 21",
+        "AP Rights in Land and Pattadar Pass Books Act 1971 / state Record of Rights Act": "AP Rights in Land and Pattadar Pass Books Act",
     }
 
     for hint, expected in hints.items():
         assert expected in expected_act_keys(hint)
+
+
+def test_generic_tribal_land_hint_does_not_require_unknown_state_transfer_act():
+    hint = "Scheduled Areas Land Transfer Regulation + PESA + Constitution"
+
+    generic = expected_act_keys(
+        hint,
+        "urgent tribal family land transferred by moneylender using blank paper; land papers and village witness names are with me; which office or court first",
+    )
+    assert generic == ["Constitution"]
+
+    jharkhand = expected_act_keys(
+        hint,
+        "tribal land in Jharkhand transferred to moneylender using blank paper which office first",
+    )
+    assert "Scheduled Areas Land Transfer Regulation" in jharkhand
+    assert "PESA" not in jharkhand
+
+    scheduled_area = expected_act_keys(
+        hint,
+        "agency area tribal land transferred using blank paper without gram sabha what forum first",
+    )
+    assert scheduled_area == ["Constitution", "PESA"]
+
+    ui_hint = "Schedule V Constitution / state Scheduled Areas Land Transfer Regulation"
+    ui_generic = expected_act_keys(
+        ui_hint,
+        "sir tribal land sold to non tribal by uncle without our consent is it legal where to go",
+    )
+    assert ui_generic == ["Constitution"]
 
 
 def test_expected_act_hit_requires_all_recognized_required_acts():
@@ -116,6 +153,1260 @@ def test_expected_act_cited_hit_requires_used_citation_not_just_passage_presence
         [],
         [{"text": "Check the criminal breach-of-trust provision [2].", "status": "ok"}],
     ) is True
+
+
+def test_citation_integrity_flags_unknown_indices():
+    metrics = citation_integrity_metrics(
+        [{"index": 1, "title": "Consumer Protection Act 2019"}],
+        [],
+        [{"text": "Use the consumer route [1]. Do not cite a missing source [9]."}],
+    )
+
+    assert metrics["cited_indices"] == [1, 9]
+    assert metrics["known_source_indices"] == [1]
+    assert metrics["unknown_citation_indices"] == [9]
+    assert metrics["citation_integrity_ok"] is False
+
+
+def test_visible_source_gap_is_quality_flag_and_product_failure():
+    row = {
+        "answer_text": "**What you can do next**\n- Ask for the exact source [1].",
+        "source_gap_visible": True,
+        "refused": False,
+        "error": None,
+        "relevance_verdict": "ok",
+        "legal_safety": {"hard_fail": False},
+        "expected_act_cited_hit": True,
+        "unknown_citation_count": 0,
+        "route_required_sources_missing": [],
+        "ok_sentences": 1,
+    }
+
+    assert "visible_source_gap" in answer_quality_flags(row)
+    assert product_pass(row) is False
+
+
+def test_required_source_coverage_separates_found_and_missing_route_sources():
+    coverage = required_source_coverage(
+        [
+            "Reserve Bank Integrated Ombudsman Scheme",
+            "Street Vendors Act 2014",
+            "Transfer of Property Act 1882 where gift or property-transfer cancellation is involved",
+            "state maintenance tribunal rules",
+            "bank statement, transaction reference, and written bank grievance",
+        ],
+        [{"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "source_type": "bare_act"}],
+        [],
+        query="in 2023 police gave section 160 notice asking woman to come station as witness",
+    )
+
+    assert coverage[0]["found"] is True
+    assert coverage[0]["requirement_type"] == "must_cite_authority"
+    assert coverage[0]["matched_source"]["index"] == 1
+    assert coverage[1]["found"] is False
+    assert coverage[1]["requirement_type"] == "must_cite_authority"
+    assert coverage[2]["found"] is None
+    assert coverage[2]["skipped"] is True
+    assert coverage[2]["requirement_type"] == "conditional_authority"
+    assert coverage[2]["skip_reason"] == "conditional_authority_not_triggered_by_query"
+    assert coverage[3]["found"] is None
+    assert coverage[3]["skipped"] is True
+    assert coverage[3]["requirement_type"] == "procedural_or_local_source"
+    assert coverage[3]["skip_reason"] == "procedural_or_local_requirement"
+    assert coverage[4]["found"] is None
+    assert coverage[4]["skipped"] is True
+    assert coverage[4]["skip_reason"] == "evidence_or_fact_requirement"
+
+    triggered_tpa = required_source_coverage(
+        ["Transfer of Property Act 1882 where gift or property-transfer cancellation is involved"],
+        [],
+        [],
+        query="mother gave land by gift deed and older son wants cancellation",
+    )
+    assert triggered_tpa[0]["found"] is False
+    assert triggered_tpa[0]["requirement_type"] == "conditional_authority"
+
+    coowner_coverage = required_source_coverage(
+        ["Transfer of Property Act 1882 for co-owner transfer and joint purchase/share framing"],
+        [
+            {
+                "index": 1,
+                "title": "Transfer of Property Act 1882",
+                "anchor": "transfer-of-property-1882/sec-45",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="in 2023 police gave section 160 notice asking woman to come station as witness",
+    )
+    assert coowner_coverage[0]["found"] is True
+    assert coowner_coverage[0]["matched_source"]["index"] == 1
+
+
+def test_required_source_coverage_requires_it_act_67b_for_child_csam():
+    missing = required_source_coverage(
+        ["Information Technology Act 2000 section 67B for child sexual-image electronic publication"],
+        [
+            {
+                "index": 1,
+                "title": "Information Technology Act 2000",
+                "anchor": "it-2000/sec-66E",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="in 2023 police gave section 160 notice asking woman to come station as witness",
+    )
+    found = required_source_coverage(
+        ["Information Technology Act 2000 section 67B for child sexual-image electronic publication"],
+        [
+            {
+                "index": 2,
+                "title": "Information Technology Act 2000",
+                "anchor": "it-2000/sec-67B",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+    )
+
+    assert missing[0]["found"] is False
+    assert found[0]["found"] is True
+    assert found[0]["matched_source"]["index"] == 2
+
+
+def test_required_source_coverage_recognizes_cited_route_source_aliases():
+    coverage = required_source_coverage(
+        [
+            "CGST Act 2017 / GST registration rules for GST registration, ITC, notice, and show-cause issues",
+            "Code on Wages / Payment of Wages law",
+            "Right to Information Act 2005 for written cancellation/status reasons and first appeal",
+            "Aadhaar Act 2016 only for the identity/authentication part",
+            "Article 21 and Article 22 lawyer-access safeguards",
+            "exact offence section and consent/permission status before treating a criminal case as compoundable",
+            "Indian Contract Act 1872 / appointment letter or service-rule clause for notice-period term",
+            "Copyright Act 1957 infringement, exceptions/fair dealing, and civil remedies",
+        ],
+        [
+            {
+                "index": 1,
+                "title": "Central Goods and Services Tax Act 2017",
+                "anchor": "cgst-2017/sec-16",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Code on Wages 2019",
+                "anchor": "code-on-wages-2019/sec-45",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 3,
+                "title": "Right to Information Act 2005",
+                "anchor": "rti-2005/sec-19-b",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 4,
+                "title": "Aadhaar (Targeted Delivery of Financial and Other Subsidies, Benefits and Services) Act 2016",
+                "anchor": "aadhaar-2016/sec-59",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 5,
+                "title": "Constitution of India",
+                "anchor": "constitution-india/sec-22",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 6,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-359-a",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 7,
+                "title": "Indian Contract Act 1872",
+                "anchor": "indian-contract-1872/sec-37",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 8,
+                "title": "Copyright Act 1957",
+                "anchor": "copyright-1957/sec-51",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+    )
+
+    assert [item["found"] for item in coverage[:7]] == [True, True, True, True, True, True, True]
+    assert coverage[7]["found"] is False
+
+    copyright_coverage = required_source_coverage(
+        ["Copyright Act 1957 infringement, exceptions/fair dealing, and civil remedies"],
+        [
+            {
+                "index": 8,
+                "title": "Copyright Act 1957",
+                "anchor": "copyright-1957/sec-51",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 9,
+                "title": "Copyright Act 1957",
+                "anchor": "copyright-1957/sec-52-k",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 10,
+                "title": "Copyright Act 1957",
+                "anchor": "copyright-1957/sec-55",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+    )
+    assert copyright_coverage[0]["found"] is True
+    assert copyright_coverage[0]["matched_source"]["title"] == "Copyright Act 1957 composite route source"
+
+    habeas_coverage = required_source_coverage(
+        ["Article 21 and Article 226 constitutional liberty / habeas corpus route"],
+        [
+            {
+                "index": 11,
+                "title": "Constitution of India",
+                "anchor": "constitution-india/sec-21",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 12,
+                "title": "Constitution of India",
+                "anchor": "constitution-india/sec-226",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+    )
+    assert habeas_coverage[0]["found"] is True
+    assert habeas_coverage[0]["matched_source"]["title"] == "Constitution composite article source"
+
+
+def test_required_source_coverage_recognizes_common_user_route_authorities():
+    coverage = required_source_coverage(
+        [
+            "BNSS/CrPC complaint procedure",
+            "BNSS 2023 / CrPC 1973 complaint/FIR procedure",
+            "Consumer Protection Act 2019 for product defect, warranty, repair, return, refund, or service deficiency",
+            "Industrial Disputes Act",
+            "Customs Act 1962 for import/export, ICEGATE, duty, valuation, SVB, drawback, or classification issues",
+            "NCLT Rules / IBC application forms",
+            "NCLAT rules, forms, fees, certified-copy and limitation facts",
+            "FSSAI Licensing and Registration Regulations",
+            "Motor Vehicles Act 1988 for driving licence, challan, permit, and traffic enforcement",
+            "Public Gambling Act 1867 for common gaming-house / game-of-skill framing",
+            "Legal Services Authorities Act for DLSA assistance",
+            "Hindu Succession Act / applicable personal succession law for heirship and shares",
+            "constitutional liberty and medical/vulnerability bail principles",
+            "constitutional reproductive autonomy and privacy precedents",
+            "court permission and offence-compoundability limits must be checked from the exact section",
+            "BNSS 2023 / CrPC 1973 FIR, statement, and medical-examination procedure",
+        ],
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-223@2024-07-01",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-173-b@2024-07-01",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 3,
+                "title": "Consumer Protection Act 2019",
+                "anchor": "consumer-protection-2019/sec-35@2021-09-17",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 4,
+                "title": "Industrial Disputes Act 1947",
+                "anchor": "industrial-disputes-1947/sec-25F",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 5,
+                "title": "Customs Act 1962",
+                "anchor": "customs-1962/sec-128",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 6,
+                "title": "National Company Law Tribunal Rules 2016",
+                "anchor": "nclt-rules-2016/rule-6",
+                "source_type": "rule",
+            },
+            {
+                "index": 7,
+                "title": "National Company Law Appellate Tribunal Rules 2016",
+                "anchor": "nclat-rules-2016/rule-22",
+                "source_type": "rule",
+            },
+            {
+                "index": 8,
+                "title": "Food Safety and Standards (Licensing and Registration of Food Businesses) Regulations 2011",
+                "anchor": "fssai-licensing-2011/reg-2-1",
+                "source_type": "regulation",
+            },
+            {
+                "index": 9,
+                "title": "Motor Vehicles Act 1988",
+                "anchor": "motor-vehicles-1988/sec-3",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 10,
+                "title": "Public Gambling Act 1867",
+                "anchor": "public-gambling-1867/sec-12",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 11,
+                "title": "Legal Services Authorities Act 1987",
+                "anchor": "legal-services-authorities-1987/sec-12",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 12,
+                "title": "Hindu Succession Act 1956 (with 2005 amendment)",
+                "anchor": "hindu-succession-1956/sec-15",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 13,
+                "title": "Constitution of India",
+                "anchor": "constitution-india/sec-21",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 14,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-183",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 15,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-359",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+    )
+
+    assert [item["found"] for item in coverage] == [
+        True, True, True, True, True, True, True, True,
+        True, True, True, True, True, False, True, True,
+    ]
+
+    bnss_quashing = required_source_coverage(
+        ["BNSS 2023 section 528 for current High Court inherent-powers/quashing framing"],
+        [
+            {
+                "index": 13,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-528@2024-07-01",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+    )
+    assert bnss_quashing[0]["found"] is True
+    assert bnss_quashing[0]["matched_source"]["index"] == 13
+
+    notice_coverage = required_source_coverage(
+        [
+            "BNSS 2023 section 35 police notice/appearance safeguards for current matters",
+            "CrPC 1973 section 160 witness-attendance route for pre-1 July 2024 matters where applicable",
+        ],
+        [
+            {
+                "index": 13,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-35-a@2024-07-01",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 14,
+                "title": "Code of Criminal Procedure 1973",
+                "anchor": "crpc-1973/sec-160",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+        query="in 2023 police gave section 160 notice asking woman to come station as witness",
+    )
+    assert notice_coverage[0]["found"] is True
+    assert notice_coverage[0]["matched_source"]["index"] == 13
+    assert notice_coverage[1]["found"] is True
+    assert notice_coverage[1]["matched_source"]["index"] == 14
+
+    arrest_coverage = required_source_coverage(
+        [
+            "constitutional liberty safeguards under Articles 21 and 22",
+            "BNSS 2023 arrest and 24-hour production safeguards for current matters",
+        ],
+        [
+            {
+                "index": 15,
+                "title": "Constitution of India",
+                "anchor": "constitution-india/sec-21",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 16,
+                "title": "Constitution of India",
+                "anchor": "constitution-india/sec-22",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 17,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-58@2024-07-01",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+    )
+    assert arrest_coverage[0]["found"] is True
+    assert arrest_coverage[0]["matched_source"]["title"] == "Constitution composite article source"
+    assert arrest_coverage[1]["found"] is True
+    assert arrest_coverage[1]["matched_source"]["index"] == 17
+
+    delhi_prison_coverage = required_source_coverage(
+        ["state prison rules / prison manual for interviews, visits, and permitted books"],
+        [
+            {
+                "index": 18,
+                "title": "Delhi Prison Rules 2018",
+                "anchor": "delhi-prison-rules-2018/rule-613-616",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="tihar jail mulaqat only 30 min once a week",
+    )
+    assert delhi_prison_coverage[0]["found"] is True
+    assert delhi_prison_coverage[0]["matched_source"]["index"] == 18
+
+    non_delhi_prison_coverage = required_source_coverage(
+        ["state prison rules / prison manual for interviews, visits, and permitted books"],
+        [
+            {
+                "index": 18,
+                "title": "Delhi Prison Rules 2018",
+                "anchor": "delhi-prison-rules-2018/rule-613-616",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="pune yerwada jail mulaqat denied wife wants to meet husband",
+    )
+    assert non_delhi_prison_coverage[0]["found"] is False
+
+
+def test_required_source_requirement_classification_keeps_diagnostics_actionable():
+    assert classify_required_source_requirement("Consumer Protection Act 2019") == (
+        "must_cite_authority",
+        None,
+    )
+    assert classify_required_source_requirement(
+        "POCSO Act 2012 only where the offence alleged is POCSO"
+    ) == ("must_cite_authority", None)
+    assert classify_required_source_requirement(
+        "BNSS 2023 / CrPC 1973 bail provisions based on incident date"
+    ) == ("must_cite_authority", None)
+    assert classify_required_source_requirement(
+        "state maintenance tribunal rules"
+    ) == ("procedural_or_local_source", "procedural_or_local_requirement")
+    assert classify_required_source_requirement(
+        "state education rules"
+    ) == ("procedural_or_local_source", "procedural_or_local_requirement")
+    assert classify_required_source_requirement(
+        "Consumer Protection Act 2019 for medical service deficiency and consumer-forum complaint"
+    ) == ("must_cite_authority", None)
+    assert classify_required_source_requirement(
+        "Reserve Bank Integrated Ombudsman Scheme for RBI Ombudsman/CMS forum complaint"
+    ) == ("must_cite_authority", None)
+    assert classify_required_source_requirement(
+        "bank statement and transaction reference"
+    ) == ("fact_or_document_requirement", "evidence_or_fact_requirement")
+
+
+def test_required_source_coverage_accepts_broad_gift_deed_and_free_consent_sources():
+    coverage = required_source_coverage(
+        [
+            "Transfer of Property Act 1882 where gift or property-transfer cancellation is involved",
+            "Indian Contract Act 1872 where consent, coercion, undue influence, or authority is disputed",
+            "Registration Act / civil court procedure where document validity is disputed",
+            "Specific Relief Act 1963 where cancellation/declaration/injunction is needed",
+            "BNS 2023 / IPC 1860 cheating, forgery, or false-document provisions based on incident date",
+            "BNSS 2023 / CrPC 1973 complaint and investigation procedure based on incident date",
+        ],
+        [
+            {
+                "index": 1,
+                "title": "Transfer of Property Act 1882",
+                "anchor": "transfer-of-property-1882/sec-122",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Registration Act 1908",
+                "anchor": "registration-1908/sec-49",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 3,
+                "title": "Specific Relief Act 1963",
+                "anchor": "specific-relief-1963/sec-31",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 4,
+                "title": "Indian Contract Act 1872",
+                "anchor": "indian-contract-1872/sec-19-a",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 5,
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-336",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 6,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-173-a",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 7,
+                "title": "Code of Criminal Procedure 1973",
+                "anchor": "crpc-1973/sec-200",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+        query="mother thumb impression blank paper produced as gift deed",
+    )
+
+    assert [item["found"] for item in coverage] == [True, True, True, True, True, True]
+
+
+def test_required_source_coverage_skips_untriggered_conditional_authorities():
+    coverage = required_source_coverage(
+        [
+            "BNSS 2023 / CrPC 1973 only if the case-status issue is in a criminal case",
+            "Legal Services Authorities Act 1987 where help is needed",
+            "Constitution of India Article 32 for Supreme Court fundamental-right enforcement where applicable",
+            "BOCW Act 1996 / Factories Act 1948 where applicable",
+            "Registration Act only if document registration or admissibility is disputed",
+            "Code on Wages only if salary, full-and-final, leave encashment, or wage dues are withheld",
+        ],
+        [],
+        [],
+        query="civil suit court fee 25 lakh recovery fixed or ad valorem",
+    )
+
+    assert [item["skipped"] for item in coverage] == [True, True, True, True, True, True]
+    assert [item["skip_reason"] for item in coverage] == [
+        "conditional_authority_not_triggered_by_query",
+    ] * 6
+
+
+def test_required_source_coverage_does_not_trigger_family_personal_law_for_spouse_violence_only():
+    coverage = required_source_coverage(
+        [
+            "family law statute by religion",
+            "BNSS/CrPC maintenance provisions where applicable",
+        ],
+        [],
+        [],
+        query="my husband is slapping me and his parents threw me out",
+    )
+
+    assert [item["skipped"] for item in coverage] == [True, True]
+
+
+def test_required_source_coverage_triggers_family_and_maintenance_only_on_matching_relief():
+    family = required_source_coverage(
+        ["family law statute by religion"],
+        [],
+        [],
+        query="my husband lied before marriage about job can I annul marriage",
+    )
+    maintenance = required_source_coverage(
+        ["BNSS/CrPC maintenance provisions where applicable"],
+        [],
+        [],
+        query="wife and child maintenance case husband not paying monthly support",
+    )
+
+    assert family[0].get("skipped") is not True
+    assert family[0]["found"] is False
+    assert maintenance[0].get("skipped") is not True
+    assert maintenance[0]["found"] is False
+
+
+def test_required_source_coverage_skips_untriggered_offence_source_for_procedure_only_bail():
+    missing = required_source_coverage(
+        [
+            "BNSS 2023 / CrPC 1973 bail provisions based on incident date",
+            "BNS 2023 / IPC 1860 offence provisions where relevant",
+            "Legal Services Authorities Act 1987 where help is needed",
+        ],
+        [],
+        [],
+        query="brother arrested six months no chargesheet legal aid can bail be filed",
+    )
+
+    assert [item["requirement_type"] for item in missing] == [
+        "conditional_authority",
+        "conditional_authority",
+        "conditional_authority",
+    ]
+    assert [item["found"] for item in missing] == [False, None, False]
+    assert [item.get("skipped") for item in missing] == [None, True, None]
+
+
+def test_required_source_coverage_is_bns_section_family_aware():
+    required = ["BNS 2023 / IPC 1860 provisions where physical assault, stalking, or threats are involved"]
+
+    wrong = required_source_coverage(
+        required,
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-356",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="boss touched my back in office and threatened me",
+    )
+    assert wrong[0]["found"] is False
+
+    right = required_source_coverage(
+        required,
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-74",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="boss touched my back in office and threatened me",
+    )
+    assert right[0]["found"] is True
+
+
+def test_required_source_coverage_requires_matching_bnss_crpc_section_family():
+    wrong_section = required_source_coverage(
+        ["BNSS 2023 / CrPC 1973 bail provisions based on incident date"],
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-173",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="brother arrested six months no chargesheet can bail be filed",
+    )
+    both_regimes = required_source_coverage(
+        ["BNSS 2023 / CrPC 1973 bail provisions based on incident date"],
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-480",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Code of Criminal Procedure 1973",
+                "anchor": "crpc-1973/sec-439",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+        query="brother arrested six months no chargesheet can bail be filed",
+    )
+
+    assert wrong_section[0]["found"] is False
+    assert both_regimes[0]["found"] is True
+    assert both_regimes[0]["matched_source"]["source_type"] == "aggregate"
+
+    search_seizure = required_source_coverage(
+        ["BNSS 2023 / CrPC 1973 search, seizure, arrest, bail, and complaint procedure based on incident date"],
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-483@2024-07-01",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Code of Criminal Procedure 1973",
+                "anchor": "crpc-1973/sec-165",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+        query="pls tell drug dealer in goa caught with mdma in my bag he gave 200mg punishment need lawyer or police",
+    )
+    assert search_seizure[0]["found"] is True
+
+    arrest_only = required_source_coverage(
+        ["BNSS/CrPC bail and arrest safeguards where relevant"],
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-480",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="police arrested my son last night and did not produce him in 24 hours",
+    )
+    assert arrest_only[0]["found"] is False
+
+
+def test_required_source_coverage_accepts_jj_adoption_sections_without_bare_papers_trigger():
+    skipped = required_source_coverage(
+        ["Juvenile Justice Act 2015 and adoption regulations where adoption papers are missing"],
+        [],
+        [],
+        query="child passport papers are stuck with father for travel",
+    )
+    assert skipped[0]["skipped"] is True
+    assert skipped[0]["found"] is None
+
+    found = required_source_coverage(
+        ["Juvenile Justice Act 2015 and adoption regulations where adoption papers are missing"],
+        [
+            {
+                "index": 1,
+                "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+                "anchor": "jj-2015/sec-56",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="we adopted child from sister but no papers now real parents want him back",
+    )
+    assert found[0]["found"] is True
+
+    adopting_missing = required_source_coverage(
+        ["Juvenile Justice Act 2015 and adoption regulations where adoption papers are missing"],
+        [],
+        [],
+        query="we are adopting child from sister no papers now real parents object custody",
+    )
+    assert adopting_missing[0].get("skipped") is not True
+    assert adopting_missing[0]["found"] is False
+
+
+def test_required_source_coverage_does_not_use_token_fallback_for_dual_regime_source():
+    coverage = required_source_coverage(
+        ["BNSS 2023 / CrPC 1973 bail provisions based on incident date"],
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-173",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Code of Criminal Procedure 1973",
+                "anchor": "crpc-1973/sec-154",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+        query="brother arrested six months no chargesheet can bail be filed",
+    )
+
+    assert coverage[0]["found"] is False
+    assert coverage[0]["match_score"] == 0.0
+
+
+def test_stage_e9b_eval_accepts_chargesheet_procedure_source_without_event_date():
+    coverage = required_source_coverage(
+        [
+            "BNSS 2023 / CrPC 1973 charge-sheet, summons, bail, discharge, and court procedure based on incident date"
+        ],
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-193-a@2024-07-01",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="can u tell delhi police chargesheet fr tweet calling cm corrupt is this 356 case what can i do",
+    )
+
+    assert coverage[0]["found"] is True
+
+
+def test_stage_e9b_eval_skips_untriggered_bocw_cess_and_criminal_fraud_sources():
+    coverage = required_source_coverage(
+        [
+            "BOCW Cess Act / state welfare-board cess records where cess collection or fake registers are alleged",
+            "BNS/BNSS or IPC/CrPC where cheating, forgery, or false registers are alleged",
+        ],
+        [],
+        [],
+        query="please help how to get bocw card mumbai i work construction 8 years no card no benefit any remedy",
+    )
+
+    assert [item.get("skipped") for item in coverage] == [True, True]
+
+
+def test_required_source_coverage_accepts_coherent_bns_bnss_or_ipc_crpc_pair():
+    required = ["BNS/BNSS or IPC/CrPC based on incident date"]
+    current_sources = [
+        {
+            "index": 1,
+            "title": "Bharatiya Nyaya Sanhita 2023",
+            "anchor": "bns-2023/sec-318",
+            "source_type": "bare_act",
+        },
+        {
+            "index": 2,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-173",
+            "source_type": "bare_act",
+        },
+    ]
+    old_sources = [
+        {
+            "index": 1,
+            "title": "Indian Penal Code 1860",
+            "anchor": "ipc-1860/sec-420",
+            "source_type": "bare_act",
+        },
+        {
+            "index": 2,
+            "title": "Code of Criminal Procedure 1973",
+            "anchor": "crpc-1973/sec-154",
+            "source_type": "bare_act",
+        },
+    ]
+
+    current = required_source_coverage(
+        required,
+        current_sources,
+        [],
+        query="got 8 lakh phonepe fraud police not filing fir",
+    )
+    old = required_source_coverage(
+        required,
+        old_sources,
+        [],
+        query="incident in 2023 phonepe fraud police not filing fir",
+    )
+    wrong_regime = required_source_coverage(
+        required,
+        current_sources,
+        [],
+        query="incident in 2023 phonepe fraud police not filing fir",
+    )
+
+    assert current[0]["found"] is True
+    assert current[0]["matched_source"]["source_type"] == "aggregate"
+    assert old[0]["found"] is True
+    assert old[0]["matched_source"]["source_type"] == "aggregate"
+    assert wrong_regime[0]["found"] is False
+
+
+def test_required_source_coverage_rejects_partial_bns_bnss_or_ipc_crpc_pair():
+    coverage = required_source_coverage(
+        ["BNS/BNSS or IPC/CrPC based on incident date"],
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-318",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="got 8 lakh phonepe fraud police not filing fir",
+    )
+
+    assert coverage[0]["found"] is False
+
+
+def test_required_source_coverage_rejects_composite_pair_with_wrong_offence_section_family():
+    required = ["BNS/BNSS or IPC/CrPC based on incident date"]
+
+    wrong_offence = required_source_coverage(
+        required,
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-356",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-173",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+        query="auto driver threw acid on my face what FIR section applies",
+    )
+    matching_offence = required_source_coverage(
+        required,
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-124",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-173",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+        query="auto driver threw acid on my face what FIR section applies",
+    )
+
+    assert wrong_offence[0]["found"] is False
+    assert matching_offence[0]["found"] is True
+    assert matching_offence[0]["matched_source"]["source_type"] == "aggregate"
+
+
+def test_required_source_coverage_does_not_treat_bnss_as_bns_or_new_law_as_old_regime():
+    required = ["BNS/BNSS or IPC/CrPC based on incident date"]
+
+    only_bnss = required_source_coverage(
+        required,
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-173",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="phonepe fraud police not filing fir",
+    )
+    old_fact_with_new_sources = required_source_coverage(
+        required,
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-318",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-173",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+        query="incident in 2022 phonepe fraud police not filing fir",
+    )
+
+    assert only_bnss[0]["found"] is False
+    assert old_fact_with_new_sources[0]["found"] is False
+
+
+def test_required_source_coverage_enforces_single_regime_crpc_conditional_source():
+    coverage = required_source_coverage(
+        ["CrPC 1973 section 160 witness attendance safeguards where applicable"],
+        [],
+        [],
+        query="police gave section 160 notice asking woman to come station as witness",
+    )
+
+    assert coverage[0]["requirement_type"] == "conditional_authority"
+    assert coverage[0]["found"] is False
+
+
+def test_required_source_coverage_requires_pmla_sc_precedent_when_named():
+    required = ["Supreme Court PMLA bail/arrest precedents"]
+    statute_only = required_source_coverage(
+        required,
+        [
+            {
+                "index": 1,
+                "title": "Prevention of Money Laundering Act 2002",
+                "anchor": "pmla-2002/sec-45",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="pmla twin condition bail how to argue not guilty",
+    )
+    precedent_present = required_source_coverage(
+        required,
+        [
+            {
+                "index": 2,
+                "title": "VIJAY MADANLAL CHOUDHARY versus UNION OF INDIA PMLA",
+                "anchor": "2022-insc-757#para-401",
+                "source_type": "sc_judgment",
+            }
+        ],
+        [],
+        query="pmla twin condition bail how to argue not guilty",
+    )
+
+    assert statute_only[0]["found"] is False
+    assert precedent_present[0]["found"] is True
+
+
+def test_required_source_coverage_requires_both_pesa_fra_and_80c_80ccd():
+    pesa_fra = required_source_coverage(
+        ["PESA Act / Forest Rights Act where Gram Sabha or forest-rights facts apply"],
+        [
+            {
+                "index": 1,
+                "title": "Scheduled Tribes and Other Traditional Forest Dwellers (Recognition of Forest Rights) Act 2006",
+                "anchor": "fra-2006/sec-5",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="gond woman forest officer not giving IFR title dindori gram sabha",
+    )
+    income = required_source_coverage(
+        ["Income Tax Act 1961 sections 80C and 80CCD deduction sources"],
+        [
+            {
+                "index": 1,
+                "title": "Income-tax Act 1961",
+                "anchor": "income-tax-1961/sec-80C",
+                "source_type": "bare_act",
+            }
+        ],
+        [],
+        query="can i claim 80c and 80ccd nps together",
+    )
+
+    assert pesa_fra[0]["found"] is False
+    assert income[0]["found"] is False
+
+
+def test_required_source_coverage_anchor_matching_does_not_prefix_match():
+    coverage = required_source_coverage(
+        ["BNSS 2023 / CrPC 1973 arrest, notice, bail, and complaint procedure based on incident date"],
+        [
+            {
+                "index": 1,
+                "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                "anchor": "bnss-2023/sec-359",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 2,
+                "title": "Code of Criminal Procedure 1973",
+                "anchor": "crpc-1973/sec-160",
+                "source_type": "bare_act",
+            },
+        ],
+        [],
+        query="police notice came after arrest threat",
+    )
+
+    assert coverage[0]["found"] is False
+
+
+def test_flatten_row_preserves_workflow_source_gaps_and_suppressed_details():
+    row = flatten_row(
+        {
+            "query": "UPI failed but amount debited",
+            "expected_act_hint": "Banking Ombudsman",
+        },
+        {
+            "matter_route": {
+                "category": "banking_credit_dispute",
+                "label": "Bank debit / RBI Ombudsman complaint",
+                "required_sources": ["Reserve Bank Integrated Ombudsman Scheme", "Consumer Protection Act 2019"],
+            },
+            "workflow": {
+                "id": "bank_wrong_debit",
+                "source": "common_workflow_contracts",
+                "selected": True,
+                "answer_owner": "common_workflow_contracts",
+                "answer_mode": "primary",
+                "required_sources": ["rbi_ombudsman"],
+                "optional_sources": ["consumer_forum"],
+                "source_indices": {"rbi_ombudsman": 1},
+                "contract_miss_reason": None,
+                "line_count": 3,
+                "workflow_shadowed_by_legacy": False,
+            },
+            "sentences": [{"text": "Use RBI Ombudsman first [1].", "status": "ok"}],
+            "suppressed_count": 1,
+            "suppressed": [{"status": "unsupported", "reason": "unsupported_or_unknown_citation"}],
+            "sources": [{"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "source_type": "bare_act"}],
+            "passages": [],
+            "relevance": {"verdict": "ok", "score": 0.8},
+            "timing": {"total_ms": 1000},
+            "wall_ms": 1000,
+            "events": {},
+        },
+    )
+
+    assert row["workflow_id"] == "bank_wrong_debit"
+    assert row["workflow_source"] == "common_workflow_contracts"
+    assert row["workflow_selected"] is True
+    assert row["workflow_answer_owner"] == "common_workflow_contracts"
+    assert row["workflow_answer_mode"] == "primary"
+    assert row["workflow_required_sources"] == ["rbi_ombudsman"]
+    assert row["workflow_source_indices"] == {"rbi_ombudsman": 1}
+    assert row["workflow_shadowed_by_legacy"] is False
+    assert row["suppressed_status_counts"] == {"unsupported": 1}
+    assert row["unknown_citation_count"] == 0
+    assert "Reserve Bank Integrated Ombudsman Scheme" in row["route_required_sources_found"]
+    assert "Consumer Protection Act 2019" in row["route_required_sources_missing"]
+
+
+def test_flatten_row_fails_product_gate_when_required_source_is_retrieved_but_not_cited():
+    row = flatten_row(
+        {
+            "query": "bank deducted money wrongly and customer care is not helping",
+            "expected_act_hint": None,
+        },
+        {
+            "matter_route": {
+                "category": "banking_credit_dispute",
+                "label": "Bank debit / RBI Ombudsman complaint",
+                "required_sources": ["Reserve Bank Integrated Ombudsman Scheme", "Consumer Protection Act 2019"],
+            },
+            "workflow": {},
+            "sentences": [{"text": "Start with the RBI Ombudsman complaint route [1].", "status": "ok"}],
+            "sources": [
+                {
+                    "index": 1,
+                    "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+                    "anchor": "rbi-integrated-ombudsman-2021/sec-2",
+                    "source_type": "bare_act",
+                },
+                {
+                    "index": 2,
+                    "title": "Consumer Protection Act 2019",
+                    "anchor": "consumer-protection-2019/sec-35",
+                    "source_type": "bare_act",
+                },
+            ],
+            "passages": [],
+            "relevance": {"verdict": "ok", "score": 0.9},
+            "timing": {"total_ms": 1000},
+            "wall_ms": 1000,
+            "events": {},
+        },
+    )
+
+    assert row["route_required_sources_missing"] == []
+    assert "Consumer Protection Act 2019" in row["route_required_sources_cited_missing"]
+    assert "route_required_source_not_cited" in answer_quality_flags(row)
+    assert product_pass(row) is False
+
+
+def test_flatten_row_keeps_triggered_conditional_source_gap_in_product_gate():
+    row = flatten_row(
+        {
+            "query": "mother gave land by gift deed and older son wants cancellation",
+            "expected_act_hint": None,
+        },
+        {
+            "matter_route": {
+                "category": "property_tenancy",
+                "label": "Gift deed cancellation",
+                "required_sources": [
+                    "Transfer of Property Act 1882 where gift or property-transfer cancellation is involved",
+                ],
+            },
+            "workflow": {},
+            "sentences": [{"text": "Use a civil route [1].", "status": "ok"}],
+            "sources": [{"index": 1, "title": "Specific Relief Act 1963", "source_type": "bare_act"}],
+            "passages": [],
+            "relevance": {"verdict": "ok", "score": 0.9},
+            "timing": {"total_ms": 1000},
+            "wall_ms": 1000,
+            "events": {},
+        },
+    )
+
+    assert row["route_required_source_coverage"][0]["requirement_type"] == "conditional_authority"
+    assert row["route_required_source_coverage"][0]["found"] is False
+    assert row["route_required_sources_missing"] == [
+        "Transfer of Property Act 1882 where gift or property-transfer cancellation is involved",
+    ]
+    assert product_pass(row) is False
+
+
+def test_cited_source_order_metrics_flags_judgment_before_actionable_source():
+    sources = [
+        {"index": 1, "title": "BANK CASE versus CUSTOMER", "source_type": "sc_judgment", "anchor": "2020-insc-1#para-5"},
+        {"index": 2, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "source_type": "bare_act", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+    ]
+
+    metrics = cited_source_order_metrics(
+        sources,
+        [],
+        [{"text": "A judgment discusses bank service deficiency [1]. Later use RBI Ombudsman [2]."}],
+    )
+
+    assert metrics["first_cited_source_type"] == "sc_judgment"
+    assert metrics["first_cited_is_actionable"] is False
+    assert metrics["judgment_before_actionable_source"] is True
+
+
+def test_cited_source_order_metrics_passes_when_actionable_source_leads():
+    sources = [
+        {"index": 1, "title": "BANK CASE versus CUSTOMER", "source_type": "sc_judgment", "anchor": "2020-insc-1#para-5"},
+        {"index": 2, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "source_type": "bare_act", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+    ]
+
+    metrics = cited_source_order_metrics(
+        sources,
+        [],
+        [{"text": "Use RBI Ombudsman first [2]. A judgment may support deficiency [1]."}],
+    )
+
+    assert metrics["first_cited_source_type"] == "bare_act"
+    assert metrics["first_cited_is_actionable"] is True
+    assert metrics["judgment_before_actionable_source"] is False
 
 
 def test_expected_procedure_anchor_coverage_requires_all_cited_subparts():
@@ -306,6 +1597,17 @@ def test_answer_quality_flags_catches_dangling_and_non_actionable_next_steps():
     })
     assert {"missing_next_step_section", "suppressed_sentences", "zero_ok_legal_sentences"} <= set(richer_flags)
 
+    weak_but_usable = answer_quality_flags({
+        "answer_text": "**Short answer** Use the cited wage route [1]. **What you can do next** File with the wage authority [1].",
+        "expected_act_cited_hit": True,
+        "first_cited_is_actionable": True,
+        "relevance_verdict": "ok",
+        "suppressed_count": 0,
+        "ok_sentences": 0,
+        "weak_sentences": 2,
+    })
+    assert "zero_ok_legal_sentences" not in weak_but_usable
+
     regime_flags = answer_quality_flags({
         "answer_text": "**Short answer** Use the BNS hurt route [1]. **What you can do next** File the complaint [1].",
         "expected_act_cited_hit": True,
@@ -448,6 +1750,18 @@ def test_expected_act_keys_respect_conditional_and_missing_jurisdiction_hints():
         "Bonded Labour System (Abolition) Act 1976 s.4 + SC/ST POA s.3(1)(h)",
         "bonded labour worker no wages called caste slur by landlord",
     ) == ["Bonded Labour Act"]
+    assert expected_act_keys(
+        "BNSS 2023 s.173 + s.175 magistrate complaint + SC/ST POA s.4",
+        "can u tell thana refused to file complaint against zamindar who burnt our hut latehar what can i do",
+    ) == ["BNSS"]
+    assert expected_act_keys(
+        "BNS 2023 mischief by fire + BNSS 2023 s.173 + s.175 magistrate complaint + SC/ST POA s.4",
+        "upper caste men burnt our dalit family hut police refusing FIR what can we do",
+    ) == ["BNS", "BNSS", "SC/ST POA Act"]
+    assert expected_act_keys(
+        "SC/ST POA Act special court delay",
+        "SC ST POA case special court pending 5 years no judgement",
+    ) == ["SC/ST POA Act"]
 
     assert expected_act_keys(
         "RTI Act 2005 + scheme pension rules",
@@ -477,6 +1791,14 @@ def test_expected_act_keys_respect_conditional_and_missing_jurisdiction_hints():
         "RTI Act 2005 + scheme pension rules",
         "family pension not paid after husband died in bihar rti kaise karein",
     ) == ["RTI Act"]
+    assert expected_act_keys(
+        "state municipal law; Shops and Establishments Act; RTI Act",
+        "local body locked my commercial shop saying licence problem",
+    ) == ["RTI Act"]
+    assert expected_act_keys(
+        "Maharashtra Shops and Establishments Act; RTI Act",
+        "mumbai local body locked my commercial shop saying licence problem",
+    ) == ["RTI Act", "Shops and Establishments Act"]
 
     assert expected_act_keys(
         "state Prohibition / Excise Act; punishment depends on state and FIR section",
@@ -549,6 +1871,20 @@ def test_expected_act_hit_accepts_local_doc_ids_and_hyphenated_titles():
         [],
     ) is True
     assert expected_act_hit(
+        expected_act_keys("Arms Act 1959 s.2 agricultural tool defence"),
+        [{"title": "Arms Act 1959", "anchor": "arms-1959/sec-2"}],
+        [],
+    ) is True
+    assert expected_act_hit(
+        expected_act_keys("MCOCA default bail section 21"),
+        [{"title": "Maharashtra Control of Organised Crime Act 1999", "anchor": "maharashtra-control-organised-crime-1999/sec-21"}],
+        [],
+    ) is True
+    assert expected_act_keys(
+        "Arms Act 1959 definition/licence source + BNSS 2023 bail/FIR procedure + BNS 2023 threat or hurt where alleged",
+        "urgent police booked us under arms act for axe we use in farming gadchiroli how to complain",
+    ) == ["Arms Act", "BNSS"]
+    assert expected_act_hit(
         expected_act_keys("Protection of Civil Rights Act 1955 temple entry"),
         [{"title": "Protection of Civil Rights Act 1955", "anchor": "protection-civil-rights-1955/sec-4"}],
         [],
@@ -563,6 +1899,57 @@ def test_expected_act_hit_accepts_local_doc_ids_and_hyphenated_titles():
         [{"title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/clause-9"}],
         [],
     ) is True
+    assert expected_act_keys(
+        "RBI Ombudsman + BNSS/Cyber hold where applicable",
+        "my bank account is frozen what to do",
+    ) == ["Banking Ombudsman", "Banking Regulation Act"]
+    assert expected_act_keys(
+        "Indian Contract Act + Limitation Act + CPC / NI Act if cheque",
+        "my brother is not returning my money which he took as loan",
+    ) == ["Code of Civil Procedure", "Indian Contract Act", "Limitation Act"]
+    assert expected_act_keys(
+        "municipal law + shops and establishments / Article 226",
+        "my shop is in Gujarat and municipality sealed it what should i do",
+    ) == ["Municipal Law", "Shops and Establishments Act"]
+    assert expected_act_hit(
+        expected_act_keys(
+            "RBI customer liability + IT Act cyber fraud",
+            "upi fraud happened bank says it is my mistake what to do",
+        ),
+        [
+            {"title": "Information Technology Act 2000", "anchor": "it-2000/sec-66C"},
+            {"title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+        ],
+        [],
+    ) is True
+    assert expected_act_hit(
+        expected_act_keys(
+            "municipal law + shops and establishments / Article 226",
+            "my shop is in Gujarat and municipality sealed it what should i do",
+        ),
+        [
+            {"title": "Gujarat Municipalities Act 1963", "anchor": "gujarat-municipalities-1963/sec-221"},
+            {"title": "Gujarat Shops and Establishments (Regulation of Employment and Conditions of Service) Act 2019", "anchor": "gujarat-shops-establishments-2019/sec-8"},
+        ],
+        [],
+    ) is True
+    coverage = required_source_coverage(
+        ["Banking Regulation Act / regulated-entity records for bank account service issues"],
+        [
+            {"title": "Banking Regulation Act 1949", "anchor": "banking-regulation-1949/sec-35A@2025-12-20"},
+        ],
+        [],
+    )
+    assert coverage[0]["found"] is True
+    coverage = required_source_coverage(
+        ["Insurance Ombudsman Rules / insurer grievance procedure"],
+        [
+            {"title": "Insurance Ombudsman Rules 2017", "anchor": "insurance-ombudsman-rules-2017/sec-5-h"},
+        ],
+        [],
+        query="insurer is rejecting my claim",
+    )
+    assert coverage[0]["found"] is True
     assert expected_act_hit(
         expected_act_keys("Credit Information Companies Act CIBIL correction"),
         [{"title": "Credit Information Companies (Regulation) Act 2005", "anchor": "credit-information-companies-2005/sec-21"}],
@@ -575,9 +1962,42 @@ def test_expected_act_hit_accepts_local_doc_ids_and_hyphenated_titles():
     ) is True
     assert expected_act_hit(
         expected_act_keys("Assam Witch Hunting (Prohibition Prevention and Protection) Act 2015"),
-        [{"title": "Assam Witch Hunting (Prohibition, Prevention and Protection) Act 2015", "anchor": "assam-witch-hunting-2015/sec-4"}],
+        [{"title": "Assam Witch Hunting (Prohibition, Prevention and Protection) Act 2015", "anchor": "assam-witch-hunting-2015/sec-4", "source_type": "bare_act"}],
         [],
     ) is True
+    assert expected_act_hit(
+        expected_act_keys("Jharkhand Prevention of Witch (Daain) Practices Act 2001 s.3, s.4"),
+        [
+            {
+                "title": "Jharkhand State Legal Services Authority Dayan Pratha Pratishedh Adhiniyam 2001",
+                "anchor": "jhalsa-dayan-pratha-pratishedh-2001/sec-3",
+                "source_type": "official_guidance",
+            }
+        ],
+        [],
+    ) is True
+    assert expected_act_hit(
+        expected_act_keys("Jharkhand Prevention of Witch (Daain) Practices Act 2001 s.3, s.4"),
+        [
+            {
+                "title": "Jharkhand Prevention of Witch (Daain) Practices Act 2001",
+                "anchor": "jharkhand-prevention-witch-daain-practices-2001/sec-3",
+                "source_type": "official_summary",
+            }
+        ],
+        [],
+    ) is False
+    assert expected_act_hit(
+        expected_act_keys("Jharkhand Prevention of Witch (Daain) Practices Act 2001 s.3, s.4"),
+        [
+            {
+                "title": "Private blog Dayan Pratha in Jharkhand",
+                "anchor": "blog/dayan-pratha",
+                "source_type": "web",
+            }
+        ],
+        [],
+    ) is False
     assert expected_act_hit(
         expected_act_keys("Scheduled Areas Land Transfer Regulation / CNT Act"),
         [{"title": "Chota Nagpur Tenancy Act 1908", "anchor": "chota-nagpur-tenancy-1908/sec-46"}],
@@ -586,6 +2006,12 @@ def test_expected_act_hit_accepts_local_doc_ids_and_hyphenated_titles():
     assert expected_act_hit(
         expected_act_keys("National Rural Health Mission guidelines ASHA incentives"),
         [{"title": "National Health Mission ASHA Incentives Guidelines 2025", "anchor": "nhm-asha-incentives-2025/page-1"}],
+        [],
+    ) is True
+    assert expected_act_keys("National Rural Health Mission guidelines ASHA incentives") == ["ASHA Incentives"]
+    assert expected_act_hit(
+        ["Anganwadi Honorarium"],
+        [{"title": "STATE OF KARNATAKA AND ORS. versus AMEERBI AND ORS.", "anchor": "2006-insc-969#win-9", "source_type": "sc_judgment"}],
         [],
     ) is True
     assert expected_act_hit(
@@ -609,6 +2035,17 @@ def test_expected_act_hit_accepts_local_doc_ids_and_hyphenated_titles():
     assert expected_act_hit(
         expected_act_keys("Public Gambling Act"),
         [{"title": "The Public Gambling Act, 1867", "anchor": "public-gambling-1867/sec-12"}],
+        [],
+    ) is True
+
+    cattle_keys = expected_act_keys(
+        "state Cattle Preservation Act / Prevention of Cruelty to Animals Act",
+        "sir they arrested me for cow transport saying I am smuggling but I was taking my own buffalo to mandi",
+    )
+    assert cattle_keys == ["Prevention of Cruelty to Animals Act"]
+    assert expected_act_hit(
+        cattle_keys,
+        [{"title": "Prevention of Cruelty to Animals Act 1960", "anchor": "prevention-cruelty-animals-1960/sec-11"}],
         [],
     ) is True
 
@@ -652,3 +2089,70 @@ def test_expected_act_hit_accepts_apostrophe_in_employees_compensation_title():
         [{"title": "Employees' Compensation Act 1923", "anchor": "employees-compensation-1923/sec-3"}],
         [],
     ) is True
+
+
+def test_conditional_posh_expected_act_requires_sexual_harassment_facts():
+    hint = "Industrial Disputes Act 1947 / POSH Act where sexual harassment facts exist"
+
+    generic_hr_keys = expected_act_keys(
+        hint,
+        "i complained against my manager for harassment to HR and now they are putting me on PIP, is this retaliation",
+    )
+    assert "Industrial Disputes Act" in generic_hr_keys
+    assert "POSH Act" not in generic_hr_keys
+
+    sexual_hr_keys = expected_act_keys(
+        hint,
+        "i complained to ICC about sexual harassment by my manager and now they put me on PIP",
+    )
+    assert "Industrial Disputes Act" in sexual_hr_keys
+    assert "POSH Act" in sexual_hr_keys
+
+
+def test_stage_e9_eval_accepts_bns_exploitation_subanchors_for_itpa_raid():
+    coverage = required_source_coverage(
+        ["BNS 2023 / IPC 1860 trafficking or exploitation provisions based on incident date"],
+        [
+            {
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-144@2024-07-01",
+            },
+            {
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-146@2024-07-01",
+            },
+        ],
+        [],
+        query=(
+            "hi, the spa was raided last week and police took me and other girls "
+            "to station I just do massage I am scared what will happen now can i file case"
+        ),
+    )
+
+    assert coverage[0]["found"] is True
+
+
+def test_stage_e9_eval_accepts_child_deepfake_pocso_and_it_privacy_sources():
+    coverage = required_source_coverage(
+        [
+            "POCSO Act 2012 where a child or minor is shown in sexual content",
+            "Information Technology Act 2000 section 67B / 66E / 67A where electronic sexual-image publication or privacy misuse is alleged",
+        ],
+        [
+            {
+                "title": "Protection of Children from Sexual Offences Act 2012",
+                "anchor": "pocso-2012/sec-13-a",
+            },
+            {
+                "title": "Information Technology Act 2000",
+                "anchor": "it-2000/sec-66E",
+            },
+        ],
+        [],
+        query=(
+            "hi, my schoolmate is making deepfake nude videos of girls in class "
+            "using AI n circulating I am one of them I am 15 can i file case"
+        ),
+    )
+
+    assert [item["found"] for item in coverage] == [True, True]

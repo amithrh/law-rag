@@ -145,6 +145,89 @@ def test_preserve_required_source_pack_can_promote_exact_act_to_visible_window()
     assert out[3].chunk_id == 99
 
 
+def test_preserve_required_source_pack_prefers_distinct_higher_priority_packs():
+    def packed(chunk_id: int, pack_id: str, priority: float, rerank: float):
+        return _retrieved_chunk(
+            chunk_id,
+            rerank=rerank,
+            metadata={
+                "_required_source_pack": pack_id,
+                "_required_source_priority": priority,
+            },
+        )
+
+    candidates = [
+        packed(1, "bnss_2023", 1.24, 0.91),
+        packed(2, "bns_2023_scst_atrocity_threat_hurt", 1.30, 0.90),
+        packed(3, "bns_2023", 1.18, 0.89),
+        packed(4, "constitution_article_21", 1.16, 0.88),
+        packed(5, "pesa_1996", 1.24, 0.87),
+        packed(6, "constitution_scheduled_areas", 1.24, 0.86),
+        packed(7, "scst_poa_1989", 1.00, 0.85),
+        packed(8, "scst_poa_1989", 1.00, 0.84),
+        packed(46, "chota_nagpur_tenancy_1908_transfer_restriction", 1.30, 0.30),
+        packed(71, "chota_nagpur_tenancy_1908_restoration", 1.28, 0.29),
+    ]
+
+    out = _preserve_required_source_packs(
+        candidates,
+        [
+            "scst_poa_1989",
+            "bnss_2023",
+            "bns_2023_scst_atrocity_threat_hurt",
+            "bns_2023",
+            "constitution_article_21",
+            "pesa_1996",
+            "chota_nagpur_tenancy_1908_transfer_restriction",
+            "chota_nagpur_tenancy_1908_restoration",
+            "constitution_scheduled_areas",
+        ],
+        limit=8,
+    )
+
+    out_pack_ids = [c.metadata.get("_required_source_pack") for c in out]
+    assert "chota_nagpur_tenancy_1908_transfer_restriction" in out_pack_ids
+    assert "chota_nagpur_tenancy_1908_restoration" in out_pack_ids
+    assert out_pack_ids.count("scst_poa_1989") <= 1
+
+
+def test_preserve_customs_pack_keeps_issue_critical_sections():
+    candidates = [
+        _retrieved_chunk(i, rerank=0.99 - i * 0.03)
+        for i in range(8)
+    ]
+    for chunk_id, section_no, rerank in (
+        (124, "124", 0.49),
+        (112, "112", 0.48),
+        (111, "111", 0.47),
+    ):
+        chunk = _retrieved_chunk(
+            chunk_id,
+            rerank=rerank,
+            title="Customs Act 1962",
+            metadata={
+                "section_no": section_no,
+                "_required_source_pack": "customs_misdeclaration_1962",
+            },
+        )
+        chunk.anchor = f"customs-1962/sec-{section_no}"
+        candidates.append(chunk)
+
+    out = _preserve_required_source_packs(
+        candidates,
+        ["customs_misdeclaration_1962"],
+        limit=8,
+        preferred_top_n=4,
+    )
+
+    kept_sections = {
+        c.metadata.get("section_no")
+        for c in out
+        if c.metadata.get("_required_source_pack") == "customs_misdeclaration_1962"
+    }
+    assert {"124", "111", "112"} <= kept_sections
+
+
 def test_source_quality_prefers_bare_act_for_statute_first_routes():
     act = _retrieved_chunk(
         1,
@@ -221,6 +304,7 @@ def test_query_expansion_defaults_to_single_folded_retrieval():
     assert s.query_expansion_llm_enabled is False
     assert s.query_expansion_strategy == "single"
     assert s.query_expansion_max_variants == 1
+    assert s.legal_hyde_mode == "fallback"
 
 
 def test_rerank_candidate_union_preserves_required_pack(monkeypatch):
@@ -298,6 +382,40 @@ def _retrieved_chunk(
     )
 
 
+def test_focus_required_source_pack_normalizes_misanchored_ndps_section_37():
+    chunk = _retrieved_chunk(
+        37,
+        rerank=0.5,
+        title="Narcotic Drugs and Psychotropic Substances Act 1985",
+        metadata={"section_no": "36C"},
+    )
+    chunk.anchor = "ndps-1985/sec-36C"
+    chunk.text = (
+        "Narcotic Drugs and Psychotropic Substances Act 1985, Section 36C\n\n"
+        "36C. Application of Code to proceedings before a Special Court.\n"
+        "37. Offences to be cognizable and non-bailable. No person accused "
+        "of an offence involving commercial quantity shall be released on bail "
+        "unless the court is satisfied that there are reasonable grounds for "
+        "believing that he is not guilty of such offence.\n"
+        "38. Offences by companies."
+    )
+    pack = SourcePack(
+        id="ndps_1985",
+        title_patterns=("Narcotic Drugs and Psychotropic Substances Act 1985",),
+        search_query="NDPS Act 1985 section 37 bail section 36A Special Court",
+    )
+
+    _focus_required_source_pack_text(chunk, pack)
+
+    assert chunk.anchor == "ndps-1985/sec-37"
+    assert chunk.metadata["section_no"] == "37"
+    assert chunk.text.startswith(
+        "Narcotic Drugs and Psychotropic Substances Act 1985, Section 37"
+    )
+    assert "Offences to be cognizable and non-bailable" in chunk.text
+    assert "38. Offences by companies" not in chunk.text
+
+
 def test_state_specific_scheme_source_requires_matching_state_context():
     bihar_scheme = _retrieved_chunk(
         1,
@@ -310,13 +428,27 @@ def test_state_specific_scheme_source_requires_matching_state_context():
         "kanya vivah scheme money not given after daughter wedding",
         [bihar_scheme, rti],
     )
-    assert [c.chunk_id for c in generic] == [2]
+    assert [c.chunk_id for c in generic] == [1, 2]
 
     state_specific = _filter_query_ineligible_sources(
         "bihar kanya vivah scheme money not given after daughter wedding",
         [bihar_scheme, rti],
     )
     assert [c.chunk_id for c in state_specific] == [1, 2]
+
+    for other_state_query in (
+        "odisha kanya vivah scheme money not given after daughter wedding",
+        "kanya vivah scheme payment pending mp",
+        "kanya vivah scheme payment pending in MP",
+        "kanya vivah yojana payment pending up",
+        "kanya vivah yojana payment pending in U.P.",
+        "jaipur kanya vivah yojana money not received",
+    ):
+        other_state = _filter_query_ineligible_sources(
+            other_state_query,
+            [bihar_scheme, rti],
+        )
+        assert [c.chunk_id for c in other_state] == [2]
 
 
 def test_state_prohibition_case_requires_matching_state_context():

@@ -271,7 +271,17 @@ def _bm25_retrieve_sql(
 
 
 def _hydrate_row(r) -> RetrievedChunk:
-    metadata = r["metadata"] if isinstance(r["metadata"], dict) else {}
+    raw_metadata = r["metadata"]
+    if isinstance(raw_metadata, dict):
+        metadata = raw_metadata
+    elif isinstance(raw_metadata, str):
+        try:
+            parsed = json.loads(raw_metadata)
+        except json.JSONDecodeError:
+            parsed = {}
+        metadata = parsed if isinstance(parsed, dict) else {}
+    else:
+        metadata = {}
     return RetrievedChunk(
         chunk_id=r["id"],
         document_id=r["document_id"],
@@ -346,6 +356,21 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
         if match:
             chunk.text = "Constitution of India, Article 47\n\n" + match.group(0).strip()
         return
+    if pack.id == "ndps_1985" and "section 37" in pack.search_query.lower():
+        text = chunk.text or ""
+        match = re.search(
+            r"37\.\s+Offences to be cognizable and non-bailable.*?(?=\n\s*(?:38|39)\.\s+|$)",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if match:
+            chunk.text = (
+                "Narcotic Drugs and Psychotropic Substances Act 1985, Section 37\n\n"
+                + match.group(0).strip()
+            )
+            chunk.anchor = "ndps-1985/sec-37"
+            chunk.metadata["section_no"] = "37"
+            return
     if pack.id != "ndps_1985" or "section 36a" not in pack.search_query.lower():
         if pack.id == "jj_2015" and "adoption" in pack.search_query.lower():
             text = chunk.text or ""
@@ -378,13 +403,35 @@ _BIHAR_TERMS = (
     "darbhanga", "purnea", "samastipur", "siwan", "chhapra",
     "motihari", "nalanda", "begusarai", "madhubani",
 )
+_NON_BIHAR_STATE_TERMS = (
+    "andhra", "assam", "chhattisgarh", "delhi", "goa", "gujarat",
+    "haryana", "himachal", "jharkhand", "karnataka", "kerala",
+    "madhya pradesh", "maharashtra", "manipur", "odisha", "orissa",
+    "punjab", "rajasthan", "tamil nadu", "telangana", "uttar pradesh",
+    "uttarakhand", "west bengal", "bengal",
+    "bhopal", "indore", "jaipur", "jodhpur", "udaipur", "kota",
+    "ajmer", "lucknow", "kanpur",
+)
+
+
+def _query_has_non_bihar_kanya_context(query: str) -> bool:
+    q = query.lower()
+    if re.search(r"(?<![a-z0-9])(?:mp|m\.p\.?|up|u\.p\.?|ap|a\.p\.?)(?![a-z0-9])", q):
+        return True
+    return any(term in q for term in _NON_BIHAR_STATE_TERMS)
 
 
 def _query_allows_state_specific_source(query: str, chunk: RetrievedChunk) -> bool:
     title = (chunk.title or "").lower()
     q = query.lower()
     if "bihar mukhyamantri kanya vivah" in title:
-        return any(term in q for term in _BIHAR_TERMS)
+        if any(term in q for term in _BIHAR_TERMS):
+            return True
+        kanya_context = any(term in q for term in (
+            "kanya vivah", "kanyadan", "kanya bibaha", "vivah yojana",
+            "daughter wedding", "marriage scheme",
+        ))
+        return kanya_context and not _query_has_non_bihar_kanya_context(q)
     if (
         any(term in q for term in ("prohibition law", "excise act", "liquor", "caught me drinking", "drinking village", "sharab"))
         and ("state of bihar" in title or "bihar prohibition" in title)
@@ -461,18 +508,24 @@ def _preserve_required_source_packs(
         if len(selected) < limit:
             selected.append(best)
         else:
-            replace_idx = next(
-                (
-                    idx
-                    for idx in range(len(selected) - 1, -1, -1)
-                    if not selected[idx].metadata.get("_required_source_pack")
-                ),
-                len(selected) - 1,
+            replace_idx = _required_pack_replacement_index(
+                selected,
+                incoming_pack_id=pack_id,
+                incoming_priority=_required_pack_priority(best),
             )
+            if replace_idx is None:
+                continue
             selected_chunk_ids.discard(selected[replace_idx].chunk_id)
             selected[replace_idx] = best
         selected_chunk_ids.add(best.chunk_id)
         present_pack_ids.add(pack_id)
+
+    _preserve_section_diverse_required_packs(
+        selected,
+        candidates,
+        pack_ids,
+        limit=limit,
+    )
 
     selected.sort(
         key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,
@@ -485,6 +538,109 @@ def _preserve_required_source_packs(
             preferred_top_n=min(preferred_top_n, limit),
         )
     return selected[:limit]
+
+
+def _preserve_section_diverse_required_packs(
+    selected: list[RetrievedChunk],
+    candidates: list[RetrievedChunk],
+    pack_ids: list[str],
+    *,
+    limit: int,
+) -> None:
+    if limit <= 0:
+        return
+
+    selected_chunk_ids = {c.chunk_id for c in selected}
+    for pack_id in pack_ids:
+        section_order = _SECTION_DIVERSE_REQUIRED_PACKS.get(pack_id)
+        if not section_order:
+            continue
+
+        pack_candidates = [
+            c for c in candidates
+            if c.metadata.get("_required_source_pack") == pack_id
+        ]
+        if not pack_candidates:
+            continue
+
+        selected_sections = {
+            sec
+            for c in selected
+            if c.metadata.get("_required_source_pack") == pack_id
+            if (sec := _chunk_section_number(c))
+        }
+        for section_no in section_order:
+            wanted = section_no.upper()
+            if wanted in selected_sections:
+                continue
+            best = next(
+                (
+                    c for c in pack_candidates
+                    if _chunk_section_number(c) == wanted
+                    and c.chunk_id not in selected_chunk_ids
+                ),
+                None,
+            )
+            if best is None:
+                continue
+            if len(selected) < limit:
+                selected.append(best)
+            else:
+                replace_idx = _required_pack_replacement_index(
+                    selected,
+                    incoming_pack_id=pack_id,
+                    incoming_priority=_required_pack_priority(best),
+                )
+                if replace_idx is None:
+                    continue
+                selected_chunk_ids.discard(selected[replace_idx].chunk_id)
+                selected[replace_idx] = best
+            selected_chunk_ids.add(best.chunk_id)
+            selected_sections.add(wanted)
+
+
+def _required_pack_priority(chunk: RetrievedChunk) -> float:
+    return float(chunk.metadata.get("_required_source_priority") or 0.0)
+
+
+def _required_pack_replacement_index(
+    selected: list[RetrievedChunk],
+    *,
+    incoming_pack_id: str,
+    incoming_priority: float,
+) -> int | None:
+    """Choose a replacement without evicting a stronger distinct source pack."""
+    for idx in range(len(selected) - 1, -1, -1):
+        if not selected[idx].metadata.get("_required_source_pack"):
+            return idx
+
+    pack_counts: dict[str, int] = {}
+    for chunk in selected:
+        pack_id = str(chunk.metadata.get("_required_source_pack") or "")
+        if pack_id:
+            pack_counts[pack_id] = pack_counts.get(pack_id, 0) + 1
+
+    duplicate_idx: int | None = None
+    duplicate_priority = float("inf")
+    for idx in range(len(selected) - 1, -1, -1):
+        pack_id = str(selected[idx].metadata.get("_required_source_pack") or "")
+        if not pack_id or pack_id == incoming_pack_id or pack_counts.get(pack_id, 0) <= 1:
+            continue
+        priority = _required_pack_priority(selected[idx])
+        if priority <= incoming_priority and priority < duplicate_priority:
+            duplicate_idx = idx
+            duplicate_priority = priority
+    if duplicate_idx is not None:
+        return duplicate_idx
+
+    weakest_idx: int | None = None
+    weakest_priority = float("inf")
+    for idx in range(len(selected) - 1, -1, -1):
+        priority = _required_pack_priority(selected[idx])
+        if priority < incoming_priority and priority < weakest_priority:
+            weakest_idx = idx
+            weakest_priority = priority
+    return weakest_idx
 
 
 def _promote_required_source_packs(
@@ -655,6 +811,18 @@ def _source_cluster_scores(
 
 _SEC_ANCHOR_RE = re.compile(r"(?:^|/)sec-(\d{1,4})([A-Z]{0,2})(?:-([A-Z]))?", re.IGNORECASE)
 
+_SECTION_DIVERSE_REQUIRED_PACKS: dict[str, tuple[str, ...]] = {
+    # These packs answer procedural Customs problems where one retrieved
+    # Customs Act hit is not enough: users need the show-cause, liability,
+    # assessment/demand, and appeal/refund anchors to stay visible together.
+    "customs_misdeclaration_1962": ("124", "111", "112", "17", "28", "128"),
+    "customs_valuation_svb_1962": ("14", "17", "28", "128"),
+    "customs_drawback_1962": ("75", "74", "27", "128"),
+    # Bhang/personal-use prompts need the definition source visible, while bail
+    # and seizure sections can otherwise crowd it out after rerank.
+    "ndps_1985": ("2", "37", "36A", "20", "43"),
+}
+
 
 def _section_numbers_from_anchor_patterns(anchor_patterns: tuple[str, ...]) -> list[str]:
     """Extract exact legal section numbers from source-pack anchor hints.
@@ -715,6 +883,19 @@ def _source_pack_anchor_order(
         if re.search(anchor_regex, anchor, flags=re.IGNORECASE):
             return idx
     return 9999
+
+
+def _chunk_section_number(chunk: RetrievedChunk) -> str | None:
+    section_no = str(chunk.metadata.get("section_no") or "").upper()
+    if section_no:
+        return section_no
+    match = _SEC_ANCHOR_RE.search(chunk.anchor or "")
+    if not match:
+        return None
+    num = match.group(1)
+    inline_suffix = (match.group(2) or "").upper()
+    hyphen_suffix = (match.group(3) or "").upper()
+    return f"{num}{hyphen_suffix or inline_suffix}".upper()
 
 
 def _diversify_source_pack_chunks(
@@ -873,6 +1054,7 @@ async def _fetch_source_pack_candidates(
                 if (
                     pack.id == "ndps_1985"
                     and "section 36a" in pack.search_query.lower()
+                    and "one hundred eighty" in pack.search_query.lower()
                     and chunk.metadata.get("section_no") != "36A"
                 ):
                     continue
@@ -986,6 +1168,7 @@ def _rerank_candidate_union(
     candidate_list.sort(
         key=lambda c: (
             1 if c.metadata.get("_required_source_pack") else 0,
+            float(c.metadata.get("_required_source_priority") or 0.0),
             c.combined_score,
         ),
         reverse=True,

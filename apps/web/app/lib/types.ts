@@ -14,6 +14,21 @@ export interface CoverageEvent {
   passages_used: number;
 }
 
+export interface SourceGapItem {
+  required_source: string;
+  kind: string;
+}
+
+export interface SourceGapEvent {
+  has_gap: boolean;
+  route_category: string;
+  gap_kinds: string[];
+  missing_required_sources: SourceGapItem[];
+  message: string;
+  handoff: string;
+  policy: "do_not_substitute_neighboring_authority";
+}
+
 export interface PassageEvent {
   index: number;
   anchor: string;
@@ -69,7 +84,11 @@ export interface RefusedEvent {
   // refusal class. "rerank_unavailable" = service degraded (retry).
   // "low_coverage" / "low_coverage_dense_fallback" = corpus gap (rephrase).
   // Absent for the legacy empty-retrieval refusal.
-  reason?: "rerank_unavailable" | "low_coverage" | "low_coverage_dense_fallback";
+  reason?:
+    | "rerank_unavailable"
+    | "low_coverage"
+    | "low_coverage_dense_fallback"
+    | "critical_route_needs_reviewed_contract";
   top_rerank_score?: number;
   top_combined_score?: number;
 }

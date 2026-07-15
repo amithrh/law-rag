@@ -281,3 +281,36 @@ def test_legal_issue_plan_extracts_pwdva_acronym_as_must_cite_act():
     assert first["source"].startswith("PWDVA 2005")
     assert first["act"] == "Protection of Women from Domestic Violence Act 2005"
     assert first["must_cite"] is True
+
+
+def test_legal_issue_plan_selects_st_article_and_does_not_append_sc_source():
+    from apps.api.main import _plan_must_cite_passages, _route_required_source_floor_passages
+
+    query = "office rejected my ST certificate saying not local resident what appeal"
+    route = route_matter(query)
+    plan = build_legal_issue_plan(query, route)
+    assert plan is not None
+
+    constitution_entries = [entry for entry in plan.authority_ledger if entry.act == "Constitution of India"]
+    assert [entry.section for entry in constitution_entries] == ["Article 342"]
+    rti_entries = [entry for entry in plan.authority_ledger if entry.act == "Right to Information Act 2005"]
+    assert [entry.section for entry in rti_entries] == ["Section 6"]
+
+    passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-341"},
+        {"index": 2, "title": "Right to Information Act 2005", "anchor": "rti-2005/sec-6"},
+        {"index": 3, "title": "Constitution of India", "anchor": "constitution-india/sec-342"},
+    ]
+    additions = _plan_must_cite_passages(route, plan, passages, cited={2, 3}, query=query)
+
+    assert additions == []
+
+    floor = _route_required_source_floor_passages(
+        route,
+        passages,
+        cited={2, 3},
+        cited_source_keys=set(),
+        query=query,
+        plan=plan,
+    )
+    assert all(passage["index"] != 1 for passage in floor)

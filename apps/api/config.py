@@ -283,6 +283,7 @@ class Settings(BaseSettings):
     # were producing ≤2 OK sentences then hitting stop; refusing them
     # honestly counts as pass-refused.
     refuse_below_rerank: float = 0.4
+    refuse_below_rerank_general_legal: float = 0.28  # lower threshold for general_legal fallback since no pack boosts apply
     # Per round-3 review (security #5): when rerank is disabled in config
     # (ablation / model-unavailable), the rerank-based gate can't fire and
     # out-of-slice queries used to leak through. Fall back to a calibrated
@@ -380,6 +381,12 @@ class Settings(BaseSettings):
     # bridging. Skip the expensive sparse JSONB head on the original query
     # during multi-query retrieval to keep latency under control.
     query_expansion_sparse_original: bool = False
+    # Legal-HyDE-lite: retrieval-only "search brief" variant. Fallback is the
+    # conservative production mode after the seed-matched 500 gate passed: it
+    # only adds a brief when deterministic expansion found no legal variant.
+    # Use off for rollback/A-B baselines and always for offline sweeps.
+    legal_hyde_mode: Literal["off", "fallback", "always"] = "fallback"
+    legal_hyde_max_chars: int = 360
     # Multi-query reranking used to score every candidate against every
     # variant. Score against original + first legal variant by default;
     # the union still benefits from all retrieved variants.
@@ -404,6 +411,14 @@ class Settings(BaseSettings):
     # themselves.
     source_quality_boost: float = 0.06
     source_cluster_boost: float = 0.04
+
+    # Startup readiness. The local BGE-M3 embedder and bge-reranker are lazy
+    # singletons, which keeps tests/dev imports light but can push the full
+    # model-load cost onto the first real user after a restart. Production
+    # entrypoints should enable this so the API is not considered ready until
+    # the in-process models are warm.
+    prewarm_models_on_startup: bool = False
+    prewarm_models_required: bool = True
 
     # Provenance gate (PLAN §10.1 + provenance system).
     # In production, retrieval must only return chunks from documents whose

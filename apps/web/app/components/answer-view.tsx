@@ -11,6 +11,7 @@ import type {
   RefusedEvent,
   RelevanceEvent,
   SentenceEvent,
+  SourceGapEvent,
   SourcesEvent,
   StopEvent,
   TimingEvent,
@@ -31,6 +32,7 @@ interface AnswerState {
   pending: boolean;
   matterRoute: MatterRouteEvent | null;
   coverage: CoverageEvent | null;
+  sourceGap: SourceGapEvent | null;
   passages: PassageEvent[];
   // Server-authored authoritative source list (round-3). The UI prefers
   // this over `passages` when present — it's emitted at end-of-stream
@@ -59,6 +61,7 @@ const INITIAL: AnswerState = {
   pending: false,
   matterRoute: null,
   coverage: null,
+  sourceGap: null,
   passages: [],
   sources: null,
   timeline: [],
@@ -229,6 +232,21 @@ export function AnswerView() {
         )}
 
         {state.coverage && <CoverageChip coverage={state.coverage} />}
+
+        {state.sourceGap && state.sourceGap.has_gap && (
+          <Notice tone="amber" title="Controlling source not fully available">
+            <span>{state.sourceGap.message}</span>
+            {state.sourceGap.missing_required_sources.length > 0 && (
+              <span className="mt-2 block text-xs">
+                Missing:{" "}
+                {state.sourceGap.missing_required_sources
+                  .slice(0, 3)
+                  .map((item) => item.required_source)
+                  .join("; ")}
+              </span>
+            )}
+          </Notice>
+        )}
 
         {/* Task #10: relevance verdict notice. The answer text itself
             is still grounded by citations (NLI / bge gates verified each
@@ -517,6 +535,8 @@ function applyEvent(s: AnswerState, event: string, data: unknown): AnswerState {
   switch (event) {
     case "coverage":
       return { ...s, coverage: data as CoverageEvent };
+    case "source_gap":
+      return { ...s, sourceGap: data as SourceGapEvent };
     case "matter_route":
       return { ...s, matterRoute: data as MatterRouteEvent };
     case "passages":

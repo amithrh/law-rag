@@ -1,6 +1,11 @@
 import asyncio
 
+from apps.api import config as config_module
 from apps.api.query_expand import expand_query
+
+
+def _clear_settings_cache() -> None:
+    config_module.get_settings.cache_clear()
 
 
 def test_llm_fallback_disabled_for_general_queries():
@@ -229,6 +234,92 @@ def test_subagent_false_positive_expansion_regressions():
     assert "Divorce Act 1869" in "\n".join(christian[1:])
 
 
+def test_family_civil_expansions_preserve_user_issue_lanes():
+    cases = [
+        (
+            "mutual consent divorce both agree no fight what papers needed",
+            ("Hindu Marriage Act 1955 section 13B",),
+            ("second marriage", "bigamy", "section 27 restraint", "adultery"),
+        ),
+        (
+            "special marriage couple mutual consent divorce both agree section 28",
+            ("Special Marriage Act 1954 section 28",),
+            ("Hindu Marriage Act 1955 section 13B", "second marriage", "bigamy"),
+        ),
+        (
+            "we are christian couple want mutual consent divorce both agree",
+            ("Divorce Act 1869",),
+            ("Hindu Marriage Act 1955 section 13B", "Special Marriage Act 1954 section 28", "second marriage"),
+        ),
+        (
+            "muslim couple want divorce by mutual consent both agree procedure",
+            ("Muslim Personal Law",),
+            ("Hindu Marriage Act 1955 section 13B", "Special Marriage Act 1954 section 28"),
+        ),
+        (
+            "i caught my husband with another woman having sex",
+            ("Hindu Marriage Act 1955 section 13",),
+            ("section 13B", "second marriage", "bigamy", "Protection of Women from Domestic Violence Act"),
+        ),
+        (
+            "christian wife caught husband having affair with another woman",
+            ("Divorce Act 1869",),
+            ("Hindu Marriage Act 1955", "Special Marriage Act 1954 section 27", "second marriage"),
+        ),
+        (
+            "muslim husband having affair with another woman what family court remedy",
+            ("Muslim Personal Law",),
+            ("Hindu Marriage Act 1955", "Special Marriage Act 1954", "second marriage"),
+        ),
+        (
+            "special marriage husband having affair with another woman what divorce ground",
+            ("Special Marriage Act 1954 section 27",),
+            ("Hindu Marriage Act 1955", "Divorce Act 1869", "second marriage"),
+        ),
+        (
+            "my wife denies sex since one year what can i do",
+            ("Hindu Marriage Act 1955 section 9 section 13",),
+            ("BNS 2023", "bigamy", "second marriage"),
+        ),
+        (
+            "my husband forces sex when i say no and threatens me",
+            ("Protection of Women from Domestic Violence Act 2005",),
+            ("section 13B", "second marriage", "non compete"),
+        ),
+        (
+            "my husband did second marriage without divorcing me",
+            ("second marriage",),
+            ("section 13B mutual consent", "Special Marriage Act 1954 section 28"),
+        ),
+        (
+            "my husband lied about salary before marriage",
+            ("Hindu Marriage Act 1955 section 12",),
+            ("second marriage", "adultery", "section 13B"),
+        ),
+        (
+            "my tenant not vacating because I want to sell the flat",
+            ("section 106 lease termination",),
+            ("section 45 joint transfer", "gift deed", "legal heirs inherited"),
+        ),
+        (
+            "can I sell property if one legal heir is not agreeing",
+            ("Hindu Succession Act 1956 section 8",),
+            ("tenant not vacating", "section 106 lease termination", "gift deed"),
+        ),
+        (
+            "my brother took hand loan and not returning money",
+            ("Indian Contract Act 1872 section 37",),
+            ("section 27 non compete", "Negotiable Instruments Act 1881 section 138"),
+        ),
+    ]
+    for query, required, forbidden in cases:
+        joined = "\n".join(asyncio.run(expand_query(query, max_variants=3))[1:])
+        for expected in required:
+            assert expected in joined, (query, expected, joined)
+        for unexpected in forbidden:
+            assert unexpected not in joined, (query, unexpected, joined)
+
+
 def test_name_change_expansion_uses_gazette_identity_terms_not_marriage_status_terms():
     out = asyncio.run(
         expand_query(
@@ -317,3 +408,61 @@ def test_name_change_expansion_uses_gazette_identity_terms_not_marriage_status_t
     joined_undertrial = "\n".join(legacy_undertrial[1:])
     assert "CrPC 1973 section 436A" in joined_undertrial
     assert "CrPC 1973 section 479" not in joined_undertrial
+
+
+def test_legal_hyde_off_override_preserves_general_query(monkeypatch):
+    query = "station not released my seized phone after case closed"
+    monkeypatch.setenv("LEGAL_HYDE_MODE", "off")
+    _clear_settings_cache()
+    try:
+        out = asyncio.run(expand_query(query, max_variants=1))
+    finally:
+        _clear_settings_cache()
+
+    assert out == [query]
+
+
+def test_legal_hyde_always_appends_retrieval_only_brief(monkeypatch):
+    query = "INSURERER IS REJECTING MY CLAIM"
+    monkeypatch.setenv("LEGAL_HYDE_MODE", "always")
+    _clear_settings_cache()
+    try:
+        out = asyncio.run(expand_query(query, max_variants=1))
+    finally:
+        _clear_settings_cache()
+
+    assert len(out) >= 2
+    brief = out[-1].lower()
+    assert "matter insurance claim" in brief
+    assert "insurance ombudsman" in brief
+    assert query.lower() in brief
+    assert "you should" not in brief
+    assert "file a complaint" not in brief
+
+
+def test_legal_hyde_fallback_only_when_no_existing_variant(monkeypatch):
+    query = "INSURERER IS REJECTING MY CLAIM"
+    monkeypatch.setenv("LEGAL_HYDE_MODE", "fallback")
+    monkeypatch.setattr("apps.api.query_expand._route_variants", lambda *args, **kwargs: [])
+    _clear_settings_cache()
+    try:
+        out = asyncio.run(expand_query(query, max_variants=1))
+    finally:
+        _clear_settings_cache()
+
+    assert len(out) == 2
+    assert out[0] == query
+    assert "matter insurance claim" in out[1].lower()
+
+
+def test_legal_hyde_fallback_does_not_add_when_deterministic_variant_exists(monkeypatch):
+    query = "INSURERER IS REJECTING MY CLAIM"
+    monkeypatch.setenv("LEGAL_HYDE_MODE", "fallback")
+    _clear_settings_cache()
+    try:
+        out = asyncio.run(expand_query(query, max_variants=1))
+    finally:
+        _clear_settings_cache()
+
+    assert len(out) == 2
+    assert not any("matter insurance" in variant.lower() for variant in out[1:])
