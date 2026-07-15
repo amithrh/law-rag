@@ -115,7 +115,7 @@ reportMissingTypeStubs = "none"
 
 # --- pytest ---
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/*/tests"]
+testpaths = ["tests", "packages/*/tests", "apps/api/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

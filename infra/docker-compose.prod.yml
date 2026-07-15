@@ -96,6 +96,9 @@ services:
       OLLAMA_HOST: ollama
       OLLAMA_PORT: "11434"
       LLM_MODEL: ${LLM_MODEL}
+      PREWARM_MODELS_ON_STARTUP: "true"
+      PREWARM_MODELS_REQUIRED: "true"
+      REQUIRE_PROVENANCE_VERIFIED: "true"
       LOG_LEVEL: info
     depends_on:
       postgres:

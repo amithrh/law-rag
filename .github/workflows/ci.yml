@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "codex/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: API checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install API test dependencies
+        run: uv sync --extra dev --frozen
+      - name: Check lockfile
+        run: uv lock --check
+      - name: Compile serving code
+        run: PYTHONPATH=. uv run python -m compileall -q apps/api scripts
+      - name: Deterministic API regression suite
+        run: PYTHONPATH=. uv run pytest apps/api/tests -m "not needs_stack" -q
+
+  compose:
+    name: Production compose contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate merged production compose configuration
+        env:
+          API_IMAGE: law-rag-api:ci
+          WEB_IMAGE: law-rag-web:ci
+          GRAFANA_ADMIN_PASSWORD: ci-only
+        run: >-
+          docker compose --env-file .env.example
+          -f infra/docker-compose.yml
+          -f infra/docker-compose.prod.yml
+          config --quiet
+
+  web:
+    name: Web type check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install web dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run type-check

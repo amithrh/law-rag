@@ -1,35 +1,63 @@
 # law-rag
 
-Self-hosted Retrieval-Augmented Generation system over Indian primary law (Supreme Court + selected High Courts + bare acts + regulator circulars). Pre-implementation phase — see [PLAN.md](PLAN.md) and [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md).
+An Indian legal-help application that turns a user problem into a matter plan,
+retrieved authorities, cited plain-language answer, and an escalation or
+source-gap handoff. It is not a legal-advice substitute and is not yet
+production ready.
 
-The first deliverable is a **research-grade engine slice** focused on common-public law (consumer, family, criminal procedure, wages, RTI, motor vehicles). Productization (auth, billing, ads, hosting, multilingual, audio) lives in [PLAN.md §13](PLAN.md).
+The live product is a FastAPI streamed-answer API plus a Next.js interface.
+It combines hybrid retrieval, route-aware authority packs, reranking,
+sentence-level citation verification, and deterministic action contracts for
+reviewed high-risk routes.
 
 ## Quick start (Mac dev)
 
 ```bash
-# 1. Configure
+# 1. Install local development dependencies
+uv sync --extra dev --frozen
+cd apps/web && npm ci && cd ../..
+
+# 2. Configure the local data plane
 cp .env.example .env
 $EDITOR .env  # set POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, etc.
 
-# 2. Start the data plane (postgres+pgvector, redis, ollama, tei, minio)
+# 3. Start Postgres, Redis, Ollama, and MinIO
 make up
-# TEI downloads bge-m3 (~2 GB) on first start. Watch progress:
-docker logs -f lawrag-tei
+# Mac development uses host-side Ollama embeddings; Linux production uses TEI.
 
-# 3. Pull Ollama LLMs (~5 GB each for the 7-8B q4_K_M variants)
+# 4. Pull the configured local Ollama models
 make pull-models
 
-# 4. Health check
+# 5. Verify data-plane dependencies, then run the API and web app in separate terminals
 make doctor
+make api-dev
+make web-dev
 ```
 
-Once `make doctor` reports all green, the data plane is ready. The sprint then proceeds per [PLAN.md §9](PLAN.md):
+The API listens on `http://127.0.0.1:8000`; the web app listens on
+`http://127.0.0.1:3000`. Set `NEXT_PUBLIC_API_BASE` when the web app should use
+another API origin.
 
-- **Days 3–5:** ingest adapters (SC via HF Rahul1872 + IndiaCode for selected acts + Tier-A HCs) and PII redactor.
-- **Days 6–7:** chunkers + 1M-chunk embedding + HNSW build.
-- **Days 8–10:** retrieval API + per-sentence verifier + lay-friendly prompt.
-- **Days 11–13:** Next.js UI.
-- **Days 14–15:** golden-set eval + ops + demo.
+## Verification
+
+```bash
+make test-workflows    # deterministic owner/source-contract suite
+make test-api          # full FastAPI regression suite
+make typecheck-web     # TypeScript check
+make corpus-manifest   # aggregate DB/runtime/provenance snapshot
+```
+
+`make test-api` is a release gate, not a smoke test. A passing focused test or
+a generated evaluation set is not production evidence. See
+[docs/PRODUCT_RECOVERY_TODO.md](docs/PRODUCT_RECOVERY_TODO.md) for the current
+measured blockers and release criteria.
+
+## Deployment Boundary
+
+`infra/docker-compose.prod.yml` is a Linux/GPU production overlay and expects
+prebuilt `API_IMAGE` and `WEB_IMAGE`. It enables model prewarming and requires
+provenance-verified sources. Do not deploy it until the recovery TODO's API,
+holdout, PII, security, and operations gates are all green.
 
 ## Repo layout
 
@@ -70,4 +98,9 @@ OPEN_QUESTIONS.md        decisions deferred to Day-0 benches / human input
 
 ## Status
 
-Pre-implementation. Repo currently contains: planning docs, Docker Compose for the data plane, Postgres schema, model pull scripts, doctor script. No application code yet — the sprint starts here.
+Current branch status and production gates are intentionally recorded in
+[docs/PRODUCT_RECOVERY_TODO.md](docs/PRODUCT_RECOVERY_TODO.md). The project is
+under active recovery. The local deterministic and stack-backed API regression
+gates are green at the current checkpoint, but independent legal holdout,
+provenance, privacy, security, and operational gates remain open. It must not be
+presented as production ready.

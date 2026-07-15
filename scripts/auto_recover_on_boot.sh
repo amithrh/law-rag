@@ -34,6 +34,7 @@ fi
 # ---- 2. API (uvicorn)
 if ! pgrep -f "uvicorn apps.api.main:app" > /dev/null; then
     log "starting uvicorn API"
+    PREWARM_MODELS_ON_STARTUP=true PREWARM_MODELS_REQUIRED=true \
     PYTHONPATH=. nohup "$PROJECT_ROOT/.venv/bin/uvicorn" apps.api.main:app \
         --host 0.0.0.0 --port 8000 --workers 1 \
         > "$LOG_DIR/api_autoboot_$(date +%Y%m%d_%H%M%S).log" 2>&1 &

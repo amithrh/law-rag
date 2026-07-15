@@ -5,9 +5,11 @@
 ROOT       := $(shell pwd)
 COMPOSE    := docker compose --env-file $(ROOT)/.env -f $(ROOT)/infra/docker-compose.yml
 ENVFILE    := $(ROOT)/.env
+UV         ?= uv
 
 .PHONY: help env up down restart logs ps doctor psql redis-cli pull-models \
-        bench-day0 ingest-slice eval clean nuke
+        bench-day0 ingest-slice eval clean nuke sync test-api test-workflows \
+        typecheck-web verify api-dev web-dev corpus-manifest
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -47,6 +49,31 @@ redis-cli: ## Open a redis-cli shell.
 
 pull-models: ## Pull Ollama LLMs (TEI auto-pulls on container start).
 	@bash $(ROOT)/scripts/pull-models.sh
+
+sync: ## Install Python development dependencies from uv.lock.
+	$(UV) sync --extra dev --frozen
+
+test-api: ## Run the FastAPI/API regression suite.
+	PYTHONPATH=. $(UV) run pytest apps/api/tests -q
+
+test-workflows: ## Run deterministic answer-owner and authority-contract checks.
+	PYTHONPATH=. $(UV) run pytest apps/api/tests/test_common_workflow_contracts.py -q
+
+typecheck-web: ## Type-check the Next.js frontend.
+	cd $(ROOT)/apps/web && npm ci && npm run type-check
+
+verify: ## Run the current full local quality gate.
+	$(MAKE) test-api
+	$(MAKE) typecheck-web
+
+api-dev: ## Run the API locally on http://127.0.0.1:8000.
+	PYTHONPATH=. $(UV) run uvicorn apps.api.main:app --host 127.0.0.1 --port 8000 --reload
+
+web-dev: ## Run the web app locally on http://127.0.0.1:3000.
+	cd $(ROOT)/apps/web && npm run dev
+
+corpus-manifest: ## Write a DB-backed corpus/runtime snapshot to reports/.
+	PYTHONPATH=. $(UV) run python scripts/corpus_manifest.py --output reports/corpus-manifest.json
 
 bench-day0: ## Run Day-0 model-dependent benches (Q1 verifier, Q3 embedding, Q4 reranker, Q2 HNSW). Requires stack up + models pulled.
 	@bash $(ROOT)/scripts/bench-day0.sh
