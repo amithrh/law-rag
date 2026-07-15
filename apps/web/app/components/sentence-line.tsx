@@ -5,6 +5,7 @@ import { CitationChip } from "./citation-chip";
 
 const STATUS_STYLE: Record<SentenceEvent["status"], string> = {
   ok: "text-stone-900",
+  guidance: "text-stone-700 bg-stone-50 border-l-2 border-stone-300 pl-2",
   weak_support: "text-stone-900 bg-amber-50 px-1 rounded-sm",
   unsupported: "text-stone-500 bg-red-50 px-1 rounded-sm line-through decoration-red-400 decoration-1",
   unknown_citation: "text-stone-500 bg-red-50 px-1 rounded-sm line-through decoration-red-400 decoration-1",
@@ -12,6 +13,7 @@ const STATUS_STYLE: Record<SentenceEvent["status"], string> = {
 };
 
 const STATUS_BADGE: Partial<Record<SentenceEvent["status"], string>> = {
+  guidance: "practical step",
   weak_support: "weak support",
   unsupported: "unsupported",
   unknown_citation: "bad citation",

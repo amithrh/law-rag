@@ -593,9 +593,19 @@ def test_common_composite_failures_get_required_source_packs():
     }
     assert route_matter(boss_recovery_query).category == "banking_credit_dispute"
     assert "rbi_integrated_ombudsman_2021" in boss_recovery_packs
-    assert "dpdp_2023" in boss_recovery_packs
-    assert "it_act_2000" in boss_recovery_packs
+    assert "dpdp_2023_loan_app_contacts" not in boss_recovery_packs
+    assert "it_act_2000" not in boss_recovery_packs
+    assert "it_act_2000_loan_app_private_image" not in boss_recovery_packs
     assert "bns_2023_recovery_harassment" in boss_recovery_packs
+
+    private_image_recovery_query = "loan app is blackmailing me with a morphed nude"
+    private_image_recovery_packs = {
+        pack.id: pack
+        for pack in source_packs_for_route(
+            route_matter(private_image_recovery_query), private_image_recovery_query
+        )
+    }
+    assert private_image_recovery_packs["it_act_2000_loan_app_private_image"].anchor_patterns == ("/sec-66E",)
 
     video_blackmail_query = "someone recorded video call and says he will send to my relatives if i dont pay"
     video_blackmail_packs = {
@@ -617,6 +627,19 @@ def test_common_composite_failures_get_required_source_packs():
     assert route_matter(bank_lien_query).category == "banking_credit_dispute"
     assert "bnss_2023_bank_account_legal_hold" in bank_lien_packs
     assert "rbi_integrated_ombudsman_2021" in bank_lien_packs
+
+    cyber_routed_lien_query = "cyber police put a lien on my frozen bank account"
+    cyber_routed_lien_packs = {
+        pack.id: pack
+        for pack in source_packs_for_route(
+            route_matter(cyber_routed_lien_query),
+            cyber_routed_lien_query,
+        )
+    }
+    assert route_matter(cyber_routed_lien_query).category == "cyber_fraud_or_harassment"
+    assert "rbi_integrated_ombudsman_2021" in cyber_routed_lien_packs
+    assert "bnss_2023_bank_account_legal_hold" in cyber_routed_lien_packs
+    assert "it_act_2000_bank_freeze_cyber_hold" in cyber_routed_lien_packs
 
     order_copy_lien_query = "my salary account has lien after cyber complaint but bank is not giving order copy"
     order_copy_lien_packs = {
@@ -659,8 +682,9 @@ def test_stage2_failed_family_source_packs_cover_operational_authorities():
     assert {
         "rbi_integrated_ombudsman_2021",
         "bns_2023_recovery_harassment",
-        "it_act_2000",
     } <= recovery_photo_ids
+    assert "it_act_2000" not in recovery_photo_ids
+    assert "it_act_2000_loan_app_private_image" not in recovery_photo_ids
 
 
 def test_stage11_remaining_common_prompts_get_workflow_sources():
@@ -2639,7 +2663,50 @@ def test_typo_insurer_rejecting_claim_gets_consumer_and_ombudsman_packs():
 def test_lgbtq_identity_arrest_gets_navtej_and_custody_packs():
     ids = set(_pack_ids("police arrested my son for being gay"))
     assert {"navtej_lgbtq_liberty", "constitution_article_21", "constitution_article_22"} <= ids
-    assert "bnss_2023" in ids
+    assert {"bnss_2023", "crpc_1973"} <= ids
+
+
+@pytest.mark.parametrize(
+    "query,required_pack,forbidden_pack",
+    (
+        (
+            "Cyber police froze my bank account in May 2023",
+            "crpc_1973_bank_account_legal_hold",
+            "bnss_2023_bank_account_legal_hold",
+        ),
+        (
+            "Cyber police froze my bank account in August 2025",
+            "bnss_2023_bank_account_legal_hold",
+            "crpc_1973_bank_account_legal_hold",
+        ),
+    ),
+)
+def test_bank_legal_hold_source_pack_follows_incident_regime(
+    query: str,
+    required_pack: str,
+    forbidden_pack: str,
+):
+    packs = {
+        pack.id: pack
+        for pack in source_packs_for_route(route_matter(query), query)
+    }
+
+    assert required_pack in packs
+    assert forbidden_pack not in packs
+    assert packs["rbi_integrated_ombudsman_2021"].anchor_patterns == (
+        "/sec-2", "/sec-3", "/sec-9", "/sec-10",
+    )
+
+
+def test_unknown_date_bank_legal_hold_retrieves_both_procedure_regimes():
+    query = "Cyber police froze my bank account"
+    packs = {
+        pack.id: pack
+        for pack in source_packs_for_route(route_matter(query), query)
+    }
+
+    assert packs["bnss_2023_bank_account_legal_hold"].anchor_patterns == ("/sec-106",)
+    assert packs["crpc_1973_bank_account_legal_hold"].anchor_patterns == ("/sec-102",)
 
 
 def test_witch_branding_ranchi_uses_jharkhand_state_reference_and_criminal_sources():
@@ -2737,7 +2804,6 @@ def test_stage5_money_cyber_identity_source_packs_cover_exact_variants():
     }
     assert {
         "rbi_integrated_ombudsman_2021_loan_app_cyber",
-        "dpdp_2023_loan_app_contacts",
         "it_act_2000",
         "bns_2023_intimate_image_blackmail",
     } <= set(loan_app_packs)
@@ -4595,14 +4661,27 @@ def test_common_screenshot_source_packs_are_available():
     assert {"rbi_integrated_ombudsman_2021", "banking_regulation_1949"} <= set(
         _pack_ids("my bank account is frozen what to do")
     )
-    assert {"rbi_integrated_ombudsman_2021", "banking_regulation_1949", "bnss_2023"} <= set(
+    assert {
+        "rbi_integrated_ombudsman_2021",
+        "banking_regulation_1949",
+        "bnss_2023_bank_account_legal_hold",
+        "crpc_1973_bank_account_legal_hold",
+    } <= set(
         _pack_ids("my bank account is frozen suddenly cyber police says lien what can I do")
     )
 
     loan_ids = set(_pack_ids("Loan app is harassing my contacts"))
-    assert {"rbi_integrated_ombudsman_2021", "dpdp_2023", "it_act_2000"} <= loan_ids
+    assert {
+        "rbi_integrated_ombudsman_2021",
+    } <= loan_ids
+    assert "dpdp_2023_loan_app_contacts" not in loan_ids
+    assert "it_act_2000" not in loan_ids
     loan_relatives_ids = set(_pack_ids("online loan app calling my relatives and abusing me"))
-    assert {"rbi_integrated_ombudsman_2021", "dpdp_2023", "it_act_2000", "bns_2023"} <= loan_relatives_ids
+    assert {
+        "rbi_integrated_ombudsman_2021",
+        "bns_2023",
+    } <= loan_relatives_ids
+    assert "it_act_2000" not in loan_relatives_ids
 
     bank_debit_ids = set(_pack_ids("Bank deducted money wrongly and customer care not helping."))
     assert {"rbi_integrated_ombudsman_2021", "consumer_protection_2019"} <= bank_debit_ids
@@ -4636,15 +4715,14 @@ def test_common_user_gate_failure_cluster_source_packs_are_available():
         "salary account blocked by bank saying police request no notice": {
             "rbi_integrated_ombudsman_2021",
             "banking_regulation_1949",
-            "bnss_2023",
+            "bnss_2023_bank_account_legal_hold",
+            "crpc_1973_bank_account_legal_hold",
         },
-        "online loan app calling my relatives and abusing me": {
-            "rbi_integrated_ombudsman_2021",
-            "dpdp_2023",
-            "it_act_2000",
-            "bns_2023",
-            "bnss_2023",
-        },
+            "online loan app calling my relatives and abusing me": {
+                "rbi_integrated_ombudsman_2021",
+                "bns_2023",
+                "bnss_2023",
+            },
         "private hospital not giving medical records after discharge": {
             "consumer_protection_2019",
             "clinical_establishments_2010",
@@ -4700,7 +4778,8 @@ def test_common_user_gate_failure_cluster_source_packs_are_available():
     upi_freeze_ids = set(_pack_ids(upi_freeze_query))
     assert {"rbi_integrated_ombudsman_2021", "banking_regulation_1949"} <= upi_freeze_ids
     assert "bnss_2023" not in upi_freeze_ids
-    assert salary_freeze_packs["bnss_2023"].anchor_patterns == ("/sec-106",)
+    assert salary_freeze_packs["bnss_2023_bank_account_legal_hold"].anchor_patterns == ("/sec-106",)
+    assert salary_freeze_packs["crpc_1973_bank_account_legal_hold"].anchor_patterns == ("/sec-102",)
     assert "/sec-35A" in salary_freeze_packs["banking_regulation_1949"].anchor_patterns
 
     heir_sale_ids = set(_pack_ids("Can I sell property if one legal heir is not agreeing?"))
@@ -4798,13 +4877,15 @@ def test_stage5_money_cyber_identity_source_packs_cover_contract_authorities():
         "police froze my bank account after fraud complaint but I am victim not accused": {
             "rbi_integrated_ombudsman_2021",
             "banking_regulation_1949",
-            "bnss_2023",
+            "bnss_2023_bank_account_legal_hold",
+            "crpc_1973_bank_account_legal_hold",
             "it_act_2000_bank_freeze_cyber_hold",
         },
         "fraud complaint against my UPI ID and bank froze account no order": {
             "rbi_integrated_ombudsman_2021",
             "banking_regulation_1949",
             "bnss_2023_bank_account_legal_hold",
+            "crpc_1973_bank_account_legal_hold",
             "it_act_2000_bank_freeze_cyber_hold",
         },
         "PAN card copy leaked online and fake bank account opened in my name": {
@@ -5645,3 +5726,62 @@ def test_stage_e9f_source_packs_cover_remaining_source_gap_repairs():
     )
     assert "constitution_article_32_writ" in writ_packs
     assert "/sec-32" in writ_packs["constitution_article_32_writ"].anchor_patterns
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "My stolen bike FIR ki jaanch chal rahi hai, but police refuse to give the case diary update",
+        "The stolen-car FIR remains pending investigation; the SHO refuses to tell me the current stage",
+        "My stolen bike has an FIR receipt, but police refuse to chase the thieves",
+        "The vehicle theft FIR was assigned to an IO, but police refuse to follow up",
+        "Police gave me crime number 48 but refuse to trace my stolen scooter",
+        "My stolen scooter case is C.R. 22 and police refuse further action",
+        "The theft case for my scooter is under Crime No 22; police refuse to search for it",
+    ),
+)
+def test_existing_vehicle_theft_fir_uses_investigation_not_registration_packs(query: str):
+    route = route_matter(query)
+    packs = source_packs_for_route(route, query)
+    pack_ids = {pack.id for pack in packs}
+
+    assert "bnss_2023_vehicle_theft_fir" not in pack_ids
+    assert "crpc_1973_vehicle_theft_fir" not in pack_ids
+    assert "bnss_2023_vehicle_theft_investigation" in pack_ids
+    assert "crpc_1973_vehicle_theft_investigation" in pack_ids
+
+    current = next(pack for pack in packs if pack.id == "bnss_2023_vehicle_theft_investigation")
+    legacy = next(pack for pack in packs if pack.id == "crpc_1973_vehicle_theft_investigation")
+    assert current.anchor_patterns == ("/sec-175",)
+    assert legacy.anchor_patterns == ("/sec-156",)
+    generic_current = next(pack for pack in packs if pack.id == "bnss_2023")
+    generic_legacy = next(pack for pack in packs if pack.id == "crpc_1973")
+    assert generic_current.anchor_patterns == ("/sec-175",)
+    assert generic_legacy.anchor_patterns == ("/sec-156",)
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "My stolen bike case not registered; police refused to lodge the FIR",
+        "There is no crime number because police will not register my stolen motorcycle FIR",
+        "Police refused to register the stolen car case; no crime number has been assigned",
+        "No FIR was registered for my stolen car because police refused my complaint",
+        "Police said no FIR registered for my stolen bike and turned me away",
+        "There is no FIR number because police refused to register my stolen car",
+        "An FIR number is yet to be allotted because police refused my stolen-car complaint",
+        "Police have not assigned any FIR number for my stolen motorcycle and refuse to register it",
+        "The FIR number remains unallotted because police rejected my stolen-bike complaint",
+        "Police haven't assigned an FIR number for my stolen scooter and refuse to lodge it",
+        "My stolen car FIR number is still pending allotment because the station turned me away",
+        "The FIR number has yet to be generated for my stolen motorcycle because police refused registration",
+    ),
+)
+def test_negated_vehicle_case_identifiers_keep_fir_registration_packs(query: str):
+    route = route_matter(query)
+    pack_ids = {pack.id for pack in source_packs_for_route(route, query)}
+
+    assert "bnss_2023_vehicle_theft_fir" in pack_ids
+    assert "crpc_1973_vehicle_theft_fir" in pack_ids
+    assert "bnss_2023_vehicle_theft_investigation" not in pack_ids
+    assert "crpc_1973_vehicle_theft_investigation" not in pack_ids

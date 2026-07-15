@@ -705,3 +705,72 @@ plan consumption and authority-ID enforcement, not P1 as a whole. The next
 boundary is P1C: migrate the first ten high-volume/safety answer owners out of
 legacy `main.py` branches and prove exactly one primary owner plus fallback per
 supported scenario.
+
+## 2026-07-15 P1C Plan-Owned Answer Slice
+
+The first ten released scenario families now have one answer owner declared in
+MatterPlan before retrieval. The owner is a provider plus reviewed contract ID,
+not a label or whichever template happens to match first. Every released plan
+also declares `source_gap_handoff`, requires a reviewed contract, and disables
+freeform LLM ownership.
+
+Released scenario families:
+
+- immediate domestic-violence safety;
+- arrest/custody where station, case, grounds, or FIR information is withheld;
+- identity-only LGBTQ arrest safeguards;
+- stolen-vehicle FIR refusal;
+- loan-app contact harassment;
+- criminal/investigating-authority bank-account hold;
+- wrongful bank debit;
+- insurance claim rejection or mis-selling;
+- a joint co-owner selling the whole property; and
+- marital-intimacy or marriage-breakdown remedy.
+
+Ownership resolution is route-independent but fact-bound. It runs every
+released contract predicate against the same query and route, returns one
+owner, records explicitly compatible secondary owners, or produces an
+`answer_owner_ambiguity` handoff. It never resolves two incompatible owners by
+priority or first-match order.
+
+Shared semantic predicates are mandatory where three layers need the same
+fact. Routing, source-pack selection, and answer ownership now share rules for:
+
+- human custody versus property held by police, including relational nouns,
+  names, Roman-Hindi wording, and harmless descriptors such as `adult` or
+  `gay` between a possessive and the person;
+- initial FIR refusal versus an existing FIR at investigation stage;
+- direct domestic harm versus a threat by a tenant, landlord, shop owner, or
+  other third party;
+- police/cyber/investigating-authority bank holds versus civil decree,
+  pre-judgment, arbitral, PMLA/ED, or ordinary platform KYC restraints; and
+- current BNS/BNSS, legacy IPC/CrPC, or unknown incident-date obligations.
+
+Source support is an authority ledger, not title presence. Mandatory owner
+entries bind to exact source-pack IDs and anchors. Unknown criminal dates bind
+both current and legacy procedural sources. An Act title with the wrong section
+does not activate an owner. If a required owner cannot activate, the endpoint
+returns the structured handoff with no legacy or freeform substitute.
+
+Two live failures established an additional no-substitution invariant. An
+arbitral interim restraint cannot be answered from incidental CPC passages, and
+a pre-judgment attachment cannot borrow decree-execution or criminal-seizure
+law. When the controlling Arbitration Act or Order XXXVIII source is missing,
+the server emits route, plan, passages, workflow diagnostics, source gap, and a
+refusal, but zero legal answer sentences.
+
+Language and actor binding must be tested in the final stream, not only as
+isolated keywords. `Mera husband mujhe abhi maar raha hai` now selects the same
+reviewed safety owner as its English equivalent. `My tenant said he will poison
+me` stays a criminal threat and cannot retrieve PWDVA or tenancy law merely
+because a domestic or property word is nearby.
+
+P1C evidence: both final independent reviews PASS; architecture closed replay
+`69 prompts / 226 assertions / 0 failures`; frontend contract tests `4 passed`,
+type-check and production build pass; released live routes `10/10`, adversarial
+neighbours `9/9`, and the exact user-shaped live corpus `11/11`, including the
+reported-spousal-threat pronoun-binding regression. The final broad
+ownership/API gate is `1,236 passed, 41 deselected` in `397.78s`. Some rows
+correctly use source-gap handoff because the indexed title lacks the mandatory
+section. P2 must repair those authority records and corpus anchors rather than
+weakening this gate.

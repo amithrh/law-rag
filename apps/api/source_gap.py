@@ -193,6 +193,27 @@ def build_source_gap_event(
     passages: list[dict[str, Any]],
     plan: MatterPlan | None = None,
 ) -> dict[str, Any] | None:
+    if (
+        plan is not None
+        and plan.answer_policy.fallback_reason == "multiple_plan_owners"
+    ):
+        return {
+            "has_gap": True,
+            "route_category": route_category,
+            "gap_kinds": ["answer_owner_ambiguity"],
+            "missing_required_sources": [],
+            "message": (
+                "Your question contains more than one legal problem that needs a "
+                "different reviewed answer path. I will not combine them into one "
+                "possibly misleading answer. Ask one issue at a time or use legal-aid "
+                "intake to separate the immediate problem and next step."
+            ),
+            "handoff": "DLSA/legal aid, a qualified lawyer, or the relevant court/forum",
+            "policy": "separate_conflicting_answer_owners",
+            "conflicting_primary_owners": list(
+                plan.answer_policy.conflicting_primary_owners
+            ),
+        }
     missing = (
         missing_plan_authorities(plan=plan, passages=passages, query=query)
         if plan is not None
@@ -269,19 +290,6 @@ def missing_plan_authorities(
     query: str,
 ) -> list[dict[str, Any]]:
     """Find missing authorities using MatterPlan IDs as the primary key."""
-    present_ids = {
-        str(authority_id)
-        for passage in passages
-        if isinstance(passage, dict)
-        for authority_id in authority_ids_for_passage(
-            plan,
-            title=str(passage.get("title") or ""),
-            anchor=str(passage.get("anchor") or ""),
-            source_pack_id=passage.get("required_source_pack"),
-            source_type=passage.get("source_type"),
-        )
-        if authority_id
-    }
     missing: list[dict[str, Any]] = []
     for entry in plan.authority_ledger:
         requirement_type = classify_required_source_requirement(entry.source)
@@ -294,7 +302,11 @@ def missing_plan_authorities(
                 continue
         elif not entry.must_cite:
             continue
-        if entry.authority_id and entry.authority_id in present_ids:
+        if any(
+            _passage_satisfies_plan_entry(plan, entry, passage)
+            for passage in passages
+            if isinstance(passage, dict)
+        ):
             continue
         match_mode = "authority_id"
         missing.append({
@@ -302,10 +314,39 @@ def missing_plan_authorities(
             "authority_id": entry.authority_id,
             "source_pack_id": entry.source_pack_id,
             "identity_status": entry.identity_status,
+            "required_anchor_patterns": list(entry.required_anchor_patterns),
             "match_mode": match_mode,
             "kind": source_gap_kind(entry.source, query=query),
         })
     return missing
+
+
+def _passage_satisfies_plan_entry(
+    plan: MatterPlan,
+    entry: Any,
+    passage: dict[str, Any],
+) -> bool:
+    authority_ids = authority_ids_for_passage(
+        plan,
+        title=str(passage.get("title") or ""),
+        anchor=str(passage.get("anchor") or ""),
+        source_pack_id=passage.get("required_source_pack"),
+        source_type=passage.get("source_type"),
+    )
+    if entry.authority_id not in authority_ids:
+        return False
+    required_anchors = tuple(entry.required_anchor_patterns or ())
+    if not required_anchors:
+        return True
+    anchor = str(passage.get("anchor") or "").lower()
+    return any(_plan_anchor_matches(anchor, pattern) for pattern in required_anchors)
+
+
+def _plan_anchor_matches(anchor: str, pattern: str) -> bool:
+    needle = str(pattern or "").lower()
+    if needle.startswith("/sec-"):
+        return re.search(rf"{re.escape(needle)}(?=@|-|__|$)", anchor) is not None
+    return needle in anchor
 
 
 def missing_required_authorities(
@@ -346,7 +387,9 @@ def classify_required_source_requirement(text: str) -> str:
     names_concrete_authority = (
         bool(re.search(r"\bact\b|\bcode\b|\bregulations?\b|\barticle\s+\d+", lower))
         or _has(lower, (
-            "bns", "bnss", "crpc", "ipc", "constitution", "ombudsman",
+            "bns", "bnss", "bharatiya nyaya sanhita",
+            "bharatiya nagarik suraksha sanhita",
+            "bharatiya sakshya adhiniyam", "crpc", "ipc", "constitution", "ombudsman",
             "rbi", "cgst", "gst", "income tax", "customs", "pmla", "pocso",
             "pwdva", "nalsa", "dlsa", "statute", "nclt", "nclat",
             "medical council", "medical ethics",
@@ -804,7 +847,7 @@ def source_gap_kind(required_source: str, *, query: str = "") -> str:
         "state", "local", "municipal", "municipality", "panchayat",
         "scheduled area", "scheduled areas", "tribal land", "witch",
         "daain", "dayan", "tonahi", "tonhi", "cattle preservation",
-        "excise", "bhang", "scheme", "shops and establishments",
+        "excise", "bhang", "shops and establishments",
         "prison rules", "rent-control", "tenancy law",
     )):
         return "state_or_local_authority_gap"
@@ -2473,7 +2516,9 @@ def _looks_like_authority(lower: str) -> bool:
     return (
         bool(re.search(r"\bact\b|\bcode\b|\bregulations?\b|\brules?\b|\barticle\s+\d+", lower))
         or _has(lower, (
-            "bns", "bnss", "crpc", "ipc", "constitution", "ombudsman",
+            "bns", "bnss", "bharatiya nyaya sanhita",
+            "bharatiya nagarik suraksha sanhita",
+            "bharatiya sakshya adhiniyam", "crpc", "ipc", "constitution", "ombudsman",
             "rbi", "cgst", "gst", "income tax", "customs", "pmla", "pocso",
             "pwdva", "nalsa", "dlsa", "statute", "nclt", "nclat",
             "compoundability", "compoundable", "compounding",

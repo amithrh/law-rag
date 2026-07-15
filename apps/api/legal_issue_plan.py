@@ -55,6 +55,30 @@ class AnswerPolicy:
     fallback_owner: str = "source_gap_handoff"
     allow_freeform_llm: bool = True
     requires_reviewed_contract: bool = False
+    fallback_reason: str | None = None
+    conflicting_primary_owners: list[str] = field(default_factory=list)
+    additional_primary_owners: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PlanOwnedAnswerRoute:
+    """A released scenario whose exact deterministic answer owner is known."""
+
+    scenario_id: str
+    owner_provider: str
+    owner_contract_id: str
+    fallback_owner: str = "source_gap_handoff"
+
+    @property
+    def owner_token(self) -> str:
+        return f"{self.owner_provider}:{self.owner_contract_id}"
+
+
+@dataclass(frozen=True)
+class PlanAnswerOwnershipResolution:
+    owner: PlanOwnedAnswerRoute | None = None
+    additional_owners: tuple[PlanOwnedAnswerRoute, ...] = ()
+    conflicts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,7 +117,15 @@ class MatterPlan:
     )
 
     def to_event(self) -> dict:
-        return asdict(self)
+        payload = asdict(self)
+        answer_policy = payload["answer_policy"]
+        if answer_policy.get("fallback_reason") is None:
+            answer_policy.pop("fallback_reason", None)
+        if not answer_policy.get("conflicting_primary_owners"):
+            answer_policy.pop("conflicting_primary_owners", None)
+        if not answer_policy.get("additional_primary_owners"):
+            answer_policy.pop("additional_primary_owners", None)
+        return payload
 
 
 REVIEWED_CONTRACT_REQUIRED_CATEGORIES = frozenset({
@@ -118,6 +150,63 @@ REVIEWED_CONTRACT_REQUIRED_CATEGORIES = frozenset({
     "tribal_caste_atrocity",
     "workplace_sexual_harassment",
 })
+
+
+# P1C release slice. These are scenario families, not individual benchmark
+# prompts. The registry is consumed by MatterPlan before retrieval; serving
+# must either render the named source-gated contract or use the fallback.
+PLAN_OWNED_ANSWER_ROUTES: tuple[PlanOwnedAnswerRoute, ...] = (
+    PlanOwnedAnswerRoute(
+        scenario_id="domestic_violence_immediate_safety",
+        owner_provider="authority_graph",
+        owner_contract_id="domestic_violence_immediate_safety",
+    ),
+    PlanOwnedAnswerRoute(
+        scenario_id="arrest_custody_station_case_not_disclosed",
+        owner_provider="authority_graph",
+        owner_contract_id="arrest_custody_station_case_not_disclosed",
+    ),
+    PlanOwnedAnswerRoute(
+        scenario_id="lgbtq_identity_arrest_safeguard",
+        owner_provider="authority_graph",
+        owner_contract_id="lgbtq_identity_arrest_safeguard",
+    ),
+    PlanOwnedAnswerRoute(
+        scenario_id="vehicle_theft_fir_refusal",
+        owner_provider="authority_graph",
+        owner_contract_id="vehicle_theft_fir_refusal",
+    ),
+    PlanOwnedAnswerRoute(
+        scenario_id="loan_app_harassment",
+        owner_provider="common_workflow_contracts",
+        owner_contract_id="loan_app_harassment",
+    ),
+    PlanOwnedAnswerRoute(
+        scenario_id="bank_account_freeze_legal_hold",
+        owner_provider="authority_graph",
+        owner_contract_id="bank_account_freeze_legal_hold",
+    ),
+    PlanOwnedAnswerRoute(
+        scenario_id="wrong_bank_debit",
+        owner_provider="authority_graph",
+        owner_contract_id="wrong_bank_debit",
+    ),
+    PlanOwnedAnswerRoute(
+        scenario_id="insurance_claim_or_misselling",
+        owner_provider="authority_graph",
+        owner_contract_id="insurance_claim_or_misselling",
+    ),
+    PlanOwnedAnswerRoute(
+        scenario_id="joint_coowner_sold_whole_property",
+        owner_provider="authority_graph",
+        owner_contract_id="joint_coowner_sold_whole_property",
+    ),
+    PlanOwnedAnswerRoute(
+        scenario_id="marital_intimacy_remedy",
+        owner_provider="authority_graph",
+        owner_contract_id="marital_intimacy_remedy",
+    ),
+)
 
 _SOURCE_PACK_ACRONYMS = frozenset({
     "bns", "bnss", "bsa", "crpc", "dpdp", "gst", "ibc", "ipc", "mmdr",
@@ -212,6 +301,64 @@ _CATEGORY_DEFAULT_ROLES = {
 }
 
 
+def plan_owned_answer_route(
+    query: str,
+    route: MatterRoute,
+) -> PlanOwnedAnswerRoute | None:
+    """Return the single released answer-owner rule for this scenario."""
+    return resolve_plan_answer_ownership(query, route).owner
+
+
+def resolve_plan_answer_ownership(
+    query: str,
+    route: MatterRoute,
+) -> PlanAnswerOwnershipResolution:
+    """Resolve one released owner or an explicit fail-closed conflict."""
+    from .authority_graph import authority_graph_contract_query_matches
+    from .common_workflow_contracts import common_workflow_contract_query_matches
+
+    matches: list[PlanOwnedAnswerRoute] = []
+    for rule in PLAN_OWNED_ANSWER_ROUTES:
+        if rule.owner_provider == "authority_graph":
+            matched = authority_graph_contract_query_matches(
+                query,
+                route,
+                rule.owner_contract_id,
+                route_independent=True,
+            )
+        elif rule.owner_provider == "common_workflow_contracts":
+            matched = common_workflow_contract_query_matches(
+                query,
+                route,
+                rule.owner_contract_id,
+                route_independent=True,
+            )
+        else:
+            raise ValueError(f"unknown plan answer owner provider: {rule.owner_provider}")
+        if matched:
+            matches.append(rule)
+    if len(matches) > 1:
+        by_scenario = {rule.scenario_id: rule for rule in matches}
+        # Identity-only arrest and the immediate custody-information route are
+        # compatible parts of one urgent liberty answer. The identity owner is
+        # primary and the custody owner is rendered as a cited second track.
+        compatible_pair = {
+            "lgbtq_identity_arrest_safeguard",
+            "arrest_custody_station_case_not_disclosed",
+        }
+        if set(by_scenario) == compatible_pair:
+            return PlanAnswerOwnershipResolution(
+                owner=by_scenario["lgbtq_identity_arrest_safeguard"],
+                additional_owners=(
+                    by_scenario["arrest_custody_station_case_not_disclosed"],
+                ),
+            )
+        return PlanAnswerOwnershipResolution(
+            conflicts=tuple(rule.owner_token for rule in matches),
+        )
+    return PlanAnswerOwnershipResolution(owner=matches[0] if matches else None)
+
+
 def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
     """Build the canonical v2 plan for a routed legal matter."""
     if route.category == "off_topic":
@@ -225,6 +372,13 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
     incident_status = _incident_date_status(q, route)
     required_facts = _dedupe(route.missing_facts)
     source_packs = source_packs_for_route(route, query)
+    ownership_resolution = resolve_plan_answer_ownership(q, route)
+    plan_owner = ownership_resolution.owner
+    plan_owners = (
+        (plan_owner, *ownership_resolution.additional_owners)
+        if plan_owner is not None
+        else ()
+    )
     retrieval_sources = [
         RetrievalSourcePlan(
             source_pack_id=pack.id,
@@ -237,8 +391,44 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
         )
         for pack in source_packs
     ]
+    if plan_owner is not None:
+        route_entries = _authority_entries(q, route)
+        route_entries_by_act = {
+            _legal_name(entry.act or ""): entry
+            for entry in route_entries
+            if entry.act
+        }
+        owner_entries = [
+            replace(
+                entry,
+                source=route_entries_by_act[_legal_name(entry.act or "")].source,
+            )
+            if _legal_name(entry.act or "") in route_entries_by_act
+            else entry
+            for owner in plan_owners
+            for entry in _plan_owner_authority_entries(
+                owner,
+                retrieval_sources,
+                route,
+            )
+        ]
+        owner_acts = {_legal_name(entry.act or "") for entry in owner_entries}
+        context_entries = [
+            replace(
+                entry,
+                priority="background",
+                must_cite=False,
+                conditional=False,
+                note="plan_owned_context_authority",
+            )
+            for entry in route_entries
+            if _legal_name(entry.act or "") not in owner_acts
+        ]
+        raw_authority_entries = [*owner_entries, *context_entries]
+    else:
+        raw_authority_entries = _authority_entries(q, route)
     authority_ledger = _bind_authority_policy(
-        _authority_entries(q, route),
+        raw_authority_entries,
         retrieval_sources,
     )
     safety_flags = _safety_flags(
@@ -258,14 +448,33 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
     portals = _dedupe(action_pack.portals if action_pack else [])
     escalation = _dedupe(action_pack.escalation if action_pack else [])
     cautions = _dedupe(action_pack.cautions if action_pack else [])
-    requires_reviewed_contract = route.category in REVIEWED_CONTRACT_REQUIRED_CATEGORIES
+    requires_reviewed_contract = (
+        plan_owner is not None
+        or bool(ownership_resolution.conflicts)
+        or route.category in REVIEWED_CONTRACT_REQUIRED_CATEGORIES
+    )
     answer_policy = AnswerPolicy(
         required_primary_owner=(
-            "reviewed_workflow" if requires_reviewed_contract
+            plan_owner.owner_token
+            if plan_owner is not None
+            else "source_gap_handoff"
+            if ownership_resolution.conflicts
+            else "reviewed_workflow"
+            if requires_reviewed_contract
             else "server_template_or_verified_llm"
+        ),
+        fallback_owner=(
+            plan_owner.fallback_owner if plan_owner is not None else "source_gap_handoff"
         ),
         allow_freeform_llm=not requires_reviewed_contract,
         requires_reviewed_contract=requires_reviewed_contract,
+        fallback_reason=(
+            "multiple_plan_owners" if ownership_resolution.conflicts else None
+        ),
+        conflicting_primary_owners=list(ownership_resolution.conflicts),
+        additional_primary_owners=[
+            owner.owner_token for owner in ownership_resolution.additional_owners
+        ],
     )
     plan_id = _plan_id(
         query=q,
@@ -348,9 +557,17 @@ def _plan_id(
 def _authority_identity(
     entry: AuthorityLedgerEntry,
     canonical_act: str | None,
+    *,
+    required_anchor_patterns: list[str] | None = None,
 ) -> tuple[str, Literal["canonical", "provisional"]]:
     if canonical_act:
-        identity = "|".join((canonical_act, _legal_name(entry.section or "all")))
+        anchors = sorted({
+            _legal_name(anchor)
+            for anchor in (required_anchor_patterns or entry.required_anchor_patterns)
+            if anchor
+        })
+        scope = _legal_name(entry.section) if entry.section else "|".join(anchors) or "all"
+        identity = "|".join((canonical_act, scope))
         status: Literal["canonical", "provisional"] = "canonical"
     else:
         identity = _normalize(entry.source)
@@ -384,8 +601,25 @@ def _canonical_act_from_sources(
     alias = _canonical_alias(entry.act)
     if alias:
         return alias
+    if (
+        entry.note == "plan_owned_contract_required_source"
+        and entry.source_pack_id
+    ):
+        source = next(
+            (
+                item
+                for item in retrieval_sources
+                if item.source_pack_id == entry.source_pack_id
+            ),
+            None,
+        )
+        if source is not None and source.title_patterns:
+            return _legal_name(source.title_patterns[0])
     act_name = _legal_name(entry.act or "")
-    if not re.search(r"\b(?:18|19|20)\d{2}\b", act_name):
+    if (
+        not re.search(r"\b(?:18|19|20)\d{2}\b", act_name)
+        and entry.note != "plan_owned_contract_required_source"
+    ):
         return None
     candidates: set[str] = set()
     for source in retrieval_sources:
@@ -416,7 +650,10 @@ def _bind_authority_policy(
 ) -> list[AuthorityLedgerEntry]:
     bound: list[AuthorityLedgerEntry] = []
     for entry in entries:
-        source_pack_id = _matching_source_pack_id(entry, retrieval_sources)
+        source_pack_id = entry.source_pack_id or _matching_source_pack_id(
+            entry,
+            retrieval_sources,
+        )
         canonical_act = _canonical_act_from_sources(entry, retrieval_sources)
         matching_sources = _authority_retrieval_sources(
             entry,
@@ -426,15 +663,24 @@ def _bind_authority_policy(
         )
         if not matching_sources and entry.note == "date_dependent_regime_choose_by_incident_date":
             matching_sources = _date_dependent_retrieval_sources(entry, retrieval_sources)
-        required_anchor_patterns = _dedupe([
+        required_anchor_patterns = entry.required_anchor_patterns or _dedupe([
             anchor
             for source in matching_sources
             for anchor in source.anchor_patterns
             if anchor
         ])
+        if (
+            entry.note == "date_dependent_regime_choose_by_incident_date"
+            and any(not source.anchor_patterns for source in matching_sources)
+        ):
+            # One regime may have a reviewed title-level pack while the other
+            # has section anchors. A single shared anchor list must not make
+            # the title-level regime impossible to satisfy.
+            required_anchor_patterns = []
         authority_id, identity_status = _authority_identity(
             entry,
             canonical_act,
+            required_anchor_patterns=required_anchor_patterns,
         )
         bound.append(replace(
             entry,
@@ -560,7 +806,22 @@ def authority_ids_for_passage(
         }
         if entry.canonical_name:
             allowed_titles.add(entry.canonical_name)
-        if not title_name or title_name not in allowed_titles:
+        source_pack_matches = bool(
+            source_pack_id
+            and matching_sources
+            and any(
+                source.source_pack_id == source_pack_id
+                for source in matching_sources
+            )
+        )
+        title_matches = title_name in allowed_titles or (
+            source_pack_matches
+            and any(
+                allowed_title and allowed_title in title_name
+                for allowed_title in allowed_titles
+            )
+        )
+        if not title_name or not title_matches:
             continue
         if source_pack_id and matching_sources and all(
             source.source_pack_id != source_pack_id for source in matching_sources
@@ -978,16 +1239,91 @@ def _authority_entry(
     )
 
 
-def _authority_entries(q: str, route: MatterRoute) -> list[AuthorityLedgerEntry]:
+def _plan_owner_authority_entries(
+    owner: PlanOwnedAnswerRoute | None,
+    retrieval_sources: list[RetrievalSourcePlan],
+    route: MatterRoute,
+) -> list[AuthorityLedgerEntry]:
+    if owner is None:
+        return []
+
+    if owner.owner_provider == "authority_graph":
+        from .authority_graph import authority_graph_contract_required_source_specs
+
+        specs = tuple(
+            (spec.title_terms, spec.anchor_terms)
+            for spec in authority_graph_contract_required_source_specs(
+                owner.owner_contract_id,
+                route,
+            )
+        )
+    elif owner.owner_provider == "common_workflow_contracts":
+        from .common_workflow_contracts import (
+            common_workflow_contract_required_source_specs,
+        )
+
+        specs = common_workflow_contract_required_source_specs(
+            owner.owner_contract_id
+        )
+    else:
+        raise ValueError(f"unknown plan answer owner provider: {owner.owner_provider}")
+
+    entries: list[AuthorityLedgerEntry] = []
+    for raw_title_terms, raw_anchor_terms in specs:
+        title_terms = tuple(_legal_name(term) for term in raw_title_terms)
+        anchor_terms = tuple(anchor.lower() for anchor in raw_anchor_terms)
+        candidates = [
+            source
+            for source in retrieval_sources
+            if any(
+                term and any(term in _legal_name(title) for title in source.title_patterns)
+                for term in title_terms
+            )
+            and (
+                not anchor_terms
+                or any(
+                    anchor.lower() in anchor_terms
+                    for anchor in source.anchor_patterns
+                )
+            )
+        ]
+        source = max(candidates, key=lambda item: item.priority) if candidates else None
+        title = (
+            source.title_patterns[0]
+            if source is not None and source.title_patterns
+            else raw_title_terms[0]
+        )
+        entries.append(AuthorityLedgerEntry(
+            source=title,
+            act=title,
+            section=None,
+            source_pack_id=source.source_pack_id if source is not None else None,
+            required_anchor_patterns=list(raw_anchor_terms),
+            claim_type="legal_basis",
+            priority="must_cite",
+            must_cite=True,
+            conditional=False,
+            note="plan_owned_contract_required_source",
+        ))
+    return entries
+
+
+def _authority_entries(
+    q: str,
+    route: MatterRoute,
+    *,
+    extra_sources: list[str] | None = None,
+) -> list[AuthorityLedgerEntry]:
     entries: list[AuthorityLedgerEntry] = []
     retained_position = 0
+    required_sources = _dedupe([*(route.required_sources or []), *(extra_sources or [])])
     source_families = {
         family
-        for source in (route.required_sources or [])
+        for source in required_sources
         if (family := _criminal_source_regime_family(source)) is not None
     }
     has_separate_regime_requirements = {"current", "legacy"} <= source_families
-    for source in route.required_sources or []:
+    for source in required_sources:
         source_family = _criminal_source_regime_family(source)
         if has_separate_regime_requirements and not _source_family_matches_regime(
             source_family,
@@ -1170,7 +1506,7 @@ def _extract_act_name(source: str) -> str | None:
             return act
     patterns = (
         r"\b(?:BNSS|BNS|BSA|CrPC|IPC)\b",
-        r"\b[A-Z][A-Za-z&().,' -]+?(?:Act|Code|Rules|Regulations|Guidelines|Sanhita|Adhiniyam)(?:\s+\d{4})?",
+        r"\b[A-Z][A-Za-z&().,' -]+?(?:Act|Code|Rules|Regulations|Scheme|Guidelines|Sanhita|Adhiniyam)(?:\s+\d{4})?",
         r"\bConstitution(?: of India)?\b",
     )
     for pattern in patterns:
@@ -1240,8 +1576,13 @@ __all__ = [
     "AuthorityLedgerEntry",
     "JurisdictionPlan",
     "MatterPlan",
+    "PLAN_OWNED_ANSWER_ROUTES",
+    "PlanOwnedAnswerRoute",
+    "PlanAnswerOwnershipResolution",
     "REVIEWED_CONTRACT_REQUIRED_CATEGORIES",
     "RetrievalSourcePlan",
     "authority_ids_for_passage",
     "build_matter_plan",
+    "plan_owned_answer_route",
+    "resolve_plan_answer_ownership",
 ]

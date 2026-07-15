@@ -11,7 +11,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from apps.api.matter_router import MatterRoute
+from apps.api.matter_router import (
+    MatterRoute,
+    has_positive_criminal_bank_hold_context,
+    has_person_custody_context,
+    is_arbitral_account_restraint,
+    is_civil_execution_bank_attachment,
+    is_civil_prejudgment_bank_attachment,
+    is_existing_vehicle_theft_fir_followup,
+)
 
 
 @dataclass(frozen=True)
@@ -54,11 +62,11 @@ def authority_graph_template_result(
 ) -> AuthorityWorkflowRender | None:
     """Return the selected source-backed workflow contract and rendered lines."""
     q = _norm(query)
-    contract, sources = _select_contract(q, route, passages)
+    contract, sources = _select_contract(q, route, passages, raw_query=query)
     if contract is None:
         return None
 
-    lines = _render_contract_lines(contract, q, sources, passages)
+    lines = _render_contract_lines(contract, q, sources, passages, route)
     if not lines:
         return None
 
@@ -66,10 +74,66 @@ def authority_graph_template_result(
         id=contract.id,
         source_indices=dict(sources),
         required_sources=tuple(
-            spec.key for spec in contract.source_specs if spec.required
+            spec.key for spec in _required_source_specs(contract, route)
         ),
         optional_sources=tuple(
-            spec.key for spec in contract.source_specs if not spec.required
+            spec.key
+            for spec in contract.source_specs
+            if spec.key not in {
+                required.key for required in _required_source_specs(contract, route)
+            }
+        ),
+        lines=lines,
+    )
+
+
+def authority_graph_contract_template_result(
+    query: str,
+    route: MatterRoute,
+    passages: list[dict],
+    contract_id: str,
+) -> AuthorityWorkflowRender | None:
+    """Render one MatterPlan-selected contract without global re-selection."""
+    q = _norm(query)
+    contract = next(
+        (item for item in AUTHORITY_WORKFLOW_CONTRACTS if item.id == contract_id),
+        None,
+    )
+    if contract is None or not _contract_query_matches(
+        contract,
+        q,
+        route,
+        raw_query=query,
+    ):
+        return None
+    sources = _resolve_sources(
+        contract,
+        passages,
+        q=q,
+        route=route,
+        strict_plan=True,
+    )
+    if sources is None:
+        return None
+    lines = _render_contract_lines(contract, q, sources, passages, route)
+    if not lines:
+        return None
+    return AuthorityWorkflowRender(
+        id=contract.id,
+        source_indices=dict(sources),
+        required_sources=tuple(
+            spec.key for spec in _required_source_specs(contract, route, strict_plan=True)
+        ),
+        optional_sources=tuple(
+            spec.key
+            for spec in contract.source_specs
+            if spec.key not in {
+                required.key for required in _required_source_specs(
+                    contract,
+                    route,
+                    strict_plan=True,
+                )
+            }
         ),
         lines=lines,
     )
@@ -90,9 +154,10 @@ def _render_contract_lines(
     q: str,
     sources: dict[str, int],
     passages: list[dict],
+    route: MatterRoute,
 ) -> list[str]:
     lines = ["**Short answer**"]
-    special = _render_special_contract(contract.id, q, sources, passages)
+    special = _render_special_contract(contract.id, q, sources, passages, route)
     if special:
         lines.extend(special)
         return lines
@@ -129,52 +194,14 @@ def _select_contract(
     q: str,
     route: MatterRoute,
     passages: list[dict],
+    *,
+    raw_query: str | None = None,
 ) -> tuple[AuthorityWorkflowContract | None, dict[str, int]]:
     best: tuple[int, AuthorityWorkflowContract, dict[str, int]] | None = None
     for contract in AUTHORITY_WORKFLOW_CONTRACTS:
-        if not _route_eligible(contract, route):
+        if not _contract_query_matches(contract, q, route, raw_query=raw_query):
             continue
-        if not _triggers_match(q, contract.trigger_groups):
-            continue
-        if contract.id == "marital_intimacy_remedy" and _is_adultery_context(q):
-            continue
-        if contract.id == "heir_refuses_sale" and _is_tenancy_no_sale_dispute_context(q):
-            continue
-        if (
-            contract.id == "joint_coowner_sold_whole_property"
-            and _is_mutation_after_death(q)
-            and not _has_any(q, ("sold", "sale deed", "buyer", "transferred", "registered"))
-        ):
-            continue
-        if contract.id == "wrong_bank_debit" and _is_cyber_money_fraud_context(q):
-            continue
-        if contract.id == "mining_displacement_rehabilitation" and _is_minor_mineral_lease_context(q):
-            continue
-        if contract.id == "mining_displacement_rehabilitation" and _is_mining_pollution_property_damage_without_displacement(q):
-            continue
-        if contract.id == "custody_medical_care" and _is_custody_abuse_or_extortion_context(q):
-            continue
-        if contract.id == "regular_bail_after_arrest" and _is_uapa_special_bail_context(q):
-            continue
-        if contract.id == "regular_bail_after_arrest" and _is_pmla_specific_bail_context(q):
-            continue
-        if contract.id == "regular_bail_after_arrest" and _is_ndps_specific_bail_context(q):
-            continue
-        if contract.id == "uapa_prima_facie_bail" and _is_default_bail_context(q):
-            continue
-        if contract.id == "regular_bail_after_arrest" and _is_lgbtq_identity_arrest_context(q):
-            continue
-        if contract.id == "unpaid_salary_after_termination" and (
-            _is_epf_or_gratuity_context(q) or _is_wage_waiver_context(q)
-        ):
-            continue
-        if contract.id == "esi_contribution_notice" and _is_esi_medical_benefit_context(q):
-            continue
-        if contract.id == "prison_mulaqat_books" and _is_bail_or_trial_relief_context(q):
-            continue
-        if contract.id == "workplace_injury_lost_limb_compensation" and _is_workplace_death_context(q):
-            continue
-        sources = _resolve_sources(contract, passages, q=q)
+        sources = _resolve_sources(contract, passages, q=q, route=route)
         if sources is None:
             continue
         score = (
@@ -188,6 +215,530 @@ def _select_contract(
     if best is None:
         return None, {}
     return best[1], best[2]
+
+
+def authority_graph_contract_query_matches(
+    query: str,
+    route: MatterRoute,
+    contract_id: str,
+    *,
+    route_independent: bool = False,
+) -> bool:
+    """Whether an existing contract owns the facts before source activation."""
+    q = _norm(query)
+    return any(
+        contract.id == contract_id
+        and _contract_query_matches(
+            contract,
+            q,
+            route,
+            route_independent=route_independent,
+            raw_query=query,
+        )
+        for contract in AUTHORITY_WORKFLOW_CONTRACTS
+    )
+
+
+def authority_graph_contract_required_source_specs(
+    contract_id: str,
+    route: MatterRoute | None = None,
+) -> tuple[PassageSpec, ...]:
+    """Return the contract's source activation requirements for MatterPlan."""
+    for contract in AUTHORITY_WORKFLOW_CONTRACTS:
+        if contract.id == contract_id:
+            return _required_source_specs(contract, route, strict_plan=True)
+    return ()
+
+
+def _required_source_specs(
+    contract: AuthorityWorkflowContract,
+    route: MatterRoute | None,
+    *,
+    strict_plan: bool = False,
+) -> tuple[PassageSpec, ...]:
+    if strict_plan and contract.id == "insurance_claim_or_misselling":
+        return tuple(
+            spec
+            for spec in contract.source_specs
+            if spec.key in {"insurance_scope", "insurance_procedure"}
+        )
+    if strict_plan and contract.id == "wrong_bank_debit":
+        return tuple(
+            spec
+            for spec in contract.source_specs
+            if spec.key in {"rbi_scope", "rbi_complaint"}
+        )
+    if not strict_plan:
+        return tuple(spec for spec in contract.source_specs if spec.required)
+    criminal_owner_keys = {
+        "vehicle_theft_fir_refusal": {
+            "current": ("bnss_fir", "bnss_refusal"),
+            "legacy": ("crpc",),
+        },
+        "arrest_custody_station_case_not_disclosed": {
+            "current": ("arrest_info", "production"),
+            "legacy": ("crpc",),
+        },
+        "lgbtq_identity_arrest_safeguard": {
+            "current": ("bnss_arrest", "bnss_production"),
+            "legacy": ("crpc_arrest", "crpc_production"),
+        },
+        "bank_account_freeze_legal_hold": {
+            "current": ("bnss_seizure",),
+            "legacy": ("crpc_seizure",),
+        },
+    }
+    regime_keys = criminal_owner_keys.get(contract.id)
+    if regime_keys is None or route is None:
+        return tuple(spec for spec in contract.source_specs if spec.required)
+    by_key = {spec.key: spec for spec in contract.source_specs}
+    always_required = tuple(
+        spec
+        for spec in contract.source_specs
+        if spec.required
+        and spec.key not in {*regime_keys["current"], *regime_keys["legacy"]}
+    )
+    if route.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident":
+        selected = regime_keys["legacy"]
+    elif route.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident":
+        selected = regime_keys["current"]
+    else:
+        selected = (*regime_keys["current"], *regime_keys["legacy"])
+    return (*always_required, *(by_key[key] for key in selected))
+
+
+def _allowed_source_keys_for_regime(
+    contract: AuthorityWorkflowContract,
+    route: MatterRoute | None,
+) -> set[str] | None:
+    if route is None or contract.id not in {
+        "vehicle_theft_fir_refusal",
+        "arrest_custody_station_case_not_disclosed",
+        "lgbtq_identity_arrest_safeguard",
+        "bank_account_freeze_legal_hold",
+    }:
+        return None
+    current_keys = {
+        "vehicle_theft_fir_refusal": {"bnss_fir", "bnss_refusal", "bnss_magistrate", "bns"},
+        "arrest_custody_station_case_not_disclosed": {"arrest_info", "production", "fir_info"},
+        "lgbtq_identity_arrest_safeguard": {"bnss_arrest", "bnss_production"},
+        "bank_account_freeze_legal_hold": {"bnss_seizure"},
+    }[contract.id]
+    legacy_keys = {
+        "vehicle_theft_fir_refusal": {"crpc", "ipc"},
+        "arrest_custody_station_case_not_disclosed": {"crpc"},
+        "lgbtq_identity_arrest_safeguard": {"crpc_arrest", "crpc_production"},
+        "bank_account_freeze_legal_hold": {"crpc_seizure"},
+    }[contract.id]
+    neutral_keys = {
+        spec.key for spec in contract.source_specs
+        if spec.key not in current_keys | legacy_keys
+    }
+    if route.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident":
+        return neutral_keys | current_keys
+    if route.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident":
+        return neutral_keys | legacy_keys
+    return neutral_keys | current_keys | legacy_keys
+
+
+def _contract_query_matches(
+    contract: AuthorityWorkflowContract,
+    q: str,
+    route: MatterRoute,
+    *,
+    route_independent: bool = False,
+    raw_query: str | None = None,
+) -> bool:
+    if not route_independent and not _route_eligible(contract, route):
+        return False
+    if not _triggers_match(q, contract.trigger_groups):
+        return False
+    if contract.id == "marital_intimacy_remedy" and _is_adultery_context(q):
+        return False
+    if contract.id == "vehicle_theft_fir_refusal":
+        if is_existing_vehicle_theft_fir_followup(q):
+            return False
+        police_refusal_context = _has_any(
+            q,
+            ("police", "police station", "station", "station house officer", "sho", "thana"),
+        )
+        theft_report = (
+            _has_any(q, ("theft", "stolen", "stole"))
+            and _has_any(q, ("bike", "car", "scooter", "vehicle", "motorcycle", "motor cycle"))
+            and police_refusal_context
+            and _has_any(q, (
+                "refuse", "refused", "refusing", "not filing", "not register",
+                "won't register", "will not register", "did not register",
+                "didn't register", "not lodged", "have not lodged", "has not lodged",
+                "did not lodge", "didn't lodge", "no fir", "say to wait", "says wait",
+                "told me to wait", "sent me away", "turned me away",
+                "give written complaint only", "written complaint only",
+                "unwilling to register", "unwilling to lodge",
+                "declined to register", "declined to lodge",
+                "rejected my", "rejected the", "rejected complaint",
+                "will not accept an fir", "won't accept an fir",
+                "refuse to accept an fir", "refuses to accept an fir",
+                "refused to accept an fir", "not accepting an fir",
+            ))
+        )
+        negated_fir_registration = _has_any(q, (
+            "no fir", "fir not registered", "fir is not registered",
+            "fir was not registered", "fir has not been registered",
+            "fir not filed", "fir was not filed", "fir not lodged",
+            "never registered fir", "refuse to register fir", "refused to register fir",
+            "will not register fir", "won't register fir",
+        )) or any((
+            re.search(
+                r"\bpolice\b.{0,20}\b(?:not|never|refuse(?:s|d|ing)?)\b"
+                r".{0,20}\b(?:register(?:ed|ing)?|file(?:d|ing)?|lodg(?:e|ed|ing))\b"
+                r".{0,12}\b(?:an?\s+)?fir\b",
+                q,
+            ) is not None,
+            re.search(
+                r"\bfir\b.{0,20}\b(?:not|never)\b.{0,20}"
+                r"\b(?:registered|filed|lodged|recorded)\b",
+                q,
+            ) is not None,
+        ))
+        existing_fir = not negated_fir_registration and (_has_any(q, (
+            "police registered fir", "police filed fir", "fir was registered",
+            "the fir is registered", "fir is registered", "fir has been registered",
+            "fir already registered", "already registered fir", "fir already exists",
+            "an fir already exists", "the fir already exists",
+            "fir is under investigation", "fir under investigation",
+            "case is under investigation", "investigation is progressing",
+            "investigation progressing", "is being investigated",
+            "opened an fir", "opened a fir", "entered an e-fir",
+            "entered e-fir", "complaint converted into fir", "complaint converted to fir",
+            "fir darj hai", "fir darj ho chuki", "fir darj ho gaya",
+            "drew up an fir", "drew up a fir", "e-fir acknowledgment",
+            "e-fir acknowledgement", "fir acknowledgment", "fir acknowledgement",
+        )) or any((
+            re.search(
+                r"\bpolice\b.{0,24}\b(?:registered|filed|lodged|recorded)\b"
+                r".{0,12}\b(?:fir|first information report)\b",
+                q,
+            ) is not None,
+            re.search(
+                r"\b(?:fir|first information report)\b.{0,28}"
+                r"\b(?:registered|filed|lodged|recorded|exists|active|on\s+record)\b",
+                q,
+            ) is not None,
+            re.search(
+                r"\b(?:fir|first information report)\b.{0,12}"
+                r"\b(?:number|no\.?|copy)\b|"
+                r"\bcopy\s+of\s+(?:the\s+|my\s+)?(?:fir|first information report)\b",
+                q,
+            ) is not None,
+            re.search(
+                r"\b(?:fir|crime|complaint|c\.?r\.?)\s+(?:number|no\.?)?\s*[:#-]?\s*\d+\b|"
+                r"\b(?:number|no\.?)\s*(?:is\s*)?\d+\b",
+                q,
+            ) is not None,
+            re.search(
+                r"\b(?:(?:e-?)?fir|first information report)\b.{0,70}\b"
+                r"(?:investigat(?:e|ed|ing|ion)|progress|status|recover(?:y|ed|ing)?|"
+                r"trace|locate|search|look\s+for|acknowledg(?:e|ed|ement|ment)|"
+                r"jaanch|case\s+diary|current\s+stage)\b",
+                q,
+            ) is not None,
+        )))
+        # Ownership and retrieval must share one registration-stage decision.
+        # The legacy local heuristics above remain for compatibility context,
+        # but cannot override the polarity-aware shared predicate.
+        existing_fir = is_existing_vehicle_theft_fir_followup(q)
+        accused_posture = re.search(
+            r"\b(?:i|we)\s+(?:have\s+|had\s+)?(?:stole|stolen|steal|taken)\b",
+            q,
+        ) is not None or _has_any(q, (
+            "fir against me", "case against me", "accused me of stealing",
+        )) or existing_fir
+        investigation_posture = _has_any(q, (
+            "refuse to investigate", "refused to investigate", "refusing to investigate",
+            "not investigating", "will not investigate", "won't investigate",
+            "investigation stopped", "no investigation", "case status", "chargesheet",
+            "charge sheet", "closure report", "final report", "status update",
+            "under investigation", "investigation progressing", "investigation is progressing",
+            "is being investigated", "further action", "share progress",
+            "investigation progress", "give me updates", "give updates",
+            "disclose what recovery", "recovery steps", "search for it",
+            "look for it", "locate it", "refuse to locate", "refuses to locate",
+            "progress batane", "progress nahi bata", "progress nahin bata",
+            "refuse to act", "refused to act", "not acting", "police action",
+            "refuse to trace", "refused to trace", "not tracing", "trace my",
+            "refuse to recover", "refused to recover", "not recovering", "recover my",
+        ))
+        if not theft_report or accused_posture or investigation_posture:
+            return False
+    if contract.id == "lgbtq_identity_arrest_safeguard":
+        causal_identity_arrest = _has_any(q, (
+            "arrested for being gay", "detained for being gay", "picked up for being gay",
+            "because he is gay", "because she is gay", "because i am gay",
+            "due to sexual orientation", "only because he is gay",
+            "only because she is gay", "only because i am gay",
+            "no offence except being gay", "no crime except being gay",
+        )) or re.search(
+            r"\b(?:arrested|detained|picked|picked up|taken into custody)\b.{0,80}\b(?:for|because of|only for)\b.{0,30}\b(?:being gay|sexual orientation|same-sex relationship)\b",
+            q,
+        ) is not None
+        if (
+            not causal_identity_arrest
+            or _is_under_18_context(q)
+            or _has_independent_offence_allegation(q)
+        ):
+            return False
+    if contract.id == "domestic_violence_immediate_safety":
+        if not _pwdva_woman_aggrieved_context(q):
+            return False
+    if contract.id == "arrest_custody_station_case_not_disclosed":
+        if not _hidden_person_custody_context(raw_query or q):
+            return False
+    if contract.id == "heir_refuses_sale" and _is_tenancy_no_sale_dispute_context(q):
+        return False
+    if contract.id == "joint_coowner_sold_whole_property" and not _has_any(
+        q,
+        ("sold", "sale deed", "buyer", "transferred", "registered sale"),
+    ):
+        return False
+    if contract.id == "marital_intimacy_remedy" and _is_marital_sexual_coercion_context(q):
+        return False
+    if (
+        contract.id == "joint_coowner_sold_whole_property"
+        and _is_mutation_after_death(q)
+        and not _has_any(q, ("sold", "sale deed", "buyer", "transferred", "registered"))
+    ):
+        return False
+    if contract.id == "wrong_bank_debit" and (
+        _is_cyber_money_fraud_context(q) or _is_insurer_claim_or_policy_dispute(q)
+    ):
+        return False
+    if contract.id == "insurance_claim_or_misselling" and not _is_insurance_context(q):
+        return False
+    if contract.id == "bank_account_freeze_legal_hold" and _is_pmla_enforcement_context(q):
+        return False
+    if contract.id == "bank_account_freeze_legal_hold" and _is_civil_execution_bank_attachment(q):
+        return False
+    if contract.id == "bank_account_freeze_legal_hold" and is_civil_prejudgment_bank_attachment(q):
+        return False
+    if contract.id == "bank_account_freeze_legal_hold" and is_arbitral_account_restraint(q):
+        return False
+    if (
+        contract.id == "bank_account_freeze_legal_hold"
+        and not has_positive_criminal_bank_hold_context(q)
+    ):
+        return False
+    if contract.id == "mining_displacement_rehabilitation" and (
+        _is_minor_mineral_lease_context(q)
+        or _is_mining_pollution_property_damage_without_displacement(q)
+    ):
+        return False
+    if contract.id == "custody_medical_care" and _is_custody_abuse_or_extortion_context(q):
+        return False
+    if contract.id == "regular_bail_after_arrest" and (
+        _is_uapa_special_bail_context(q)
+        or _is_pmla_specific_bail_context(q)
+        or _is_ndps_specific_bail_context(q)
+        or _is_lgbtq_identity_arrest_context(q)
+    ):
+        return False
+    if contract.id == "uapa_prima_facie_bail" and _is_default_bail_context(q):
+        return False
+    if contract.id == "unpaid_salary_after_termination" and (
+        _is_epf_or_gratuity_context(q) or _is_wage_waiver_context(q)
+    ):
+        return False
+    if contract.id == "esi_contribution_notice" and _is_esi_medical_benefit_context(q):
+        return False
+    if contract.id == "prison_mulaqat_books" and _is_bail_or_trial_relief_context(q):
+        return False
+    if contract.id == "workplace_injury_lost_limb_compensation" and _is_workplace_death_context(q):
+        return False
+    return True
+
+
+def _is_under_18_context(q: str) -> bool:
+    if re.search(r"\b(?:[1-9]|1[0-7])\s*(?:years?|yrs?)\s*(?:old)?\b", q):
+        return True
+    return _has_any(q, (
+        "minor", "under 18", "under eighteen", "juvenile", "pocso",
+        "teenage", "teenager", "schoolboy", "school boy", "schoolgirl",
+        "school girl", "child", "fifteen year", "fifteen-year",
+        "sixteen year", "sixteen-year", "seventeen year", "seventeen-year",
+    ))
+
+
+def _has_independent_offence_allegation(q: str) -> bool:
+    offence_terms = (
+        # Violence and offences against the person.
+        "assault", "attacked", "attack", "stabbing", "stabbed", "knife",
+        "hit him", "hit her", "beat him", "beat her", "hurt him", "hurt her",
+        "murder", "killed", "homicide", "rape", "kidnap", "abduction",
+        # Property, deception, and weapons allegations.
+        "robbery", "dacoity", "theft", "stolen", "burglary", "snatching",
+        "fraud", "cheating", "extortion", "weapon", "pistol", "gun",
+        # Drug/NDPS allegations, including common named substances.
+        "drug", "drugs", "ganja", "cannabis", "charas", "hashish", "cocaine",
+        "heroin", "mdma", "ecstasy", "meth", "opium", "lsd", "ndps",
+        "narcotic", "contraband", "possession of",
+    )
+    return _has_any(q, offence_terms)
+
+
+def _pwdva_woman_aggrieved_context(q: str) -> bool:
+    explicit_non_woman_victim = _has_any(q, (
+        "my wife is beating me", "wife beats me", "wife beat me",
+        "wife assaulted me", "wife hit me", "wife slapped me",
+        "i am his husband", "i'm his husband", "i am a man",
+        "i'm a man", "we are husbands", "husband beating husband",
+        "male victim", "male spouse",
+    ))
+    if explicit_non_woman_victim:
+        return False
+    woman_context = _has_any(q, (
+        "my husband", "husband is", "husband beat", "husband hit",
+        "husband slap", "in laws", "in-laws", "mother in law",
+        "father in law", "sasural", "i am his wife", "i'm his wife",
+        "woman", "female", "daughter in law", "daughter-in-law", "mere husband", "mere pati",
+        "mera husband", "mera pati",
+    ))
+    actor = (
+        r"(?:my\s+)?(?:husband|spouse|pati|in[- ]?laws?|mother[- ]in[- ]law|"
+        r"father[- ]in[- ]law|sasural(?:\s+waale)?)"
+    )
+    harm = (
+        r"(?:beat(?:s|ing)?|hit(?:s|ting)?|slap(?:s|ped|ping)?|punch(?:es|ed|ing)?|"
+        r"kick(?:s|ed|ing)?|hurt(?:s|ing)?|assault(?:s|ed|ing)?|"
+        r"chok(?:e|es|ed|ing)|strangl(?:e|es|ed|ing)|stab(?:s|bed|bing)?|"
+        r"shoot(?:s|ing)?|shot|poison(?:s|ed|ing)?|burn(?:s|ed|ing)?|"
+        r"forc(?:e|es|ed|ing)|coerc(?:e|es|ed|ing)|abus(?:e|es|ed|ing))"
+    )
+    threat_harm = r"(?:kill|murder|hit|hurt|harm|attack|assault|beat|burn|injure|poison|shoot|stab|strangle|slit)"
+    third_party_subject = re.compile(
+        r"\b(?:neighbou?r|landlord|driver|friend|brother|sister|cousin|uncle|aunt|"
+        r"police|officer|someone|another\s+(?:man|woman|person)|employer|manager)\b"
+    )
+
+    def actor_controls(action_pattern: str, *, window: int = 110) -> bool:
+        for actor_match in re.finditer(rf"\b{actor}\b", q):
+            tail = q[actor_match.end():actor_match.end() + window]
+            action_match = re.search(action_pattern, tail)
+            if action_match is None:
+                continue
+            intervening = tail[:action_match.start()]
+            if third_party_subject.search(intervening) or re.search(
+                r"\b(?:when|after|while|as)\b.{0,48}$",
+                intervening,
+            ) or re.search(
+                r"\b(?:said|warned|told|reported|explained)\b.{0,36}"
+                r"\b(?:the|our|my|a|an)\s+[a-z][a-z -]{1,24}\s+(?:will|would)\b",
+                intervening,
+            ) or re.search(
+                r"\b(?:the|our|my|a|an)\s+[a-z]+(?:\s+[a-z]+)?\s+"
+                r"(?:will|would|plans?\s+to|intends?\s+to|threatens?\s+to)\b",
+                intervening,
+            ):
+                continue
+            return True
+        return False
+
+    direct_or_threat_action = "|".join((
+        rf"\b{harm}\b.{{0,16}}\b(?:me|myself)\b",
+        rf"\bthreaten(?:s|ed|ing)?\b.{{0,24}}\b(?:to\s+)?{threat_harm}\b.{{0,12}}\b(?:me|myself)\b",
+        r"\bthreaten(?:s|ed|ing)?\b.{0,24}\bto\s+break\s+my\s+legs?\b",
+        r"\bthreaten(?:s|ed|ing)?\s+to\s+have\s+me\s+killed\b",
+        r"\bthreaten(?:s|ed|ing)?\b.{0,20}\bto\s+slit\s+my\s+throat\b",
+        rf"\b(?:made\s+)?(?:repeated\s+)?threats?\s+to\s+{threat_harm}\s+(?:me|myself)\b",
+        r"\b(?:threaten(?:s|ed|ing)?|blackmail(?:s|ed|ing)?|harass(?:es|ed|ing)?)\b"
+        r"\s+(?:both\s+)?(?:my|our|his|her|the)\s+"
+        r"(?:son|daughter|brother|sister|father|mother|parent|child|friend|cousin|uncle|aunt|"
+        r"nephew|niece|relative|colleague|roommate|flatmate|partner|driver|watchman|guard|employee|neighbour|neighbor)\b"
+        r"\s*,?\s+and\s+(?:also\s+)?(?:me|myself)\b",
+        r"\b(?:took|snatched|broke|withheld|checks?|checking)\b.{0,16}\bmy\s+phone\b",
+        r"\b(?:threw|kicked|forced|told)\s+me\b.{0,20}\b(?:out|leave)\b",
+    ))
+    reported_actor_threat = re.search(
+        rf"\b{actor}\b.{{0,18}}\btold\b.{{0,32}}\bthat\s+he\s+(?:would|will)\s+"
+        rf"{threat_harm}\s+(?:me|myself)\b",
+        q,
+    ) is not None
+    hindi_reported_actor_threat = any(
+        re.search(pattern, q) is not None
+        for pattern in (
+            r"\b(?:mere\s+)?(?:husband|pati)\s+ne\s+(?:(?:bola|kaha)\b.{0,42})?"
+            r"(?:mujhe\s+jaan\s+se\s+(?:maar|mar)(?:ne\s+ki\s+dhamki\s+di|\s+dega)|"
+            r"mujhe\s+(?:jala|maar|mar)\s+(?:dega|degi|dalega|daalega))\b",
+            r"\b(?:mere\s+)?(?:husband|pati)\s+ne\s+dhamki\s+di\b.{0,28}"
+            r"\bmujhe\s+(?:jala|maar|mar)\s+(?:dega|degi|dalega|daalega)\b",
+            r"\b(?:mere\s+)?(?:husband|pati)\s+ne\s+mujhe\s+"
+            r"(?:jala|jalane|maar|mar|maarne|marne)\s+ki\s+dhamki\s+di\b",
+        )
+    )
+    roman_hindi_direct_harm = re.search(
+        r"\b(?:mera|mere)\s+(?:husband|pati)\b.{0,36}\bmujhe\b.{0,18}"
+        r"\b(?:maar|mar|peet|pit)(?:ta|ti|te|na|ne|raha|rahi|diya|deta|deti)?\b",
+        q,
+    ) is not None
+    actor_bound_harm = any((
+        actor_controls(direct_or_threat_action),
+        reported_actor_threat,
+        hindi_reported_actor_threat,
+        roman_hindi_direct_harm,
+        re.search(rf"\b(?:i|me)\b.{{0,28}}\b{harm}\b.{{0,20}}\bby\s+{actor}\b", q) is not None,
+        re.search(rf"\b(?:unsafe|afraid|scared)\b.{{0,28}}\b(?:because of|due to|from)\s+{actor}\b", q) is not None,
+    ))
+    consent_or_control = _has_any(q, (
+        "when i say no", "after i say no", "if i do not", "if i don't",
+        "not allowing me", "ghar se nikal", "ghar se nikaal",
+    )) and re.search(rf"\b{actor}\b", q) is not None
+    return woman_context and (actor_bound_harm or consent_or_control)
+
+
+def _hidden_person_custody_context(q: str) -> bool:
+    return has_person_custody_context(q)
+
+
+def _is_civil_execution_bank_attachment(q: str) -> bool:
+    return is_civil_execution_bank_attachment(q)
+
+
+def _is_insurance_context(q: str) -> bool:
+    return _has_any(q, (
+        "insurance", "insurer", "policy premium", "insurance premium",
+        "health policy", "life policy", "ulip", "lic policy",
+    )) or re.search(r"\blic\b", q) is not None
+
+
+def _is_insurer_claim_or_policy_dispute(q: str) -> bool:
+    return _is_insurance_context(q) and _has_any(q, (
+        "claim", "rejected", "rejecting", "denied", "repudiated",
+        "repudiation", "not paying claim", "mis-selling", "misselling",
+        "surveyor", "policy cancellation", "maturity", "matured",
+    ))
+
+
+def _is_pmla_enforcement_context(q: str) -> bool:
+    return _has_any(q, (
+        "pmla", "money laundering", "enforcement directorate", "ecir",
+        "ed notice", "ed order", "ed froze", "ed frozen", "ed freeze",
+        "ed attachment", "provisional attachment",
+    ))
+
+
+def _is_marital_sexual_coercion_context(q: str) -> bool:
+    if not _has_any(q, ("husband", "wife", "spouse", "marriage", "marital")):
+        return False
+    if _has_any(q, (
+        "force sex", "forces sex", "forced sex", "forcing sex",
+        "forcing me for sex", "sexual force", "sexual coercion",
+        "marital rape", "sex without consent", "without consent",
+        "when i say no", "after i say no", "threatening me for sex",
+        "threatens me for sex", "threatening for sex", "coerces me for sex",
+    )):
+        return True
+    return re.search(
+        r"\b(?:force(?:d|s|ing)?|coerc(?:e|ed|es|ing|ion)|threaten(?:ed|s|ing)?)\b.{0,35}\b(?:me\s+)?(?:for\s+)?sex\b",
+        q,
+    ) is not None
 
 
 def _route_eligible(contract: AuthorityWorkflowContract, route: MatterRoute) -> bool:
@@ -543,6 +1094,8 @@ def _resolve_sources(
     passages: list[dict],
     *,
     q: str = "",
+    route: MatterRoute | None = None,
+    strict_plan: bool = False,
 ) -> dict[str, int] | None:
     if contract.id == "caste_certificate_state_rule_intake":
         if _has_any(q, ("st certificate", "st cert", "scheduled tribe", "tribe certificate", "tribal certificate")):
@@ -566,11 +1119,22 @@ def _resolve_sources(
             return None
         return {"constitution": constitution, "rti": rti}
 
+    required_keys = {
+        spec.key
+        for spec in _required_source_specs(
+            contract,
+            route,
+            strict_plan=strict_plan,
+        )
+    }
+    allowed_keys = _allowed_source_keys_for_regime(contract, route)
     out: dict[str, int] = {}
     for spec in contract.source_specs:
+        if allowed_keys is not None and spec.key not in allowed_keys:
+            continue
         found = _find(passages, title_terms=spec.title_terms, anchor_terms=spec.anchor_terms)
         if found is None:
-            if spec.required:
+            if spec.key in required_keys:
                 return None
             continue
         out[spec.key] = found
@@ -625,6 +1189,7 @@ def _render_special_contract(
     q: str,
     sources: dict[str, int],
     passages: list[dict],
+    route: MatterRoute,
 ) -> list[str]:
     if contract_id == "shop_sealed_municipality":
         return _render_shop_sealing(q, sources, passages)
@@ -657,7 +1222,9 @@ def _render_special_contract(
     if contract_id == "regular_bail_after_arrest":
         return _render_regular_bail_after_arrest(q, sources)
     if contract_id == "lgbtq_identity_arrest_safeguard":
-        return _render_lgbtq_identity_arrest_safeguard(q, sources)
+        return _render_lgbtq_identity_arrest_safeguard(q, sources, route)
+    if contract_id == "vehicle_theft_fir_refusal":
+        return _render_vehicle_theft_fir_refusal(route, sources)
     if contract_id == "bail_surety_condition_modification":
         return _render_bail_surety_condition_modification(q, sources)
     if contract_id == "bail_surety_amount_context":
@@ -704,6 +1271,8 @@ def _render_special_contract(
         return _render_mutual_consent_divorce(q, sources)
     if contract_id == "wrong_bank_debit":
         return _render_wrong_bank_debit(q, sources)
+    if contract_id == "bank_account_freeze_legal_hold":
+        return _render_bank_account_freeze_legal_hold(q, sources, route)
     if contract_id == "employment_original_document_return":
         return _render_employment_original_document_return(q, sources)
     if contract_id == "employment_notice_period_contract":
@@ -1379,7 +1948,9 @@ def _render_insurance_claim_or_misselling(q: str, sources: dict[str, int]) -> li
     consumer_complaint = sources.get("consumer_complaint")
     consumer_relief = sources.get("consumer_relief")
     consumer = consumer_complaint or consumer_definition or consumer_relief
-    insurance = sources.get("insurance")
+    insurance_scope = sources.get("insurance_scope")
+    insurance_procedure = sources.get("insurance_procedure")
+    insurance = insurance_procedure or insurance_scope
     if consumer is None and insurance is None:
         return []
     primary = insurance or consumer
@@ -1397,15 +1968,19 @@ def _render_insurance_claim_or_misselling(q: str, sources: dict[str, int]) -> li
     )
     article = "an" if issue.startswith("insurance ") else "a"
     lines = [
-        f"For {article} {issue}, start with a written insurer grievance and policy-record review before calling it only fraud or only a generic senior-citizen matter [{primary}]."
+        f"For {article} {issue}, start with the insurance policy record and a written insurer grievance before calling it only fraud or only a generic senior-citizen matter [{primary}]."
     ]
-    if insurance is not None:
+    if insurance_scope is not None:
         lines.append(
-            f"Use the Insurance Ombudsman source for insurer grievance escalation after the written complaint, repudiation/maturity letter, and policy papers are ready [{insurance}]."
+            f"The Insurance Ombudsman source under Rule 13 is the provision to check for complaint grounds and subject-matter scope [{insurance_scope}]."
+        )
+    if insurance_procedure is not None:
+        lines.append(
+            f"Use the Rule 14 procedure source for Ombudsman filing only after the written insurer grievance, reply or no-reply record, repudiation/maturity letter, and policy papers are ready [{insurance_procedure}]."
         )
     if consumer_complaint is not None:
         lines.append(
-            f"The Consumer Protection Act complaint source is the parallel service-deficiency/mis-selling route for refund, compensation, or deficiency where the policy documents and written promises support it [{consumer_definition or consumer_complaint}], [{consumer_complaint}]."
+            f"Consumer Protection Act Section 35 allows a consumer complaint about a provided service to be filed with the District Commission and permits prescribed electronic filing [{consumer_complaint}]."
         )
     elif consumer is not None:
         lines.append(
@@ -1419,10 +1994,15 @@ def _render_insurance_claim_or_misselling(q: str, sources: dict[str, int]) -> li
         lines.append(
             f"Because the money belongs to an elderly father or pension holder, keep Senior Citizens Act support only for maintenance/protection facts; it should not replace the insurer/Ombudsman/consumer mis-selling route [{senior}]."
         )
-    lines.extend([
-        "**What you can do next**",
-        f"- Send a dated grievance to the insurer with the policy schedule/bond, claim number, proposal form, premium receipts, surveyor or medical papers where relevant, fire/loss proof or maturity statement, repudiation letter, and exact promised-return words; then escalate to Insurance Ombudsman and District Consumer Commission/e-Daakhil if unresolved [{primary}].",
-    ])
+    lines.append("**What you can do next**")
+    if consumer is not None:
+        lines.append(
+            f"- Send a dated grievance to the insurer with the policy schedule/bond, claim number, proposal form, premium receipts, surveyor or medical papers where relevant, fire/loss proof or maturity statement, repudiation letter, and exact promised-return words; if unresolved and Rules 13 and 14 apply, use the Insurance Ombudsman route and separately check the District Consumer Commission/e-Daakhil complaint route [{insurance_procedure or insurance_scope or primary}], [{consumer}]."
+        )
+    else:
+        lines.append(
+            f"- Send a dated grievance to the insurer with the policy schedule/bond, claim number, proposal form, premium receipts, surveyor or medical papers where relevant, fire/loss proof or maturity statement, repudiation letter, and exact promised-return words; if unresolved and Rules 13 and 14 apply, use the Insurance Ombudsman route [{insurance_procedure or insurance_scope or primary}]."
+        )
     return lines
 
 
@@ -1566,8 +2146,10 @@ def _render_digital_arrest_impersonation(q: str, sources: dict[str, int]) -> lis
 
 
 def _render_wrong_bank_debit(q: str, sources: dict[str, int]) -> list[str]:
-    rbi = sources.get("rbi")
-    consumer = sources.get("consumer")
+    rbi_scope = sources.get("rbi_scope")
+    rbi_complaint = sources.get("rbi_complaint")
+    rbi = rbi_complaint or rbi_scope
+    consumer_complaint = sources.get("consumer_complaint")
     if rbi is None:
         return []
     card_context = _has_any(q, ("credit card", "debit card", "card", "annual fee", "card fee", "fee charged", "card was closed", "card closed"))
@@ -1629,19 +2211,19 @@ def _render_wrong_bank_debit(q: str, sources: dict[str, int]) -> list[str]:
         else "bank statement entry, UPI/transaction ID/RRN, SMS or email alerts, customer-care chats/call logs, complaint number, written refusal or no-reply proof, and exact debit/refund timeline"
     )
     lines = [
-        f"For a {issue_phrase}, first raise a written complaint with the {app_phrase} and get a complaint number before escalating [{rbi}].",
-        f"If the bank reply or non-reply does not fix the transaction, use the RBI Ombudsman/CMS route under the RBI Ombudsman Scheme; it covers commercial banks and other regulated entities, and keep consumer service-deficiency as a later backup, not the first forum [{rbi}].",
+        f"For this {issue_phrase}, first raise a written complaint with the {app_phrase}; the RBI Integrated Ombudsman Scheme covers commercial banks, specified co-operative banks, qualifying NBFCs, and system participants [{rbi}].",
+        f"If the regulated entity rejects the complaint, gives an unsatisfactory reply, or does not reply within the Scheme's complaint window, use the RBI Ombudsman/CMS escalation route with the complaint record [{rbi}].",
     ]
-    if consumer is not None:
+    if consumer_complaint is not None:
         lines.append(
-            f"If the bank still does not reverse or explain the duplicate/wrong debit, wrong deduction, failed UPI debit, or card charge after the written complaint and RBI record, the Consumer Protection Act source is the service-deficiency forum backup [{consumer}]."
+            f"If the bank still does not reverse or explain the duplicate/wrong debit, wrong deduction, failed UPI debit, or card charge after the written complaint and RBI record, use Consumer Protection Act 2019, Section 35 [{consumer_complaint}] as the service-deficiency forum backup."
         )
     lines.extend([
         "**What you can do next**",
         (
-            f"- Keep the {evidence_phrase} [{rbi}], [{consumer}]."
-            if consumer is not None
-            else f"- Keep the {evidence_phrase} [{rbi}]."
+            f"- Raise a written complaint with the {app_phrase}, get a complaint number, and keep the {evidence_phrase} [{rbi}], [{consumer_complaint}]."
+            if consumer_complaint is not None
+            else f"- Raise a written complaint with the {app_phrase}, get a complaint number, and keep the {evidence_phrase} [{rbi}]."
         ),
     ])
     return lines
@@ -2089,8 +2671,8 @@ def _render_shop_sealing(q: str, sources: dict[str, int], passages: list[dict]) 
 
 
 def _render_joint_coowner_sale(q: str, sources: dict[str, int]) -> list[str]:
-    tpa45 = sources.get("tpa45") or sources.get("tpa_share")
-    tpa44 = sources.get("tpa44") or sources.get("tpa_share")
+    tpa45 = sources.get("tpa45")
+    tpa44 = sources.get("tpa44")
     if tpa45 is None and tpa44 is None:
         return []
     specific = sources.get("specific")
@@ -2123,17 +2705,21 @@ def _render_joint_coowner_sale(q: str, sources: dict[str, int]) -> list[str]:
         )
     if specific is not None:
         lines.append(
-            f"If a sale deed or mutation affects your share, or a buyer is threatening possession, the Specific Relief Act cancellation/declaration route is the civil-court source to check [{specific}]."
+            f"Specific Relief Act Section 31 permits a person against whom a written instrument is void or voidable, and who reasonably apprehends serious injury if it remains outstanding, to sue to have it adjudged and cancelled [{specific}]."
         )
     if registration is not None:
         lines.append(
             f"Registration records matter because the certified sale deed and mutation/khata record show whether the document claims the whole property or only the seller's share [{registration}]."
         )
-    action_cite = specific or tpa45 or tpa44
-    lines.extend([
-        "**What you can do next**",
-        f"- For the civil-court step, take the old purchase deed, registered sale deed/certified copy, mutation/khata/land record, possession proof, payment proof, messages/consent proof, and buyer details to DLSA or a property lawyer for partition, declaration, injunction, or cancellation advice [{action_cite}].",
-    ])
+    lines.append("**What you can do next**")
+    if specific is not None:
+        lines.append(
+            "- Keep the old purchase deed, registered sale deed or certified copy, mutation/khata/land record, possession proof, payment proof, messages or consent proof, and buyer details."
+        )
+    else:
+        lines.append(
+            "- Keep the old purchase deed and the new sale deed or certified copy together, and mark the share each document says was transferred."
+        )
     return lines
 
 
@@ -2308,10 +2894,10 @@ def _render_marital_intimacy(q: str, sources: dict[str, int]) -> list[str]:
         lines.append(
             f"If the Special Marriage Act applies, the same issue remains fact-specific and should be checked through lawful Family Court relief, not self-help pressure [{sma}]."
         )
-    lines.extend([
-        "**What you can do next**",
-        f"- Consent matters: Do not use pressure or force; do not force, threaten, or pressure your spouse for sex. Write the timeline and decide whether you want counselling, judicial separation, divorce, restitution, maintenance, or another family-court remedy before speaking to DLSA or a family-law lawyer [{family}].",
-    ])
+    lines.extend(("**Consent matters**", "**What you can do next**"))
+    lines.append(
+        "- Keep a timeline of the intimacy breakdown, counselling attempts, residence, children, maintenance, and any violence or coercion facts; do not force, threaten, or pressure your spouse for sex."
+    )
     return lines
 
 
@@ -2323,10 +2909,17 @@ def _render_domestic_violence_safety(
     pwdva = sources.get("pwdva")
     if pwdva is None:
         return []
-    pwdva_protection = sources.get("pwdva_protection") or pwdva
-    pwdva_residence = sources.get("pwdva_residence") or pwdva
+    pwdva_protection = sources.get("pwdva_protection")
+    pwdva_residence = sources.get("pwdva_residence")
+    pwdva_application = sources.get("pwdva_application")
     bns = sources.get("bns")
     bnss = sources.get("bnss")
+    family = sources.get("family")
+    hma13b = sources.get("hma13b")
+    woman_role_confirmed = _has_any(q, (
+        "i am his wife", "i'm his wife", "i am a woman", "i'm a woman",
+        "woman victim", "female victim", "daughter in law", "daughter-in-law",
+    ))
     sexual_coercion = _has_any(q, (
         "forcing me for sex", "forces sex", "force sex", "forced sex",
         "refuse sex", "refuses sex", "refusing sex", "say no",
@@ -2348,10 +2941,14 @@ def _render_domestic_violence_safety(
         issue = "your husband or spouse is forcing sex or sexual contact after you refuse"
     elif "sasural" in q and "not allowing me to call" in q:
         issue = "your sasural/in-laws beat you tonight and are stopping you from calling for help"
+    elif "sasural" in q and _has_any(q, ("ghar se nikal", "ghar se nikaal", "wapis ja")):
+        issue = "your sasural/in-laws have put you out of the matrimonial home and you are asking whether you can return safely"
     elif "punched" in q and ("shared house" in q or "remove me" in q):
         issue = "your husband punched you and is threatening to remove you from the shared house at night"
-    elif "spouse assaulted" in q or ("spouse" in q and "evict" in q):
-        issue = "your spouse assaulted you and is threatening to evict you from the matrimonial home"
+    elif "spouse assaulted" in q or (
+        _has_any(q, ("spouse", "husband")) and _has_any(q, ("evict", "matrimonial home"))
+    ):
+        issue = "your spouse or husband assaulted you and is threatening to evict you from the matrimonial home"
     elif "slapped me in front of child" in q or ("slapped me" in q and "no place to stay" in q):
         issue = "you were slapped in front of your child and told to leave today with no place to stay"
     elif _has_any(q, ("says sorry", "sorry next day", "all marriages are like this", "should i stay")) and _has_any(q, ("slap", "slapped", "hit", "beat")):
@@ -2375,93 +2972,58 @@ def _render_domestic_violence_safety(
     else:
         issue = "there is domestic violence, threat, or immediate safety risk"
 
-    if sexual_coercion:
-        lines = [
-            f"If {issue}, treat immediate safety first and keep the legal frame as domestic violence and safety; the PWDVA route covers sexual abuse and related physical or emotional harm, not ordinary marital counselling [{pwdva}]."
-        ]
-    else:
-        if "acid" in q:
-            lead = (
-                f"If {issue}, treat immediate safety first and use the PWDVA protection-order source and protection-order route to ask for restraint against threats, contact, violence, or harassment where the facts fit [{pwdva_protection}]."
-            )
-        else:
-            lead = (
-                f"Because he is beating you right now, move to immediate safety first, then residence protection and urgent help under the PWDVA protection-order source and protection-order route, not as a normal family disagreement [{pwdva_protection}]."
-                if issue == "your husband is beating you right now"
-                else f"If {issue}, treat immediate safety first, then residence protection and urgent help under the PWDVA protection-order source and protection-order route, not as a normal family disagreement [{pwdva_protection}]."
-            )
-        lines = [lead]
-    if _has_any(q, ("says sorry", "sorry next day", "all marriages are like this", "should i stay")):
+    lines = [
+        "**Immediate safety**",
+        f"- For this report, treat immediate safety first: if you are unsafe right now, move to a safe place or trusted person first and contact 112/police or emergency services for immediate danger [{pwdva}].",
+    ]
+    if woman_role_confirmed:
         lines.append(
-            f"Do not decide whether to stay around apology, family pressure, or 'all marriages are like this': you do not have to treat being hit, slapped, or beaten as normal; if you are asking whether to stay, decide around immediate safety, injury risk, safe housing, trusted support, and the PWDVA protection-order source [{pwdva_protection}]."
+            f"For domestic violence and safety, PWDVA Section 3 covers sexual abuse and related physical or emotional harm, as well as other conduct that harms, injures, or endangers a woman's physical or mental well-being [{pwdva}]."
         )
-    if residence_context:
-        if _has_any(q, ("ghar se nikal", "wapis ja")):
-            lines.append(
-                f"For the ghar se nikal diya / can I go back question, do not try forced entry alone at night; a ghar se nikal diya or thrown you out situation needs a Protection Officer/Magistrate/DLSA request for PWDVA residence protection and residence, protection, shelter, and safe-access orders while prioritising immediate safety [{pwdva_residence}]."
-            )
-        else:
-            lines.append(
-                f"For being thrown out of the sasural/shared household or asking whether you can go back, do not try forced entry alone at night; ask the Protection Officer/Magistrate/DLSA for PWDVA residence, protection, shelter, and return/safe-access orders while prioritising immediate safety [{pwdva_residence}]."
-            )
+    else:
+        lines.append(
+            f"For domestic violence and safety, including sexual abuse and related physical or emotional harm, PWDVA Section 3 is a statutory route for an aggrieved woman in a domestic relationship; because the question does not confirm that role, use this protection route only if that condition is met and do not assume it applies to every spouse or partner [{pwdva}]."
+        )
+    if pwdva_protection is not None:
+        lines.append(
+            f"PWDVA Section 18 is the protection-order source allowing a Magistrate to prohibit further domestic violence, contact, threats, or intimidation where the statutory conditions are met [{pwdva_protection}]."
+        )
+    if pwdva_application is not None:
+        lines.append(
+            f"If the PWDVA aggrieved-woman condition is met, Section 12 permits an application to the Magistrate by the aggrieved person, a Protection Officer, or another person on her behalf [{pwdva_application}]."
+        )
+    if residence_context and pwdva_residence is not None:
+        lines.append(
+            f"PWDVA Section 19 is the source for residence orders concerning the shared household [{pwdva_residence}]."
+        )
     if bns is not None:
-        if sexual_coercion:
-            lines.append(
-                f"Because the facts mention forced sex/refusal, beating, threats, or being thrown out, keep a separate BNS criminal track for hurt, criminal intimidation, restraint, or sexual-violence facts if police help is needed, without guessing the final offence label [{bns}]."
-            )
-        elif "acid" in q:
-            bns_anchor = _source_anchor(sources, "bns", passages)
-            if "/sec-125" in bns_anchor:
-                lines.append(
-                    f"For the police/BNS side, ask police or legal aid to verify the BNS Section 125 source only if the facts show an act so rashly or negligently as to endanger human life or personal safety; keep the exact acid-threat words, date, witnesses, and any follow-up act separate for the complaint [{bns}]."
-                )
-            elif "/sec-351" in bns_anchor:
-                lines.append(
-                    f"For the police/BNS side, ask police or legal aid to verify the BNS criminal intimidation source with the exact acid-threat words, date, witnesses, and any follow-up act before naming the offence [{bns}]."
-                )
-            else:
-                lines.append(
-                    f"For the police/BNS side, keep the exact acid-threat words, date, witnesses, and any follow-up act separate so police or legal aid can match the correct current-law offence source without guessing the final section [{bns}]."
-                )
-        else:
-            lines.append(
-                f"Because the facts involve physical violence, threats, or taking a phone/property, keep a separate BNS criminal track using the BNS hurt source and any criminal-intimidation source if police help is needed [{bns}]."
-            )
+        lines.append(
+            f"For an incident on or after 1 July 2024, the BNS hurt source in Section 115 is the separate BNS criminal track to verify for alleged voluntarily caused hurt; match the incident date before using it [{bns}]."
+        )
     if bnss is not None:
         lines.append(
-            f"If danger is happening now, call emergency police help first; for the legal police track, use the BNSS FIR/information and Magistrate-escalation route if the station refuses or delays help [{bnss}]."
+            f"If police help is needed, use the BNSS FIR/information and Magistrate-escalation route with the dated complaint and safety evidence [{bnss}]."
         )
-    family = sources.get("family")
-    hma13b = sources.get("hma13b")
-    hma = sources.get("hma")
-    if _has_any(q, ("divorce", "mutual consent", "13b")) and (family is not None or hma13b is not None or hma is not None):
-        divorce_refs = ", ".join(f"[{idx}]" for idx in (hma13b, hma, family) if idx is not None)
-        if hma13b is not None:
-            lines.append(
-                f"For the divorce part, if the Hindu Marriage Act applies, Section 13B is the mutual-consent route only when both spouses freely agree; domestic-violence protection, maintenance, residence, and police tracks can continue separately {divorce_refs}."
-            )
-        else:
-            lines.append(
-                f"For the divorce part, use the Family Court/DLSA route and verify the applicable personal-law divorce source; do not let the safety route erase the matrimonial remedy question {divorce_refs}."
-            )
+    if _has_any(q, ("divorce", "mutual consent", "separation")) and family is not None:
+        lines.append(
+            f"Keep the Family Court/DLSA matrimonial track alongside immediate safety; separation or divorce does not replace protection, residence, medical, or police steps [{family}]."
+        )
+    if _has_any(q, ("mutual consent", "mutual divorce")) and hma13b is not None:
+        lines.append(
+            f"If the Hindu Marriage Act applies, Section 13B is a mutual-consent route only when both spouses freely agree; violence or pressure must not be used to manufacture consent [{hma13b}]."
+        )
+    if _has_any(q, ("should i stay", "all marriages are like this", "says sorry", "sorry next day")):
+        lines.append(
+            f"Do not decide whether to stay or leave under pressure: you do not have to treat being hit, slapped, or beaten as normal because of an apology or the claim that all marriages are like this. If you are asking whether to stay, make the immediate safety and support plan first [{pwdva}]."
+        )
     lines.extend([
         "**What you can do next**",
         (
-            f"- For {issue}, move to a safe place or trusted person first; contact 112/police or a women's helpline/One Stop Centre if danger is immediate, then approach the Protection Officer, DLSA, or Magistrate with a dated timeline, messages, photos, medical records, residence proof, and witness details [{pwdva}]."
+            f"- For {issue}, preserve a dated timeline, messages, photos, medical records, residence proof, and witness details."
             if sexual_coercion
-            else f"- For {issue}, move to a safe place or trusted person first; contact 112/police or a women's helpline/One Stop Centre if danger is immediate, then approach the Protection Officer, DLSA, or Magistrate with injury proof, messages, photos, medical records, residence proof, and witness details [{pwdva}]."
+            else f"- For {issue}, preserve injury proof, messages, photos, medical records, residence proof, and witness details."
         ),
     ])
-    if _has_any(q, ("divorce", "mutual consent", "13b")) and family is not None:
-        hma_ref = hma13b if hma13b is not None else hma
-        if hma_ref is not None:
-            lines.append(
-                f"- For divorce, carry marriage proof, address/residence proof, violence evidence, child/maintenance details, and settlement terms if any to the Family Court/DLSA; ask whether contested divorce, protection orders, maintenance, or mutual consent is the correct route before signing anything [{family}], [{hma_ref}]."
-            )
-        else:
-            lines.append(
-                f"- For divorce, carry marriage proof, address/residence proof, violence evidence, child/maintenance details, and settlement terms if any to the Family Court/DLSA; ask which personal-law divorce route applies before signing anything [{family}]."
-            )
     return lines
 
 
@@ -3167,13 +3729,20 @@ def _render_regular_bail_after_arrest(q: str, sources: dict[str, int]) -> list[s
     return lines
 
 
-def _render_lgbtq_identity_arrest_safeguard(q: str, sources: dict[str, int]) -> list[str]:
+def _render_lgbtq_identity_arrest_safeguard(
+    q: str,
+    sources: dict[str, int],
+    route: MatterRoute,
+) -> list[str]:
     navtej = sources.get("navtej")
     if navtej is None:
         return []
     article21 = sources.get("article21")
     article22 = sources.get("article22")
-    procedure = _first_source(sources, "bnss", "crpc")
+    bnss_arrest = sources.get("bnss_arrest")
+    bnss_production = sources.get("bnss_production")
+    crpc_arrest = sources.get("crpc_arrest")
+    crpc_production = sources.get("crpc_production")
     liberty = article21 if article21 is not None else navtej
     person = "your son" if _has_any(q, ("son", "my son")) else "the arrested person"
     lines = [
@@ -3183,15 +3752,137 @@ def _render_lgbtq_identity_arrest_safeguard(q: str, sources: dict[str, int]) -> 
         lines.append(
             f"For the custody side, ask immediately for the arrest grounds, FIR/offence sections, police-station details, and whether {person} was produced before a Magistrate; Article 22 is the constitutional arrest-safeguard source for that check [{article22}]."
         )
-    if procedure is not None:
+    if route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc":
         lines.append(
-            f"Use the BNSS/CrPC arrest, FIR, remand, and bail procedure source only after seeing the incident date and exact sections; do not let a generic 'bail' answer hide the identity-based liberty issue [{procedure}]."
+            "The incident date is still needed before choosing BNSS or CrPC procedure; do not describe either regime as selected until that date is known."
         )
-    custody_cite = article22 if article22 is not None else procedure if procedure is not None else navtej
+    if bnss_arrest is not None:
+        lines.append(
+            f"For an incident on or after 1 July 2024, BNSS Section 47 is the source for communicating the offence particulars or other grounds of arrest [{bnss_arrest}]."
+        )
+    if bnss_production is not None:
+        lines.append(
+            f"For current procedure, use the BNSS production source to verify taking the arrested person before the Magistrate without unnecessary delay [{bnss_production}]."
+        )
+    if crpc_arrest is not None:
+        lines.append(
+            f"For a pre-1-July-2024 incident, CrPC Section 50 is the arrest-information source to verify instead of BNSS [{crpc_arrest}]."
+        )
+    if crpc_production is not None:
+        lines.append(
+            f"For legacy procedure, use the CrPC production source to verify the Magistrate-production requirement [{crpc_production}]."
+        )
+    custody_cite = article22 or bnss_production or crpc_production or bnss_arrest or crpc_arrest or navtej
     lines.extend([
         "**What you can do next**",
         f"- Ask for the written grounds of arrest, arrest time and place, police station, and whether {person} was produced before a Magistrate; keep any remand order or written refusal with those custody facts [{custody_cite}].",
-        f"- If police disclose no offence beyond gay identity or sexual orientation, treat it as an urgent personal-liberty issue for the Magistrate or High Court route rather than a normal bail query [{liberty}].",
+        f"- If police disclose no offence beyond gay identity or sexual orientation, treat it as an urgent identity-based liberty issue for the Magistrate or High Court route rather than a normal bail query [{liberty}].",
+    ])
+    return lines
+
+
+def _render_bank_account_freeze_legal_hold(
+    q: str,
+    sources: dict[str, int],
+    route: MatterRoute,
+) -> list[str]:
+    rbi_scope = sources.get("rbi_scope")
+    if rbi_scope is None:
+        return []
+    rbi_complaint = sources.get("rbi_complaint")
+    bnss_seizure = sources.get("bnss_seizure")
+    crpc_seizure = sources.get("crpc_seizure")
+    it = sources.get("it")
+    lines = [
+        f"For a frozen, blocked, or lien-marked account, ask the bank for the written freeze/lien reason and first use the RBI Integrated Ombudsman Scheme scope source only to check whether the bank or regulated entity is covered; it does not by itself prove that the legal hold is invalid or that an RBI Ombudsman complaint is maintainable [{rbi_scope}]."
+    ]
+    if "salary account" in q:
+        lines.append(
+            f"For a salary account blocked after a police request or other legal hold with no notice, ask the bank to identify the exact amount affected, originating authority, request/reference number, and whether credits and essential withdrawals are also restricted [{rbi_scope}]."
+        )
+    if route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc":
+        lines.append(
+            "The freeze or police-seizure date is needed before choosing BNSS Section 106 or legacy CrPC Section 102; ask the bank for the written police/court reference and date."
+        )
+    if bnss_seizure is not None:
+        lines.append(
+            f"For a police seizure on or after 1 July 2024, BNSS Section 106 says a police officer may seize property alleged or suspected to have been stolen, or found in circumstances creating suspicion of an offence, and must report the seizure to the Magistrate [{bnss_seizure}]."
+        )
+    if crpc_seizure is not None:
+        lines.append(
+            f"For a pre-1-July-2024 legal hold, verify the police seizure against CrPC Section 102 rather than applying BNSS retrospectively [{crpc_seizure}]."
+        )
+    if rbi_complaint is not None:
+        lines.append(
+            f"Use RBI Scheme clauses 9 and 10 to check complaint grounds and maintainability after a written bank grievance, including whether the challenged bank action merely complied with a law-enforcement or court order [{rbi_complaint}]."
+        )
+    if it is not None and _has_any(
+        q,
+        (
+            "identity theft",
+            "identity misuse",
+            "impersonation",
+            "phishing",
+            "otp",
+            "hacked",
+            "unauthorized transaction",
+            "unauthorised transaction",
+            "upi fraud",
+            "upi scam",
+            "fake upi",
+        ),
+    ):
+        lines.append(
+            f"Keep the IT Act source only for a separate electronic-fraud or identity-misuse allegation; it is not the authority for the bank freeze itself [{it}]."
+        )
+    lines.extend((
+        "**What you can do next**",
+        "- Ask the bank in writing for the written freeze/lien reason, the originating request/reference and order copy, the amount and transactions affected, and the nodal officer handling the hold when it says a cyber/police complaint, including a cyber police complaint, caused the hold.",
+        "- Keep the freeze/lien SMS or email, account statement, bank complaint and reply, request/reference or order copy, transaction IDs, KYC proof, and the exact freeze date.",
+    ))
+    return lines
+
+
+def _render_vehicle_theft_fir_refusal(
+    route: MatterRoute,
+    sources: dict[str, int],
+) -> list[str]:
+    bnss_fir = sources.get("bnss_fir")
+    bnss_refusal = sources.get("bnss_refusal")
+    crpc = sources.get("crpc")
+    legacy = route.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+    current = route.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident"
+    if legacy and crpc is None:
+        return []
+    if current and (bnss_fir is None or bnss_refusal is None):
+        return []
+    if not legacy and not current and (
+        bnss_fir is None or bnss_refusal is None or crpc is None
+    ):
+        return []
+
+    lines: list[str] = []
+    if legacy:
+        lines.append(
+            f"For this pre-1-July-2024 incident, CrPC Section 154 is the source for giving information about a cognizable offence and escalating a police refusal [{crpc}]."
+        )
+    elif current:
+        lines.append(
+            f"BNSS Section 173 says information relating to a cognizable offence may be given orally or electronically to the officer in charge of a police station [{bnss_fir}]."
+        )
+        lines.append(
+            f"If the station refuses to record it, BNSS Section 173 provides a written-post route to the Superintendent of Police and then an application to the Magistrate [{bnss_refusal}]."
+        )
+    else:
+        lines.extend([
+            f"For a pre-1-July-2024 incident, verify the information-and-refusal route under CrPC Section 154 [{crpc}].",
+            f"For an incident on or after 1 July 2024, BNSS Section 173 says information about a cognizable offence may be given orally or electronically to the officer in charge of a police station [{bnss_fir}].",
+            f"After a refusal under the current procedure, BNSS Section 173 provides a written-post route to the Superintendent of Police and then an application to the Magistrate [{bnss_refusal}].",
+        ])
+
+    lines.extend([
+        "**What you can do next**",
+        "- Keep the vehicle number, chassis/engine details if available, RC and insurance papers, place and time, CCTV or witnesses, phone/GPS details, written complaint, acknowledgement, and any refusal.",
     ])
     return lines
 
@@ -4020,13 +4711,17 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
         id="vehicle_theft_fir_refusal",
         route_categories=("police_fir", "criminal_general"),
         trigger_groups=(
-            ("theft", "stolen", "stole", "bike", "car", "scooter", "vehicle"),
+            ("theft", "stolen", "stole"),
+            ("bike", "car", "scooter", "vehicle", "motorcycle", "motor cycle"),
             ("police", "fir", "station", "thana", "complaint", "wait"),
         ),
         source_specs=(
-            PassageSpec("bnss", ("bharatiya nagarik suraksha",), ("/sec-173",), required=True),
+            PassageSpec("bnss_fir", ("bharatiya nagarik suraksha",), ("/sec-173-a",)),
+            PassageSpec("bnss_refusal", ("bharatiya nagarik suraksha",), ("/sec-173-c",)),
             PassageSpec("bnss_magistrate", ("bharatiya nagarik suraksha",), ("/sec-175",)),
             PassageSpec("bns", ("bharatiya nyaya",), ("/sec-303", "/sec-317")),
+            PassageSpec("crpc", ("code of criminal procedure",), ("/sec-154",)),
+            PassageSpec("ipc", ("indian penal code",), ("/sec-378", "/sec-379", "/sec-411")),
         ),
         line_specs=(
             LineSpec("For a stolen bike, stolen scooter, car, or other vehicle where police say to wait before FIR, treat it as a cognizable-theft FIR/refusal and FIR registration problem; do not wait two days just because the station says so orally [{bnss}].", ("bnss",)),
@@ -4250,8 +4945,10 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
             PassageSpec("navtej", ("navtej singh johar",), required=True),
             PassageSpec("article21", ("constitution of india",), ("/sec-21",)),
             PassageSpec("article22", ("constitution of india",), ("/sec-22",)),
-            PassageSpec("bnss", ("bharatiya nagarik suraksha",), ("/sec-47", "/sec-48", "/sec-57", "/sec-58", "/sec-173")),
-            PassageSpec("crpc", ("code of criminal procedure",), ("/sec-50", "/sec-57", "/sec-154", "/sec-167")),
+            PassageSpec("bnss_arrest", ("bharatiya nagarik suraksha",), ("/sec-47", "/sec-48")),
+            PassageSpec("bnss_production", ("bharatiya nagarik suraksha",), ("/sec-57", "/sec-58")),
+            PassageSpec("crpc_arrest", ("code of criminal procedure",), ("/sec-50",)),
+            PassageSpec("crpc_production", ("code of criminal procedure",), ("/sec-56", "/sec-57")),
         ),
         line_specs=(),
         priority=158,
@@ -4470,15 +5167,16 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
             ),
         ),
         source_specs=(
-            PassageSpec("rbi", ("reserve bank integrated ombudsman", "integrated ombudsman"), required=True),
-            PassageSpec("consumer", ("consumer protection",), ("/sec-2", "/sec-35", "/sec-38")),
+            PassageSpec("rbi_scope", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-2", "/sec-3"), required=True),
+            PassageSpec("rbi_complaint", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-9", "/sec-10")),
+            PassageSpec("consumer_complaint", ("consumer protection",), ("/sec-35",)),
         ),
         line_specs=(
-            LineSpec("For a wrong debit, deducted, debited, wrong deduction, failed UPI debit, unauthorised, or unauthorized bank transaction, first raise a written complaint with the bank and get a complaint number before escalating [{rbi}].", ("rbi",)),
-            LineSpec("If the bank or payment app reply/no-reply does not fix the transaction, use the RBI Ombudsman/CMS route; keep consumer service-deficiency as a later backup, not the first forum [{rbi}].", ("rbi",)),
-            LineSpec("If the bank still does not reverse or explain the duplicate/wrong debit, wrong deduction, or failed UPI debit after the written bank complaint and RBI record, the Consumer Protection Act source is the service-deficiency forum backup [{consumer}].", ("consumer",)),
+            LineSpec("First confirm from the RBI Scheme's scope provisions that the bank, NBFC, or payment-system participant is a covered regulated entity [{rbi_scope}].", ("rbi_scope",)),
+            LineSpec("Use the Scheme's complaint and maintainability provisions to check the prior written bank grievance, response or no-response period, and whether the complaint is eligible for RBI Ombudsman/CMS [{rbi_complaint}].", ("rbi_complaint",)),
+            LineSpec("If the bank still does not reverse or explain the duplicate/wrong debit, wrong deduction, or failed UPI debit after the written bank complaint and RBI record, use Consumer Protection Act 2019, Section 35 [{consumer_complaint}] as the service-deficiency forum backup.", ("consumer_complaint",)),
             LineSpec("**What you can do next**"),
-            LineSpec("- Keep the bank statement, UPI/transaction ID/RRN, SMS or email alerts, customer-care chats/call logs, complaint number, written refusal or no-reply proof, and exact debit/refund timeline [{rbi}].", ("rbi",)),
+            LineSpec("- Keep the bank statement, UPI/transaction ID/RRN, SMS or email alerts, customer-care chats/call logs, complaint number, written refusal or no-reply proof, and exact debit/refund timeline [{rbi_complaint}].", ("rbi_complaint",)),
         ),
         priority=90,
     ),
@@ -4486,24 +5184,19 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
         id="bank_account_freeze_legal_hold",
         route_categories=("banking_credit_dispute", "cyber_fraud_or_harassment", "police_fir"),
         trigger_groups=(
-            ("bank", "account", "salary account", "upi account", "upi id", "branch"),
+            ("bank", "account", "salary account", "upi account", "upi id", "branch", "freeze"),
             ("freeze", "frozen", "froze", "blocked", "lien", "fraud complaint"),
-            ("police", "cyber", "fraud complaint", "notice", "case", "legal hold", "ed", "court"),
+            ("police", "cyber", "fraud complaint", "notice", "case", "legal hold", "court", "investigating officer", "investigation officer"),
         ),
         source_specs=(
-            PassageSpec("rbi", ("reserve bank integrated ombudsman", "integrated ombudsman"), required=True),
-            PassageSpec("bnss", ("bharatiya nagarik suraksha",), ("/sec-106", "/sec-173", "/sec-175")),
+            PassageSpec("rbi_scope", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-2", "/sec-3"), required=True),
+            PassageSpec("rbi_complaint", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-9", "/sec-10")),
+            PassageSpec("bnss_seizure", ("bharatiya nagarik suraksha",), ("/sec-106",)),
+            PassageSpec("crpc_seizure", ("code of criminal procedure",), ("/sec-102",)),
             PassageSpec("banking", ("banking regulation",), ("/sec-35A",)),
             PassageSpec("it", ("information technology",), ("/sec-66C", "/sec-66D", "/sec-66E")),
         ),
-        line_specs=(
-            LineSpec("For a salary account blocked by bank saying police request but no notice, or a savings/UPI account frozen, blocked, or lien-marked after a cyber cell email, cyber/police complaint, or police request with no FIR number shared, first get the bank's written freeze/lien reason, police or court reference, authority, and complaint number instead of guessing the case [{rbi}].", ("rbi",)),
-            LineSpec("If the written reason names cyber police, police request, FIR, court order, cyber cell email, or another legal hold, use the BNSS seizure/legal-hold track and take that record to DLSA, cyber police, or the concerned Magistrate/court track separately from the bank-service complaint [{bnss}].", ("bnss",)),
-            LineSpec("Keep the bank-service route separate from the legal-hold route: RBI Ombudsman/CMS is for bank-service failure or no written reason, while the police/court hold needs the police or court reference and legal-aid/court step [{rbi}].", ("rbi",)),
-            LineSpec("Because the hold is linked to a cyber complaint or electronic transaction, keep the IT Act cyber/electronic-record source with the bank freeze papers instead of treating the lien as only a KYC dispute [{it}].", ("it",)),
-            LineSpec("**What you can do next**"),
-            LineSpec("- Keep the salary/savings/UPI account blocked or lien statement, freeze/lien SMS or email, KYC proof, complaint number, branch reply or no-reply proof, transaction IDs, FIR number if available, and any police or court reference / cyber request reference before escalating [{rbi}].", ("rbi",)),
-        ),
+        line_specs=(),
         priority=96,
     ),
     AuthorityWorkflowContract(
@@ -4674,11 +5367,12 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
         id="domestic_violence_immediate_safety",
         route_categories=("family_domestic", "police_fir", "criminal_general"),
         trigger_groups=(
-            ("husband", "wife", "spouse", "in laws", "in-laws", "mother in law", "father in law", "sasural", "matrimonial home", "shared house", "child", "marriage", "all marriages", "parents say"),
-            ("beat", "beating", "slap", "slapped", "hit", "punched", "assaulted", "took my phone", "unsafe", "threat", "evict", "get out", "no place to stay", "not allowing me to call", "remove me", "ghar se nikal", "ghar se nikaal", "wapis ja", "threw me out", "kicked me out"),
+            ("husband", "wife", "spouse", "pati", "in laws", "in-laws", "mother in law", "father in law", "sasural", "matrimonial home", "shared house", "child", "marriage", "all marriages", "parents say", "mere husband", "mere pati", "mera husband", "mera pati"),
+            ("beat", "beating", "slap", "slapped", "hit", "punched", "assaulted", "choke", "strangle", "stab", "shoot", "poison", "burn", "kill", "killed", "murder", "slit", "dhamki", "jaan se", "break my leg", "jala", "mujhe maar", "mujhe mar", "maar raha", "mar raha", "maar rahi", "mar rahi", "took my phone", "unsafe", "threat", "evict", "get out", "no place to stay", "not allowing me to call", "remove me", "ghar se nikal", "ghar se nikaal", "wapis ja", "threw me out", "kicked me out", "force sex", "forces sex", "forced sex", "forcing sex", "forcing me for sex", "sexual coercion", "without consent", "when i say no", "after i say no"),
         ),
         source_specs=(
-            PassageSpec("pwdva", ("domestic violence",), ("/sec-3", "/sec-12", "/sec-17", "/sec-18", "/sec-19", "/sec-20"), required=True),
+            PassageSpec("pwdva", ("domestic violence",), ("/sec-3",), required=True),
+            PassageSpec("pwdva_application", ("domestic violence",), ("/sec-12",)),
             PassageSpec("pwdva_protection", ("domestic violence",), ("/sec-18",)),
             PassageSpec("pwdva_residence", ("domestic violence",), ("/sec-19",)),
             PassageSpec("bns", ("bharatiya nyaya",), ("/sec-115", "/sec-117", "/sec-125", "/sec-308", "/sec-309", "/sec-351")),
@@ -4744,8 +5438,8 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
         id="arrest_custody_station_case_not_disclosed",
         route_categories=("arrest_custody_safeguard", "police_fir"),
         trigger_groups=(
-            ("police", "arrest", "custody", "picked", "took"),
-            ("not telling station", "not telling the station", "not telling case", "which station", "family not informed", "no fir copy", "midnight", "night", "from home", "from my home", "picked my"),
+            ("police", "officer", "officers", "crime branch", "arrest", "custody", "picked", "took", "taken", "detained", "utha", "le gayi", "le gaye"),
+            ("not telling station", "not telling the station", "not telling case", "will not tell", "won't tell", "not tell us", "will not disclose", "won't disclose", "will not identify", "won't identify", "cannot find which police station", "undisclosed station", "not produced", "will not produce", "won't produce", "which station", "family not informed", "no fir copy", "midnight", "night", "from home", "from my home", "picked my", "papa ko", "bhai ko", "jija ko", "jiju ko", "station ka naam", "thana nahi bata", "thana nahin bata", "nahi bata", "nahin bata", "kahan le gaye"),
         ),
         source_specs=(
             PassageSpec("article22", ("constitution",), ("/sec-22",), required=True),
@@ -4757,13 +5451,12 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
         ),
         line_specs=(
             LineSpec("Because police picked your family member from home, a tea shop, or another place at night and are not telling the station, case, FIR copy, or grounds, treat this first as an urgent arrest/custody safeguard and as an arrest-information and liberty safeguard issue; Article 22 supports grounds of arrest, lawyer access, and production before a Magistrate [{article22}].", ("article22",)),
-            LineSpec("Ask for the grounds of arrest, arrest memo, station name, case/FIR or diary reference, and nominated-person/family-intimation proof on the BNSS arrest-information source [{arrest_info}].", ("arrest_info",)),
-            LineSpec("For continued detention, check the 24-hour Magistrate-production status and remand/production papers under the BNSS production source [{production}].", ("production",)),
-            LineSpec("For the FIR-copy side, use the BNSS FIR/information source separately from the urgent custody-location and production safeguards [{fir_info}].", ("fir_info",)),
+            LineSpec("BNSS Section 47 requires an arresting officer to communicate full particulars of the offence or other grounds of arrest to the arrested person [{arrest_info}].", ("arrest_info",)),
+            LineSpec("Article 22 requires an arrested person to be produced before the nearest Magistrate within twenty-four hours, excluding journey time [{article22}].", ("article22",)),
             LineSpec("If the person is not being shown, station location is hidden, or lawyer access is blocked, keep the Article 226 habeas corpus route ready with DLSA/High Court counsel while also asking for arrest/remand records [{article226}].", ("article226",)),
-            LineSpec("If the older CrPC regime applies, check the same arrest-information and production safeguards under the CrPC source instead of mixing regimes [{crpc}].", ("crpc",)),
             LineSpec("**What you can do next**"),
-            LineSpec("- Do not wait only for an FIR copy: call/visit the station duty officer and senior officer for written custody details, exact station location, FIR number/copy if registered, arrest memo, grounds, advocate/lawyer-access permission, and production status; contact DLSA or a criminal lawyer immediately; if detention or non-production continues, use the Magistrate/High Court habeas corpus route with pickup time, officer/vehicle/CCTV/witness details, calls, and ID proof [{article22}].", ("article22",)),
+            LineSpec("- Keep the pickup time and place, officer or vehicle details, CCTV or witness details, calls, messages, ID proof, arrest memo if provided, and any written custody, arrest, or refusal record."),
+            LineSpec("- Contact DLSA or a criminal lawyer immediately if the station remains unknown or the person is not produced."),
         ),
         priority=126,
     ),
@@ -5466,9 +6159,10 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
             ),
         ),
         source_specs=(
-            PassageSpec("insurance", ("insurance ombudsman",), ("/sec-5", "/sec-13", "/sec-14"), required=True),
+            PassageSpec("insurance_scope", ("insurance ombudsman",), ("/sec-13",), required=True),
+            PassageSpec("insurance_procedure", ("insurance ombudsman",), ("/sec-14",)),
             PassageSpec("consumer_definition", ("consumer protection",), ("/sec-2",)),
-            PassageSpec("consumer_complaint", ("consumer protection",), ("/sec-35", "/sec-38")),
+            PassageSpec("consumer_complaint", ("consumer protection",), ("/sec-35",)),
             PassageSpec("consumer_relief", ("consumer protection",), ("/sec-39",)),
             PassageSpec("senior", ("senior citizens", "parents and senior citizens"), ("/sec-4", "/sec-5", "/sec-9")),
         ),
@@ -5979,8 +6673,9 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
             LineSpec("Treat no marital relationship, refusal of sex, physical-intimacy breakdown, or a spouse saying the marriage is only on paper as a matrimonial/family-court counselling or remedy question for Family Court/DLSA, not as permission to force or pressure a spouse [{family}].", ("family",)),
             LineSpec("If the Hindu Marriage Act applies, the remedy still depends on facts and proof; discuss counselling, judicial separation, divorce, restitution, maintenance, or other lawful family-court relief only after legal advice [{hma}].", ("hma",)),
             LineSpec("If the Special Marriage Act applies, the same issue stays fact-specific and must be checked against the available matrimonial relief source before choosing a case [{sma}].", ("sma",)),
+            LineSpec("**Consent matters**"),
             LineSpec("**What you can do next**"),
-            LineSpec("- Consent matters: do not force, threaten, or pressure your spouse; write a timeline, counselling attempts, residence, children, maintenance, and any violence/coercion facts, then speak to DLSA or a family-law lawyer about the Family Court route [{family}].", ("family",)),
+            LineSpec("- Keep a timeline of the intimacy breakdown, counselling attempts, residence, children, maintenance, and any violence or coercion facts; do not force, threaten, or pressure your spouse for sex."),
         ),
         priority=97,
     ),

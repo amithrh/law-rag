@@ -705,9 +705,61 @@ def test_contract_floor_skips_criminal_backup_for_drug_treatment_support_route()
 def test_answer_emits_unknown_criminal_regime_caveat(monkeypatch):
     """Unknown-date criminal routes get a deterministic user-visible caveat."""
     from apps.api import main as api_main
+    from apps.api import retrieval
     from apps.api.main import CRIMINAL_REGIME_CAVEAT
 
-    _patch_high_score_retrieve(monkeypatch)
+    def chunk(chunk_id, title, anchor, text, source_pack):
+        return retrieval.RetrievedChunk(
+            chunk_id=chunk_id,
+            document_id=chunk_id,
+            anchor=anchor,
+            text=text,
+            title=title,
+            source_type="bare_act",
+            subject_area="criminal",
+            as_at=None,
+            paragraph_no=None,
+            citation=None,
+            court=None,
+            statute_short=title,
+            dense_score=0.9,
+            bm25_score=0.8,
+            rerank_score=0.95,
+            metadata={"_required_source_pack": source_pack},
+        )
+
+    chunks = [
+        chunk(
+            1,
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "bnss-2023/sec-173-a",
+            "Information about a cognizable offence may be given orally or electronically.",
+            "bnss_2023_vehicle_theft_fir",
+        ),
+        chunk(
+            2,
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "bnss-2023/sec-173-c",
+            "On refusal, the information may be sent to the Superintendent of Police and then the Magistrate.",
+            "bnss_2023_vehicle_theft_fir",
+        ),
+        chunk(
+            3,
+            "Code of Criminal Procedure 1973",
+            "crpc-1973/sec-154",
+            "Section 154 provides the cognizable-information and refusal route.",
+            "crpc_1973_vehicle_theft_fir",
+        ),
+    ]
+
+    async def fake_multi_query_retrieve(*args, **kwargs):
+        return chunks, []
+
+    async def fake_retrieve(*args, **kwargs):
+        return chunks
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fake_multi_query_retrieve)
+    monkeypatch.setattr(api_main, "hybrid_retrieve", fake_retrieve)
     _enable_fast_mode(monkeypatch)
     _patch_relevance(monkeypatch, score=0.85)
 
@@ -722,7 +774,7 @@ def test_answer_emits_unknown_criminal_regime_caveat(monkeypatch):
 
     with TestClient(app) as c:
         with c.stream("POST", "/answer", json={
-            "q": "police refusing FIR caste atrocity case sub inspector saying it is small matter",
+            "q": "my bike is stolen and police refuse FIR",
             "top_k": 4,
             "skip_nli": True,
         }) as r:
@@ -2186,6 +2238,13 @@ def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypa
         ),
         chunk(
             2,
+            "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "rbi-integrated-ombudsman-2021/sec-9",
+            required_source_pack="rbi_integrated_ombudsman_2021",
+            text="A complaint may be made after the regulated entity rejects it, gives an unsatisfactory reply, or does not reply within the prescribed period.",
+        ),
+        chunk(
+            3,
             "Consumer Protection Act 2019",
             "consumer-protection-2019/sec-35",
             required_source_pack="consumer_protection_2019",
@@ -2199,25 +2258,25 @@ def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypa
     async def fake_retrieve(*args, **kwargs):
         return chunks
 
-    def fake_workflow_contract_result(query, route, passages):
+    def fake_workflow_contract_result(query, route, passages, **kwargs):
         return WorkflowTemplateResult(
             id="wrong_bank_debit",
-            source="test",
+            source="authority_graph",
             answer_mode="primary",
             lines=[
                 "**Short answer**",
-                "For a wrong bank debit, first raise a written bank complaint and use the RBI Ombudsman/CMS route if the bank reply or non-reply does not fix it [1].",
+                "For a wrong bank debit, first raise a written bank complaint and use the RBI Ombudsman/CMS route if the bank reply or non-reply does not fix it [1] [2].",
                 "**What you can do next**",
-                "- Keep the bank statement entry, transaction ID, complaint number, and written bank reply [1].",
+                "- Keep the bank statement entry, transaction ID, complaint number, and written bank reply [1] [2].",
             ],
-            required_sources=("rbi",),
+            required_sources=("rbi_scope", "rbi_complaint"),
             optional_sources=("consumer",),
-            source_indices={"rbi": 1},
+            source_indices={"rbi_scope": 1, "rbi_complaint": 2},
         )
 
     monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fake_multi_query_retrieve)
     monkeypatch.setattr(api_main, "hybrid_retrieve", fake_retrieve)
-    monkeypatch.setattr(api_main, "common_workflow_contract_result", fake_workflow_contract_result)
+    monkeypatch.setattr(api_main, "plan_owned_workflow_contract_result", fake_workflow_contract_result)
     _patch_relevance(monkeypatch, score=0.9)
     _enable_fast_mode(monkeypatch)
 
@@ -2236,8 +2295,8 @@ def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypa
     assert workflow["id"] == "wrong_bank_debit"
     assert workflow["answer_mode"] == "primary"
     assert "RBI Ombudsman/CMS route" in joined
-    assert "Consumer Protection Act 2019, Section 35 [2]" in joined
-    assert joined.count("Consumer Protection Act 2019, Section 35 [2]") == 1
+    assert "Consumer Protection Act 2019, Section 35 [3]" in joined
+    assert joined.count("Consumer Protection Act 2019, Section 35 [3]") == 1
     assert "District Legal Services Authority" not in joined
 
 
@@ -4496,16 +4555,17 @@ def test_common_police_fir_and_pickup_templates_are_user_actionable():
     bike_q = "My bike is stolen, police is not filing FIR"
     bike_passages = [
         {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
-        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
-        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c"},
+        {"index": 4, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154"},
     ]
     bike_joined = " ".join(_grounded_template_lines(bike_q, route_matter(bike_q), bike_passages))
 
-    assert "stolen bike" in bike_joined
-    assert "police refusal to register" in bike_joined
-    assert "Magistrate-investigation source" in bike_joined
-    assert "senior police, DLSA, or the Magistrate route" in bike_joined
-    assert "[1]" in bike_joined and "[2]" in bike_joined and "[3]" in bike_joined
+    assert "pre-1-July-2024 incident" in bike_joined
+    assert "incident on or after 1 July 2024" in bike_joined
+    assert "written-post route to the Superintendent of Police" in bike_joined
+    assert "written complaint, acknowledgement, and any refusal" in bike_joined
+    assert "[2]" in bike_joined and "[4]" in bike_joined
 
     pickup_q = "police has picked my son from my home in the night, i have not got FIR copy"
     pickup_passages = [
@@ -4517,11 +4577,12 @@ def test_common_police_fir_and_pickup_templates_are_user_actionable():
     pickup_joined = " ".join(_grounded_template_lines(pickup_q, route_matter(pickup_q), pickup_passages))
 
     assert "arrest-information and liberty safeguard" in pickup_joined
-    assert "grounds of arrest, arrest memo" in pickup_joined
-    assert "24-hour Magistrate-production" in pickup_joined
-    assert "FIR-copy side" in pickup_joined
-    assert "family-intimation proof" in pickup_joined
-    assert "[1]" in pickup_joined and "[2]" in pickup_joined and "[3]" in pickup_joined and "[4]" in pickup_joined
+    assert "grounds of arrest" in pickup_joined
+    assert "arrest memo" in pickup_joined
+    assert "nearest Magistrate within twenty-four hours" in pickup_joined
+    assert "pickup time and place" in pickup_joined
+    assert "station remains unknown" in pickup_joined
+    assert "[1]" in pickup_joined and "[2]" in pickup_joined
 
 
 def test_hut_burning_bridge_survives_tribal_route():
@@ -4558,7 +4619,7 @@ def test_itpa_receptionist_raid_template_keeps_accused_role_clear():
     assert "do not accept a generic ITPA label" in joined
     assert "reception-desk work" in joined
     assert "do not admit involvement beyond facts" in joined
-    assert "[1]" in joined and "[2]" in joined and "[3]" in joined and "[4]" in joined
+    assert "[1]" in joined and "[3]" in joined
 
 
 def test_insurance_claim_template_uses_consumer_and_ombudsman_routes():
@@ -4577,9 +4638,9 @@ def test_insurance_claim_template_uses_consumer_and_ombudsman_routes():
 
     assert "accidental fire-loss claim" in joined
     assert "Insurance Ombudsman source" in joined
-    assert "Consumer Protection Act complaint source" in joined
+    assert "Consumer Protection Act Section 35" in joined
     assert "policy schedule" in joined
-    assert "[1]" in joined and "[2]" in joined and "[3]" in joined and "[4]" in joined
+    assert "[1]" in joined and "[3]" in joined
 
 
 def test_state_specific_filter_drops_wrong_state_witch_act():
@@ -4855,8 +4916,8 @@ def test_grounded_template_for_domestic_acid_threat_cites_pwdva_bns_bnss():
     joined = " ".join(lines)
 
     assert "protection-order route" in joined and "[1]" in joined
-    assert "criminal intimidation" in joined and "[2]" in joined
-    assert "police track" in joined and "[3]" in joined
+    assert "criminal-intimidation" in joined and "[2]" in joined
+    assert "written police complaint" in joined and "[3]" in joined
 
 
 def test_grounded_template_for_domestic_violence_safety_is_user_shaped():
@@ -4907,17 +4968,16 @@ def test_grounded_template_for_domestic_violence_safety_is_user_shaped():
     residence_q = "sasural waale mujhe ghar se nikal diya raat ko bina kuch diye kya main wapis ja sakti hoon"
     residence_joined = " ".join(_grounded_template_lines(residence_q, route_matter(residence_q), passages))
 
-    assert "ghar se nikal diya / can I go back" in residence_joined
-    assert "residence protection" in residence_joined and "[3]" in residence_joined
-    assert "ghar se nikal diya or thrown you out" in residence_joined
+    assert "put you out of the matrimonial home" in residence_joined
+    assert "PWDVA Section 19" in residence_joined and "[3]" in residence_joined
+    assert "return safely" in residence_joined
     assert "Protection Officer" in residence_joined
 
     immediate_q = "my husband is beating me right now what should I do"
     immediate_joined = " ".join(_grounded_template_lines(immediate_q, route_matter(immediate_q), passages))
 
     assert "beating you right now" in immediate_joined
-    assert "Because he is beating you right now" in immediate_joined
-    assert "move to immediate safety first" in immediate_joined
+    assert "treat immediate safety first" in immediate_joined
 
 
 def test_common_screenshot_templates_for_bank_municipal_pan_and_loan_app():
@@ -4995,7 +5055,7 @@ def test_common_screenshot_templates_for_bank_municipal_pan_and_loan_app():
     ]
     loan_joined = " ".join(_grounded_template_lines("Loan app is harassing my contacts", route_matter("Loan app is harassing my contacts"), loan_app_passages))
     assert "Loan app or recovery harassment" in loan_joined
-    assert "contact list" in loan_joined
+    assert "contact-data abuse" in loan_joined
     loan_route = route_matter("Loan app is harassing my contacts")
     assert _is_safe_template_source_bridge(
         "If the app is using your contact list, keep a separate personal-data grievance track [2].",
@@ -6566,16 +6626,17 @@ def test_common_user_smoke_templates_answer_screenshot_failures():
                 {"index": 7, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
                 {"index": 8, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
             ],
-            ("arrest-information", "[7]", "FIR-copy", "[8]"),
+            ("arrest-information", "[7]", "FIR copy", "grounds of arrest"),
         ),
         (
             "My bike is stolen, police is not filing FIR",
-            [
-                {"index": 9, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
-                {"index": 10, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
-                {"index": 11, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
-            ],
-            ("stolen bike", "[9]", "police refusal", "[10]", "written theft complaint", "[11]"),
+                [
+                    {"index": 9, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
+                    {"index": 10, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a"},
+                    {"index": 11, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c"},
+                    {"index": 29, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154"},
+                ],
+                ("pre-1-July-2024", "incident on or after 1 July 2024", "Superintendent of Police", "[10]", "[29]"),
         ),
         (
             "My husband told lies before marriage about his job and his salary, what to do",
@@ -6608,7 +6669,7 @@ def test_common_user_smoke_templates_answer_screenshot_failures():
                 {"index": 17, "title": "Family Courts Act 1984", "anchor": "family-courts-1984/sec-7"},
                 {"index": 18, "title": "Hindu Marriage Act 1955", "anchor": "hindu-marriage-1955/sec-13"},
             ],
-            ("marriage-breakdown", "[17]", "Section 13", "[18]", "Do not use pressure or force", "DLSA"),
+                ("marriage-breakdown", "[17]", "Section 13", "[18]", "do not force, threaten, or pressure", "DLSA"),
         ),
         (
             "i caught my husband with another women having sex",
@@ -6642,7 +6703,7 @@ def test_common_user_smoke_templates_answer_screenshot_failures():
                 {"index": 27, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
                 {"index": 28, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
             ],
-            ("RBI Ombudsman Scheme", "[27]", "bank reply or non-reply", "[28]"),
+            ("RBI Ombudsman/CMS", "[27]", "written complaint", "[28]"),
         ),
     ]
 
@@ -8068,7 +8129,7 @@ def test_milestone_b_common_failure_templates_cover_required_sources():
                 {"index": 10, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
                 {"index": 11, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
             ],
-            ("RBI Ombudsman Scheme", "[10]", "commercial banks", "statement entry", "[10]"),
+            ("RBI Ombudsman/CMS", "[10]", "commercial banks", "statement entry", "[10]"),
         ),
         (
             "vit student caught with bhang lassi in mahabaleshwar holi is it ndps",
@@ -9267,13 +9328,14 @@ def test_common_user_answer_templates_cover_ui_failure_prompts():
         route_matter("scooter stolen from parking station says give written complaint only"),
         [
             {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
-            {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
-            {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175"},
+            {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a"},
+            {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c"},
+            {"index": 4, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154"},
         ],
     ))
-    assert "stolen scooter" in theft
-    assert "written complaint" in theft
-    assert "FIR registration" in theft
+    assert "pre-1-July-2024" in theft
+    assert "incident on or after 1 July 2024" in theft
+    assert "written complaint, acknowledgement, and any refusal" in theft
 
     street_vendor = " ".join(_grounded_template_lines(
         "municipality removed my tea cart from footpath without notice",
@@ -9335,8 +9397,8 @@ def test_common_user_answer_templates_cover_ui_failure_prompts():
         ],
     ))
     assert "RBI Ombudsman" in loan_app
-    assert "personal-data grievance" in loan_app
-    assert "police/cyber track" in loan_app
+    assert "personal-data misuse" in loan_app
+    assert "cyber police/1930/cybercrime.gov.in" in loan_app
 
 
 def test_common_user_near_miss_guards_do_not_overstate_facts():

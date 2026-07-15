@@ -703,6 +703,32 @@ def route_matter(query: str) -> MatterRoute:
     if _is_family_domestic_notice_response_issue(q):
         return _family_domestic_notice_response_route(q)
 
+    if is_third_party_reported_family_threat(q):
+        return MatterRoute(
+            category="criminal_general",
+            label="Third-party threat / personal safety",
+            confidence=0.82,
+            urgency="high",
+            required_sources=[
+                "BNS 2023 / IPC 1860 criminal-intimidation or hurt provisions based on incident date and exact threat",
+                "BNSS 2023 / CrPC 1973 complaint/FIR and Magistrate-escalation procedure based on incident date",
+            ],
+            forums=[
+                "police station or cyber/police complaint channel as the facts require",
+                "senior police officer or Magistrate if a cognizable complaint is refused",
+                "District Legal Services Authority",
+            ],
+            missing_facts=[
+                "identity of the person who made the threat",
+                "exact words, date, place, and witnesses",
+                "messages, calls, recordings, CCTV, or other proof",
+                "current safety risk and prior complaint status",
+            ],
+            red_flags=_red_flags(q),
+            action_pack=_fir_pack(),
+            legal_regime=_criminal_regime(q),
+        )
+
     civil_court_route = _civil_court_procedure_route(q)
     if civil_court_route is not None:
         return civil_court_route
@@ -1162,7 +1188,7 @@ def route_matter(query: str) -> MatterRoute:
     if _is_custody_legal_aid_access_issue(q):
         return _custody_legal_aid_access_route(q)
 
-    if _is_arrest_production_delay(q) or _is_custody_restraint_issue(q) or _is_arrest_information_safeguard(q):
+    if _is_arrest_production_delay(q) or _is_custody_restraint_issue(q) or _is_arrest_information_safeguard(query):
         return _arrest_custody_safeguard_route(q)
 
     if _is_custodial_violence_issue(q):
@@ -1430,6 +1456,11 @@ def route_matter(query: str) -> MatterRoute:
             missing_facts=["bank name and branch", "account type/number suffix", "freeze/lien date", "written reason or SMS/email", "KYC status", "complaint number", "whether police/cyber/court/ED hold is mentioned"],
             red_flags=_red_flags(q),
             action_pack=_bank_account_freeze_pack(),
+            legal_regime=(
+                _criminal_regime(q)
+                if _has_bank_account_legal_hold_context(q)
+                else None
+            ),
         )
 
     if _is_lender_reminder_or_recovery_service_issue(q):
@@ -3515,6 +3546,11 @@ def _specific_high_risk_surface_route(q: str) -> MatterRoute | None:
             missing_facts=["bank name and branch", "account type/number suffix", "freeze/lien date", "written reason or SMS/email", "KYC status", "complaint number", "whether police/cyber/court/ED hold is mentioned"],
             red_flags=_red_flags(q),
             action_pack=_bank_account_freeze_pack(),
+            legal_regime=(
+                _criminal_regime(q)
+                if _has_bank_account_legal_hold_context(q)
+                else None
+            ),
         )
 
     if _is_loan_app_harassment_issue(q):
@@ -3738,6 +3774,59 @@ def _early_precise_common_route(q: str) -> MatterRoute | None:
             ],
             red_flags=_red_flags(q),
             action_pack=_social_welfare_pack(),
+        )
+
+    if is_arbitral_account_restraint(q):
+        return MatterRoute(
+            category="court_procedure",
+            label="Arbitral interim restraint / account attachment",
+            confidence=0.86,
+            urgency="high",
+            required_sources=[
+                "Arbitration and Conciliation Act 1996 section 9 or section 17 interim-measures procedure based on who made the order",
+                "the arbitral tribunal/court interim order and arbitration agreement",
+            ],
+            forums=[
+                "arbitral tribunal if it made the section 17 order",
+                "competent court for section 9 relief or the legally available challenge/enforcement route",
+                "lawyer/legal-aid desk after checking the exact order",
+            ],
+            missing_facts=[
+                "arbitration case and tribunal details",
+                "exact interim order and date",
+                "whether the order is under section 9 or section 17",
+                "account/amount restrained and notice given",
+                "next hearing or challenge deadline",
+            ],
+            red_flags=[],
+            action_pack=_court_procedure_pack(),
+        )
+
+    if is_civil_prejudgment_bank_attachment(q):
+        return MatterRoute(
+            category="court_procedure",
+            label="Pre-judgment civil attachment / security",
+            confidence=0.86,
+            urgency="high",
+            required_sources=[
+                "Code of Civil Procedure 1908 Order XXXVIII attachment-before-judgment safeguards",
+                "the interim attachment/lien order and pending-suit papers",
+                "Limitation Act 1963 or appellate procedure only where a challenge deadline applies",
+            ],
+            forums=[
+                "same civil court hearing the pending suit for objection, security, variation, or vacation",
+                "appellate/revisional court only after checking the order and maintainability",
+                "District Legal Services Authority",
+            ],
+            missing_facts=[
+                "court and pending suit number",
+                "date and exact wording of the interim order",
+                "whether notice and an opportunity to object were given",
+                "amount secured and account/property affected",
+                "next hearing and any challenge deadline",
+            ],
+            red_flags=[],
+            action_pack=_court_procedure_pack(),
         )
 
     if _is_decree_execution_issue(q):
@@ -7788,17 +7877,288 @@ def _is_army_service_pension_issue(q: str) -> bool:
 
 
 def _is_decree_execution_issue(q: str) -> bool:
+    if _has_any(q, (
+        "no decree yet", "decree not passed", "decree has not been passed",
+        "no decree issued", "no decree has been issued", "no decree entered",
+        "no decree has been entered", "pending adjudication", "remains undecided",
+        "case is undecided", "before entering decree", "before passing decree",
+        "awaiting final judgment", "awaiting final judgement", "trial still pending",
+        "yet to be decided", "not yet decided", "still to be decided",
+        "pending final decision", "still being heard", "suit is still being heard",
+        "until the money suit is decided", "until the suit is decided",
+        "as security until", "security until",
+        "interim attachment", "interim security", "temporary attachment",
+        "before judgment", "before judgement", "pre-judgment", "pre judgment",
+        "attachment before judgment", "attachment before judgement",
+    )) or re.search(
+        r"\b(?:no|without)\s+(?:final\s+)?(?:judgment|judgement|decree)\b|"
+        r"\bbefore\s+(?:entering|passing|issuing|making)\s+(?:a\s+|the\s+)?"
+        r"(?:judgment|judgement|decree)\b",
+        q,
+    ) is not None:
+        return False
     decree_context = _has_any(q, (
         "judgment debtor", "judgement debtor", "money decree", "decree passed",
+        "judgment was entered", "judgement was entered", "judgment entered",
+        "judgement entered", "decree has already been passed", "decree already passed",
         "decree amount", "decree holder", "decree money", "decree execution",
-        "execution of decree", "order 21", "order xxi",
-    ))
+        "execution of decree", "civil decree", "order 21", "order xxi",
+        "money judgment", "money judgement", "money suit", "recovery suit",
+        "executing court", "execution court", "executing court order",
+        "decretal amount", "decree case", "recovery court", "garnishee order",
+    )) or re.search(
+        r"\b(?:civil|court)\s+(?:judgment|judgement|decree)\b|"
+        r"\b(?:satisf(?:y|ies|ied)|enforc(?:e|es|ed|ing))\b.{0,24}"
+        r"\b(?:judgment|judgement|decree)\b|"
+        r"\bexecut(?:e|es|ed|ing|ion)\b.{0,24}\b(?:court|order|suit)\b",
+        q,
+    ) is not None
     execution_action = _has_any(q, (
         "not paying", "not paid", "no payment", "refusing to pay",
+        "execution remained pending", "execution remains pending", "enforce it",
         "stopped paying", "execute", "execution", "attach", "attachment",
         "attach property", "civil court procedure", "property attachment",
+        "satisfy", "satisfies", "satisfied", "enforce", "enforces", "enforced",
+        "enforcing", "recover", "recovers", "recovered", "recovery",
+        "froze", "frozen", "freeze", "blocked", "lien", "withdrawal restraint",
     ))
     return decree_context and execution_action
+
+
+def is_civil_prejudgment_bank_attachment(q: str) -> bool:
+    """Recognize interim civil security before a money claim becomes a decree."""
+    q = q.lower()
+    post_decree_context = _has_any(q, (
+        "after the money judgment", "after the money judgement", "after judgment",
+        "after judgement", "judgment has been passed", "judgement has been passed",
+        "decree has been passed", "decree was passed", "decree passed",
+        "pending execution of the decree", "pending decree execution",
+        "executing court", "execution court", "enforce the judgment",
+        "enforce the judgement", "satisfy the judgment", "satisfy the judgement",
+        "now that the claim is resolved",
+    ))
+    if post_decree_context:
+        return False
+    account_context = _has_any(q, (
+        "bank account", "account", "salary account", "savings account",
+    ))
+    restraint_context = _has_any(q, (
+        "freeze", "frozen", "froze", "attachment", "attached", "lien", "blocked",
+    ))
+    pending_civil_context = _has_any(q, (
+        "money suit", "recovery suit", "civil suit", "commercial suit",
+        "before judgment", "before judgement", "pre-judgment", "pre judgment",
+        "attachment before judgment", "attachment before judgement",
+        "pending final decision", "pending adjudication", "awaiting decision",
+        "awaits adjudication", "awaiting adjudication", "awaits resolution",
+        "awaiting resolution", "pending resolution", "claim awaits adjudication",
+        "claim awaits resolution",
+        "case is decided", "case is finally decided", "claim remains pending",
+        "money claim remains pending", "recovery claim remains pending",
+        "awaiting final judgment", "awaiting final judgement", "remains undecided",
+        "still being heard", "suit is still being heard", "while the recovery suit",
+        "until the money suit is decided", "until the suit is decided",
+        "before deciding the money suit", "before deciding the recovery suit",
+        "before deciding the claim", "before deciding the recovery claim",
+        "before the recovery claim is resolved", "before the claim is resolved",
+        "no decree yet", "no decree issued", "no decree has been issued",
+        "interim lien", "temporary lien", "interim attachment", "temporary attachment",
+        "as security until", "security until",
+    )) or re.search(
+        r"\b(?:before|pending|awaiting|until|while)\b.{0,42}"
+        r"\b(?:decision|judgment|judgement|decree|suit|trial)\b",
+        q,
+    ) is not None or re.search(
+        r"\b(?:claim|suit|case)\b.{0,28}\b"
+        r"(?:awaits?|awaiting|pending|remains?)\b.{0,24}\b"
+        r"(?:adjudication|resolution|decision|judgment|judgement)\b|"
+        r"\bbefore\b.{0,32}\b(?:claim|suit|case)\b.{0,20}\b"
+        r"(?:resolved|decided|adjudicated)\b",
+        q,
+    ) is not None
+    civil_authority = _has_any(q, (
+        "court", "judge", "civil court", "commercial court", "civil judge", "tribunal",
+        "arbitral tribunal", "interim order",
+    ))
+    explicit_prejudgment_attachment = _has_any(q, (
+        "attachment before judgment", "attachment before judgement",
+        "ordered attachment before judgment", "ordered attachment before judgement",
+    ))
+    return (
+        (account_context or explicit_prejudgment_attachment)
+        and restraint_context
+        and pending_civil_context
+        and civil_authority
+    )
+
+
+def is_arbitral_account_restraint(q: str) -> bool:
+    """Keep arbitral interim measures out of criminal-freeze and RBI complaint law."""
+    q = q.lower()
+    arbitral_context = _has_any(q, (
+        "arbitral tribunal", "arbitration tribunal", "arbitrator",
+        "pending arbitration", "during arbitration", "arbitral interim order",
+        "section 17 arbitration", "section 9 arbitration",
+    ))
+    account_context = _has_any(q, (
+        "bank account", "account", "salary account", "savings account", "debit freeze",
+    ))
+    restraint_context = _has_any(q, (
+        "freeze", "frozen", "froze", "blocked", "lien", "attachment", "attached", "restraint",
+    ))
+    return arbitral_context and restraint_context and (
+        account_context or _has_any(q, ("freeze", "frozen", "lien", "attachment", "attached"))
+    )
+
+
+def is_civil_execution_bank_attachment(q: str) -> bool:
+    q = q.lower()
+    account_attachment = _has_any(q, (
+        "bank account", "account", "salary account", "savings account",
+    )) and _has_any(q, (
+        "freeze", "frozen", "froze", "attachment", "attached", "lien", "blocked",
+    ))
+    return (
+        account_attachment
+        and not is_civil_prejudgment_bank_attachment(q)
+        and _is_decree_execution_issue(q)
+    )
+
+
+def has_positive_criminal_bank_hold_context(q: str) -> bool:
+    q = q.lower()
+    enforcement_context = _has_any(q, (
+        "enforcement directorate", "ed freeze", "ed notice", "ed case", "ed order",
+    ))
+    if enforcement_context:
+        return True
+
+    # Remove only locally negated authority phrases. A global veto for "no FIR"
+    # incorrectly erased a positive actor in queries such as "cyber police froze
+    # my account, but there is no FIR yet".
+    positive_q = q
+    for pattern in (
+        r"\b(?:no|without)\s+police(?:\s+(?:or|and)\s+cyber(?:crime)?)?\b",
+        r"\b(?:cyber\s+)?police\b.{0,32}\b(?:not involved|nothing to do|not connected|unrelated|no role|no part)\b",
+        r"\b(?:cyber\s+)?police\b.{0,32}\b(?:denied|disclaimed|disowned)\b.{0,16}\b(?:any\s+)?(?:involvement|role|part|connection)\b",
+        r"\b(?:cyber\s+)?police\b.{0,32}\bdenied\b.{0,12}\bbeing\s+involved\b",
+        r"\bcyber(?:crime|\s+police|\s+cell)?\b.{0,32}\b(?:not involved|nothing to do|not connected|unrelated|no role|no part)\b",
+        r"\b(?:cyber\s+)?police\s+(?:did\s+not|didn't|has\s+not|hasn't)\s+(?:freeze|frozen|froze|block|blocked|seize|seized)\b",
+        r"\b(?:cyber\s+)?police\s+(?:did\s+not|didn't|has\s+not|hasn't)\s+(?:request|order|direct|cause)\b.{0,20}\b(?:freeze|hold|block|lien|seizure)?\b",
+        r"\b(?:cyber\s+)?police\b.{0,28}\b(?:freeze|hold|block|lien)\b.{0,20}\b(?:was|is)\s+not\s+theirs\b",
+        r"\b(?:cyber\s+)?police\s+never\s+(?:freeze|froze|blocked|seized)\b",
+        r"\b(?:cyber\s+)?police\s+(?:were|was|are|is)\s+not\s+the\s+(?:ones?|agency|authority)\s+who\s+(?:froze|blocked|seized)\b",
+        r"\bnot\s+the\s+(?:cyber\s+)?police\b",
+        r"\bneither\s+(?:the\s+)?police\s+nor\s+(?:the\s+)?cyber(?:\s+cell|\s+police|crime)?\b",
+        r"\bno\s+cyber\s+(?:case|complaint)\b",
+        r"\bno\s+(?:fir|fraud case|criminal case)\b(?:\s+yet)?",
+        r"\bnot\s+a\s+criminal\s+case\b",
+    ):
+        positive_q = re.sub(pattern, " ", positive_q)
+    authority_hold = any((
+        re.search(
+            r"\b(?:cyber\s+police|police|cyber\s+cell|cybercrime\s+unit|"
+            r"investigation\s+officer)\b.{0,40}\b"
+            r"(?:freeze|freezes|froze|frozen|block|blocked|lien|seize|seized|hold)\b",
+            positive_q,
+        ) is not None,
+        re.search(
+            r"\b(?:freeze|frozen|froze|blocked|lien|seized|hold)\b.{0,44}\b"
+            r"(?:because\s+of|on|under|following)\s+(?:an?\s+|the\s+)?"
+            r"(?:investigating\s+officer|cybercrime\s+unit|cyber\s+police|cyber\s+cell)"
+            r"(?:'s)?\s+(?:request|letter|notice|direction|order)\b",
+            positive_q,
+        ) is not None,
+        re.search(
+            r"\b(?:freeze|frozen|froze|blocked|lien|seized|hold)\b.{0,36}\b"
+            r"(?:by|from|under)\s+(?:the\s+)?(?:cyber\s+police|police|cyber\s+cell|"
+            r"cybercrime\s+unit|investigation\s+officer)\b",
+            positive_q,
+        ) is not None,
+        re.search(
+            r"\b(?:investigating\s+officer|cybercrime\s+unit|cyber\s+police|"
+            r"cyber\s+cell)\b.{0,36}\b(?:instructed|directed|asked|requested)\b"
+            r".{0,28}\b(?:the\s+)?bank\b.{0,16}\b(?:freeze|block|hold|lien)\b",
+            positive_q,
+        ) is not None,
+    ))
+    complaint_hold = _has_any(positive_q, (
+        "cyber complaint", "cyber case", "fraud complaint", "fraud case", "criminal case",
+        "cyber cell email", "fraud complaint against my upi id",
+    )) and _has_any(positive_q, (
+        "freeze", "frozen", "froze", "blocked", "lien", "hold", "seized",
+    ))
+    authority_request_hold = re.search(
+        r"\b(?:freeze|frozen|froze|blocked|lien|hold|seized)\b.{0,44}\b"
+        r"(?:saying|because|due\s+to|on|under|following)?\s*"
+        r"(?:an?\s+|the\s+)?(?:cyber\s+)?police(?:'s)?\s+"
+        r"(?:request|letter|notice|direction|order)\b",
+        positive_q,
+    ) is not None
+    return authority_hold or complaint_hold or authority_request_hold
+
+
+def is_existing_vehicle_theft_fir_followup(q: str) -> bool:
+    """Distinguish post-registration investigation/status from initial FIR refusal."""
+    q = q.lower()
+    vehicle_theft = _has_any(q, ("theft", "stolen", "stole")) and _has_any(
+        q,
+        ("bike", "car", "scooter", "vehicle", "motorcycle", "motor cycle"),
+    )
+    record_number = re.search(
+        r"\b(?:crime\s+(?:number|no\.?|#)|case\s+(?:number|no\.?)|"
+        r"c\.?\s*r\.?\s*(?:number|no\.?)?)"
+        r"\s*[:#.-]?\s*\d+\b",
+        q,
+    ) is not None
+    negated_record = _has_any(q, (
+        "no crime number", "no case number", "no crime no", "no case no",
+        "case not registered", "case is not registered", "case was not registered",
+        "no case registered", "crime number not assigned", "case number not assigned",
+        "no crime number has been assigned", "no case number has been assigned",
+        "no fir registered", "no fir was registered", "no fir is registered",
+        "fir not registered", "fir was not registered", "fir is not registered",
+        "no fir number", "no fir no", "fir number not assigned",
+        "no fir number has been assigned",
+        "fir number is yet to be allotted", "fir number yet to be allotted",
+        "fir number has not been allotted", "fir number not allotted",
+        "not assigned any fir number", "not allotted any fir number",
+    )) or any((
+        re.search(
+            r"\bfir\s+(?:number|no\.?)\b.{0,40}\b"
+            r"(?:unallott(?:ed)?|not\s+(?:assigned|allotted|generated)|"
+            r"hasn't\s+been\s+(?:assigned|allotted|generated)|"
+            r"has\s+not\s+been\s+(?:assigned|allotted|generated)|"
+            r"remains?\s+unallotted|pending\s+allotment|yet\s+to\s+be\s+(?:assigned|allotted|generated)|"
+            r"has\s+yet\s+to\s+be\s+(?:assigned|allotted|generated))\b",
+            q,
+        ) is not None,
+        re.search(
+            r"\b(?:haven't|have\s+not|hasn't|has\s+not|not|never)\b.{0,24}"
+            r"\b(?:assigned|allotted|generated)\b.{0,16}\b(?:any\s+)?fir\s+(?:number|no\.?)\b",
+            q,
+        ) is not None,
+    ))
+    existing_case_identifier = record_number and not negated_record
+    if not vehicle_theft or (
+        re.search(r"\b(?:e-?)?fir\b", q) is None and not existing_case_identifier
+    ):
+        return False
+    existing_record = not negated_record and _has_any(q, (
+        "fir registered", "fir was registered", "fir is registered",
+        "registered fir", "lodged fir", "fir lodged", "fir filed",
+        "fir receipt", "fir copy", "fir number", "fir no", "fir acknowledgment",
+        "fir acknowledgement", "e-fir", "fir darj", "drew up an fir",
+        "opened an fir", "opened a fir", "entered an e-fir", "assigned to an io",
+        "assigned to io", "fir was assigned", "fir is assigned",
+    ))
+    followup = _has_any(q, (
+        "investigation", "investigated", "investigating", "jaanch", "case diary",
+        "current stage", "progress", "status", "follow up", "follow-up",
+        "recovery steps", "recover", "trace", "locate", "search for", "look for",
+        "chase the thieves", "assigned to", "investigation officer", " io ",
+    ))
+    return existing_case_identifier or existing_record or followup
 
 
 def _is_trademark_marketplace_brand_issue(q: str) -> bool:
@@ -8010,6 +8370,7 @@ def _is_bank_debit_service_dispute(q: str) -> bool:
         "failed upi refund", "upi refund", "money cut",
         "amount cut", "money deducted", "deducted cancellation",
         "charge twice", "charged twice", "charged forex",
+        "deducted twice", "premium twice", "insurance premium twice",
         "annual fee", "card annual fee", "annual fee charged",
         "annual fee twice", "charged annual fee", "charged annual fee twice",
         "fee charged", "fee charged twice", "card was closed", "card closed",
@@ -8041,8 +8402,13 @@ def _is_bank_debit_service_dispute(q: str) -> bool:
     card_fee_context = _has_any(q, ("credit card", "card")) and _has_any(q, (
         "annual fee", "card fee", "fee charged", "card was closed", "card closed",
     ))
+    duplicate_debit_context = _has_any(q, (
+        "debited twice", "charged twice", "deducted twice", "premium twice",
+        "fee charged twice", "annual fee twice", "markup twice",
+    ))
     return bank_context and debit_context and (
-        grievance_context or "forex" in q or atm_service_context or card_fee_context
+        grievance_context or "forex" in q or atm_service_context
+        or card_fee_context or duplicate_debit_context
     )
 
 
@@ -8423,6 +8789,12 @@ def _is_municipal_shop_sealing_issue(q: str) -> bool:
 
 
 def _is_bank_account_freeze_issue(q: str) -> bool:
+    if (
+        _is_decree_execution_issue(q)
+        or is_civil_prejudgment_bank_attachment(q)
+        or is_arbitral_account_restraint(q)
+    ):
+        return False
     non_bank_account_context = _has_any(q, (
         "instagram", "facebook", "meta", "youtube", "google", "gmail",
         "twitter", "x account", "whatsapp", "telegram", "amazon seller",
@@ -8430,9 +8802,18 @@ def _is_bank_account_freeze_issue(q: str) -> bool:
         "zerodha", "groww", "upstox", "demat", "trading account",
         "binance", "crypto", "usdt", "wallet", "gaming", "dream11",
         "parimatch", "rummy", "creator account", "payout account",
+        "app froze", "app frozen", "app blocked", "platform froze",
+        "platform frozen", "platform blocked",
+    ))
+    strong_bank_context = _has_any(q, (
+        "bank", "bank account", "savings account", "current account",
+        "salary account", "loan account", "jan dhan account", "upi account",
+        "sbi", "hdfc", "icici", "axis", "kotak", "pnb", "canara",
+        "bob", "bank of baroda", "union bank", "idfc", "yes bank",
+        "rbi", "nbfc",
     ))
     explicit_bank_context = _has_any(q, (
-        "bank", "bank account", "savings account", "current account",
+        "bank", "bank account", "my account", "savings account", "current account",
         "salary account", "loan account", "jan dhan account", "upi account",
         "sbi", "hdfc", "icici", "axis", "kotak", "pnb", "canara",
         "bob", "bank of baroda", "union bank", "idfc", "yes bank",
@@ -8442,6 +8823,7 @@ def _is_bank_account_freeze_issue(q: str) -> bool:
         "bank account frozen", "bank account is frozen", "bank account froze",
         "savings account frozen", "current account frozen", "account freeze",
         "bank account freeze", "bank account blocked",
+        "account was blocked", "my account was blocked",
         "account blocked by bank", "salary account blocked",
         "salary account frozen", "upi account frozen", "upi account blocked",
         "account is frozen", "account was frozen",
@@ -8460,9 +8842,22 @@ def _is_bank_account_freeze_issue(q: str) -> bool:
         "freeze marked", "ed freeze", "legal hold", "cyber cell email",
         "fraud complaint against my upi id",
     ))
-    if non_bank_account_context and not explicit_bank_context:
+    # "My account" identifies possession, not the institution. An app or
+    # platform can freeze its own user account, so require an actual banking
+    # signal before the bank-freeze route overrides that platform context.
+    if non_bank_account_context and not strong_bank_context:
         return False
     return explicit_bank_context and freeze_context
+
+
+def _has_bank_account_legal_hold_context(q: str) -> bool:
+    if (
+        _is_decree_execution_issue(q)
+        or is_civil_prejudgment_bank_attachment(q)
+        or is_arbitral_account_restraint(q)
+    ):
+        return False
+    return has_positive_criminal_bank_hold_context(q)
 
 
 def _is_loan_app_harassment_issue(q: str) -> bool:
@@ -9005,7 +9400,7 @@ def _is_insurance_claim_dispute(q: str) -> bool:
     insurance_context = _has_any(q, (
         "insurance", "insurer", "insurerer", "insurerr", "insurance company", "policy", "claim number",
         "surveyor", "repudiation", "repudiated",
-    ))
+    )) or re.search(r"\blic\b", q) is not None
     claim_context = _has_any(q, (
         "claim", "not paying", "not paid", "rejected", "rejecting", "denied", "repudiated",
         "settlement", "settle", "delay", "fire", "accident", "damage", "loss",
@@ -9706,12 +10101,7 @@ def _is_child_marriage(q: str) -> bool:
 def _is_arrest_production_delay(q: str) -> bool:
     if _has_any(q, ("notice", "summons", "appear")) and not _has_any(q, ("arrested", "detained", "custody", "lockup", "police picked", "crime branch", "picked by", "utha liya")):
         return False
-    arrest_context = _has_any(q, (
-        "arrest", "arrested", "police picked", "custody", "lockup",
-        "detained", "crime branch", "picked by", "picked up by",
-        "took brother", "took my brother", "took my son", "took my husband",
-        "utha liya",
-    ))
+    arrest_context = has_person_custody_context(q)
     production_context = _has_any(q, (
         "magistrate ke samne", "magistrate ke saamne", "produce before magistrate",
         "produced before magistrate", "not produced", "24 hours",
@@ -9723,24 +10113,101 @@ def _is_arrest_production_delay(q: str) -> bool:
     return arrest_context and (production_context or prolonged_context)
 
 
-def _is_arrest_information_safeguard(q: str) -> bool:
-    arrest_context = _has_any(q, (
-        "arrest", "arrested", "detained", "custody", "lockup",
-        "police took", "police picked", "police has picked",
-        "police have picked", "picked my", "picked up",
-        "picked by", "picked up by", "taken by police", "crime branch",
-        "took my son", "took my brother", "took my husband", "utha liya",
+def has_person_custody_context(q: str) -> bool:
+    """Require a human custody subject; property merely held in custody is not arrest."""
+    named_person_match = re.search(
+        r"\b(?:Police|police|Officers?|officers?)\s+"
+        r"(?:(?:has|have|had)\s+)?(?:picked(?:\s+up)?|took(?:\s+away)?|taken(?:\s+away)?|"
+        r"detained|arrested|held|holding|kept)\s+"
+        r"(?:Mr|Mrs|Ms|Shri|Smt)\.?\s+([A-Z][a-z]{2,})\b(?!['’]s)"
+        r"(?=\s*(?:[,;.!?]|and\b|but\b|will\b|won't\b|from\b|at\b|last\b|overnight\b|$))",
+        q,
+    )
+    named_person_taken = (
+        named_person_match is not None
+        and named_person_match.group(1).lower() not in {"amazon", "samsung"}
+    )
+    hindi_named_pickup = re.search(
+        r"\bpolice\s+ne\s+(?:(?:mr|shri)\.?\s+)?[a-z]{2,}\s+ko\b"
+        r".{0,32}\b(?:utha|le\s+gaye|le\s+gayi|detain|arrest)",
+        q,
+        re.IGNORECASE,
+    ) is not None
+    q = q.lower()
+    if named_person_taken or hindi_named_pickup:
+        return True
+    corporate_property = re.search(
+        r"\b(?:sister|parent|partner|holding)\s+compan(?:y|ies)\b|"
+        r"\b(?:our\s+)?sister\s+concern\b|"
+        r"\b(?:company|corporate|business)\s+(?:server|files?|records?|documents?|property)\b",
+        q,
+    ) is not None
+    if corporate_property:
+        return False
+    inherently_personal = _has_any(q, (
+        "lockup", "remand", "habeas",
+        "production before magistrate", "utha liya",
+        "mere papa ko utha", "mere father ko utha", "mere bhai ko utha",
+        "papa ko police le gayi", "papa ko police le gaye",
+        "mere jija ko", "mere jiju ko", "mere devar ko",
+        "i am in custody", "i'm in custody", "i was in custody",
+        "he is in custody", "he was in custody", "she is in custody",
+        "she was in custody", "they are in custody", "they were in custody",
     ))
+    if inherently_personal:
+        return True
+
+    if re.search(
+        r"\b(?:i|he|she|they)\s+(?:(?:was|were|am|is|are|got|have\s+been|has\s+been)\s+)"
+        r"(?:arrested|detained)\b",
+        q,
+    ) is not None:
+        return True
+
+    person = (
+        r"(?:me|him|her|person|man|woman|boy|girl|papa|mummy|mom|dad|father|mother|"
+        r"husband|wife|son|daughter|brother|sister|prisoner|accused|driver|watchman|guard|worker|security\s+guard|"
+        r"the\s+(?:driver|watchman|guard|worker|security\s+guard)|"
+        r"(?:my|our)\s+(?:(?:adult|gay|lesbian|queer|teenage|young|elderly)\s+){0,2}(?:son|daughter|husband|wife|brother|sister|father|mother|parent|"
+        r"child|friend|cousin|uncle|aunt|nephew|niece|grandfather|grandmother|"
+        r"relative|colleague|employee|roommate|flatmate|partner|driver|watchman|guard|worker|security\s+guard))"
+    )
+    return any((
+        re.search(
+            rf"\b{person}\b\s+(?:(?:is|was|has\s+been|had\s+been)\s+)?"
+            r"(?:in\s+custody|detained|arrest(?:ed)?|held|holding|kept|picked(?:\s+up)?|taken)\b",
+            q,
+        ) is not None,
+        re.search(
+            r"\b(?:picked(?:\s+up)?|took(?:\s+away)?|taken(?:\s+away)?|held|holding|kept|detained|arrested)\s+"
+            rf"{person}\b(?!['’]s)(?=\s*(?:[,;.!?]|and\b|but\b|at\b|from\b|for\b|away\b|overnight\b|yesterday\b|today\b|tonight\b|last\b|after\b|before\b|since\b|$))",
+            q,
+        ) is not None,
+        re.search(rf"\bcustody\s+of\s+{person}\b(?!['’]s)", q) is not None,
+    ))
+
+
+def _is_arrest_information_safeguard(q: str) -> bool:
+    raw_q = q
+    q = _norm(q)
+    arrest_context = has_person_custody_context(raw_q)
     information_context = _has_any(q, (
         "arrest memo", "no arrest memo", "dk basu", "d.k. basu",
         "grounds of arrest", "not informed", "family not informed",
         "no fir copy", "secret", "where taken", "not telling station",
         "not telling the station", "not telling case", "not telling station or case",
+        "will not tell", "won't tell", "not tell us", "not tell me",
+        "will not disclose", "won't disclose", "not disclosing station",
+        "will not identify", "won't identify", "cannot find which police station",
+        "undisclosed station", "station is undisclosed", "station remains undisclosed",
         "not telling which station", "not telling where", "from my home",
         "not showing station", "not allowing lawyer", "lawyer not allowed",
         "not allowing advocate", "from home", "in the night", "at night",
         "24 hours", "24 hrs", "no production", "not produced",
         "phone off", "phone switched off", "not reachable",
+        "station ka naam", "station nahi bata", "station nahin bata",
+        "naam nahi bata", "naam nahin bata", "thana nahi bata",
+        "thana nahin bata", "kahan le gaye",
     ))
     return arrest_context and information_context
 
@@ -10390,6 +10857,14 @@ def _is_street_vendor_municipal(q: str) -> bool:
 
 
 def _is_cyber_issue(q: str) -> bool:
+    if _has_any(q, (
+        "no police", "without police", "no cyber case", "no cyber complaint",
+        "no police or cyber", "no police and cyber", "no criminal case",
+    )) and _has_any(q, (
+        "court", "tribunal", "garnishee", "decree", "judgment", "judgement",
+        "recovery order", "executing court", "attachment before judgment",
+    )):
+        return False
     if _is_school_tc_or_admission_money_issue(q):
         return False
     if _is_family_marriage_status_issue(q) or _is_workplace_sexual_harassment(q):
@@ -10602,6 +11077,8 @@ def _is_intimate_image_emergency(q: str) -> bool:
 
 
 def _is_family_safety_issue(q: str) -> bool:
+    if is_third_party_reported_family_threat(q):
+        return False
     if _is_wife_as_aggressor_issue(q):
         return False
     if _has_negated_sexual_coercion(q) and not _has_any(q, (
@@ -10616,6 +11093,7 @@ def _is_family_safety_issue(q: str) -> bool:
         "husbands brother", "brother in law", "brother-in-law", "in-laws",
         "sasural", "sasural people", "matrimonial home", "shared house",
         "shared household", "he gets angry", "my parents say all marriages",
+        "mere husband", "mere pati", "mera husband", "mera pati",
     ))
     has_immediate_safety = _has_any(q, (
         "husband beat", "husband is beating", "beating me", "beats me",
@@ -10625,16 +11103,69 @@ def _is_family_safety_issue(q: str) -> bool:
         "threw me out", "throw me out", "get out", "evict", "evict me",
         "remove me from", "no place to stay", "not allowing me to call",
         "unsafe", "grabbed my hand", "grabbed me",
+        "burn me", "poison me", "stab me", "shoot me", "strangle me", "slit my throat",
         "touching me", "touched me", "making me uncomfortable", "uncomfortable",
         "forces sex", "forcing sex", "force sex", "forced sex", "marital rape",
         "even when i say no", "sex when i say no", "ghar se nikal",
         "nikal diya", "raat ko", "sorry next day", "should i stay",
+        "dhamki", "jaan se", "mujhe jala", "mujhe maar", "mujhe mar",
+        "maar raha", "mar raha", "maar rahi", "mar rahi",
     ))
     implied_domestic_residence_risk = (
         _has_any(q, ("slapped me", "hit me", "punched me", "assaulted me", "beat me"))
         and _has_any(q, ("child", "get out", "no place to stay", "home", "house", "today", "tonight"))
     )
     return (has_family_context and has_immediate_safety) or implied_domestic_residence_risk
+
+
+def is_third_party_reported_family_threat(q: str) -> bool:
+    domestic_actor_own_reported_threat = re.search(
+        r"\b(?:my\s+)?(?:husband|spouse|pati)\b.{0,44}"
+        r"\b(?:said|says|told|warned)\b.{0,44}\b(?:that\s+)?he\s+"
+        r"(?:will|would|plans?\s+to|intends?\s+to|threatens?\s+to)\s+"
+        r"(?:kill|murder|hit|hurt|harm|attack|assault|beat|burn|injure|poison|shoot|stab|strangle|slit)\b"
+        r".{0,16}\b(?:me|myself)\b",
+        q,
+    ) is not None
+    if domestic_actor_own_reported_threat:
+        return False
+    direct_third_party_threat = re.search(
+        r"\b(?:neighbou?r|landlord|driver|friend|brother|sister|cousin|uncle|aunt|"
+        r"mechanic|contractor|tenant|plumber|guard|shopkeeper|shop\s+owner|stranger|agent)\b"
+        r".{0,28}\b(?:said|says|warned|told|threaten(?:s|ed|ing)?)?\b.{0,18}"
+        r"\b(?:will|would|plans?\s+to|intends?\s+to|threatens?\s+to)\s+"
+        r"(?:kill|murder|hit|hurt|harm|attack|assault|beat|burn|injure|poison|shoot|stab|strangle|slit)\b"
+        r".{0,16}\b(?:me|myself)\b",
+        q,
+    ) is not None
+    if direct_third_party_threat:
+        return True
+    family_reporter = re.search(r"\b(?:my\s+)?(?:husband|spouse|pati)\b", q)
+    if family_reporter is None:
+        return False
+    tail = q[family_reporter.end():]
+    different_future_actor = re.search(
+        r"\b(?:the|our|my|a|an)\s+[a-z]+(?:\s+[a-z]+)?\s+"
+        r"(?:will|would|plans?\s+to|intends?\s+to|threatens?\s+to)\s+"
+        r"(?:kill|murder|hit|hurt|harm|attack|assault|beat|burn|injure|poison|shoot|stab|strangle|slit)\b"
+        r".{0,16}\b(?:me|myself)\b",
+        tail,
+    ) is not None
+    event_clause_actor = re.search(
+        r"\b(?:when|after|while|as|because|jab)\b.{0,38}\b"
+        r"(?:neighbou?r|landlord|driver|friend|brother|sister|cousin|uncle|aunt|"
+        r"mechanic|contractor|tenant|plumber|guard|shopkeeper|shop\s+owner|stranger|agent)\b"
+        r".{0,20}\b(?:threaten(?:s|ed|ing)?|attack(?:s|ed|ing)?|stab|shoot|poison|burn)\b",
+        tail,
+    ) is not None
+    hindi_event_clause_actor = re.search(
+        r"\b(?:jab|kyunki|because)\b.{0,38}\b"
+        r"(?:landlord|makaan\s+malik|contractor|thekedar|padosi|neighbou?r|shop\s+owner)\b"
+        r".{0,28}\b(?:mujhe\s+)?(?:jala|jalane|maar|marne|stab|shoot)\b"
+        r".{0,20}\b(?:dhamki|threat)",
+        tail,
+    ) is not None
+    return different_future_actor or event_clause_actor or hindi_event_clause_actor
 
 
 def _is_wife_as_aggressor_issue(q: str) -> bool:

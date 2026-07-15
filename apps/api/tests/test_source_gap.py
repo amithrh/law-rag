@@ -198,23 +198,43 @@ def test_plan_source_gap_requires_mixed_regime_authority_when_incident_date_is_u
     query = "police refused to register FIR for theft of my bike where do I go next"
     plan = build_matter_plan(query, route_matter(query))
     assert plan is not None
-    regime = next(
-        entry for entry in plan.authority_ledger
-        if entry.note == "date_dependent_regime_choose_by_incident_date"
-    )
-
-    assert regime.must_cite is True
+    regime_entries = [
+        entry for entry in plan.authority_ledger if entry.must_cite
+    ]
+    assert {entry.act for entry in regime_entries} == {
+        "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "Code of Criminal Procedure 1973",
+    }
     missing = missing_plan_authorities(plan=plan, passages=[], query=query)
-    assert [item["authority_id"] for item in missing] == [regime.authority_id]
+    assert {item["authority_id"] for item in missing} == {
+        entry.authority_id for entry in regime_entries
+    }
 
     assert missing_plan_authorities(
         plan=plan,
-        passages=[{
-            "index": 1,
-            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
-            "anchor": "bnss-2023/sec-173",
-            "source_type": "bare_act",
-        }],
+        passages=[
+                {
+                    "index": 1,
+                    "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                    "anchor": "bnss-2023/sec-173-a",
+                    "required_source_pack": "bnss_2023_vehicle_theft_fir",
+                    "source_type": "bare_act",
+                },
+                {
+                    "index": 2,
+                    "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                    "anchor": "bnss-2023/sec-173-c",
+                    "required_source_pack": "bnss_2023_vehicle_theft_fir",
+                    "source_type": "bare_act",
+                },
+                {
+                    "index": 3,
+                    "title": "Code of Criminal Procedure 1973",
+                "anchor": "crpc-1973/sec-154",
+                "required_source_pack": "crpc_1973_vehicle_theft_fir",
+                "source_type": "bare_act",
+            },
+        ],
         query=query,
     ) == []
 
@@ -496,6 +516,19 @@ def test_source_gap_enforces_triggered_conditional_labour_and_legal_aid_authorit
             "kind": "national_statute_retrieval_gap",
         },
     ]
+
+
+def test_national_ombudsman_scheme_is_not_mislabeled_as_state_or_local():
+    missing = missing_required_authorities(
+        required_sources=["Reserve Bank Integrated Ombudsman Scheme 2021"],
+        passages=[],
+        query="bank deducted money wrongly and customer care is not helping",
+    )
+
+    assert missing == [{
+        "required_source": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "kind": "national_statute_retrieval_gap",
+    }]
 
 
 def test_source_gap_does_not_trigger_family_personal_law_for_spouse_violence_only():

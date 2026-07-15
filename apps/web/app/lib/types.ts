@@ -3,6 +3,7 @@
 
 export type SentenceStatus =
   | "ok"
+  | "guidance"
   | "weak_support"
   | "unsupported"
   | "unknown_citation"
@@ -30,7 +31,9 @@ export interface SourceGapEvent {
   missing_required_sources: SourceGapItem[];
   message: string;
   handoff: string;
-  policy: "do_not_substitute_neighboring_authority";
+  policy:
+    | "do_not_substitute_neighboring_authority"
+    | "separate_conflicting_answer_owners";
 }
 
 export interface PassageEvent {
@@ -133,6 +136,9 @@ export interface MatterPlanEvent {
     fallback_owner: string;
     allow_freeform_llm: boolean;
     requires_reviewed_contract: boolean;
+    fallback_reason?: string;
+    conflicting_primary_owners?: string[];
+    additional_primary_owners?: string[];
   };
 }
 

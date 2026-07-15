@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 class SentenceStatus(StrEnum):
     OK = "ok"
+    GUIDANCE = "guidance"
     WEAK_SUPPORT = "weak_support"
     UNSUPPORTED = "unsupported"
     UNKNOWN_CITATION = "unknown_citation"
@@ -475,6 +476,7 @@ def bge_score(premise: str, hypothesis: str) -> float | None:
 
 _STATUS_RANK: dict[SentenceStatus, int] = {
     SentenceStatus.META: 0,                # best — exempt from claims gate
+    SentenceStatus.GUIDANCE: 0,            # reviewed non-claim operational step
     SentenceStatus.OK: 1,
     SentenceStatus.WEAK_SUPPORT: 2,
     SentenceStatus.UNSUPPORTED: 3,

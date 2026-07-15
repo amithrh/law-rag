@@ -98,8 +98,8 @@ def test_common_workflow_contract_handles_bank_debit_and_freeze():
     assert "wrong debit, deducted, debited" in debit
     assert "RBI Ombudsman/CMS" in debit
     assert "transaction ID/RRN" in debit
-    assert "consumer service-deficiency as a later backup" in debit
-    assert "Consumer Protection Act source is the service-deficiency forum backup" in debit
+    assert "service-deficiency forum backup" in debit
+    assert "Consumer Protection Act 2019, Section 35" in debit
 
     freeze = _joined(
         "salary account blocked by lien after cyber complaint no notice",
@@ -112,8 +112,18 @@ def test_common_workflow_contract_handles_bank_debit_and_freeze():
     )
     assert "frozen, blocked, or lien-marked" in freeze
     assert "cyber/police complaint" in freeze
-    assert "DLSA, cyber police" in freeze
-    assert "IT Act cyber/electronic-record source" in freeze
+    assert "originating request/reference and order copy" in freeze
+    assert "Keep the IT Act source only" not in freeze
+
+    freeze_after_identity_theft = _joined(
+        "salary account blocked by lien after identity theft and cyber complaint",
+        [
+            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
+            {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-106"},
+            {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66D"},
+        ],
+    )
+    assert "Keep the IT Act source only" in freeze_after_identity_theft
 
     cyber_freeze = _joined(
         "salary account blocked by lien after cyber complaint i dont know the case",
@@ -124,8 +134,10 @@ def test_common_workflow_contract_handles_bank_debit_and_freeze():
         ],
     )
     assert "written freeze/lien reason" in cyber_freeze
-    assert "concerned Magistrate/court" in cyber_freeze
-    assert "RBI Ombudsman/CMS is for bank-service failure" in cyber_freeze
+    assert "request/reference or order copy" in cyber_freeze
+    assert "exact freeze date" in cyber_freeze
+    assert "does not by itself prove" in cyber_freeze
+    assert "Use RBI Scheme clauses 9 and 10" not in cyber_freeze
 
     maintenance_charge = _joined(
         "bank deducted maintenance charge twice and branch is not giving complaint number",
@@ -651,8 +663,9 @@ def test_patch18_hard_cluster_variants_get_specific_answer_contracts():
         (
             "my health insurance claim rejected saying pre existing disease but i declared everything in form, what to do",
             [
-                {"index": 1, "title": "Insurance Ombudsman Rules 2017", "anchor": "insurance-ombudsman-rules-2017/sec-5-h"},
-                {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+                {"index": 1, "title": "Insurance Ombudsman Rules 2017", "anchor": "insurance-ombudsman-rules-2017/sec-13"},
+                {"index": 2, "title": "Insurance Ombudsman Rules 2017", "anchor": "insurance-ombudsman-rules-2017/sec-14"},
+                {"index": 3, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
             ],
             "insurance_claim_or_misselling",
             ("pre-existing disease", "declared", "Insurance Ombudsman"),
@@ -730,8 +743,9 @@ def test_patch18d_screenshot_regressions_get_specific_source_gated_workflows():
         "INSURERER IS REJECTING MY CLAIM",
         route_matter("INSURERER IS REJECTING MY CLAIM"),
         [
-            {"index": 1, "title": "Insurance Ombudsman Rules 2017", "anchor": "insurance-ombudsman-rules-2017/sec-5-h"},
-            {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+            {"index": 1, "title": "Insurance Ombudsman Rules 2017", "anchor": "insurance-ombudsman-rules-2017/sec-13"},
+            {"index": 2, "title": "Insurance Ombudsman Rules 2017", "anchor": "insurance-ombudsman-rules-2017/sec-14"},
+            {"index": 3, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
         ],
     )
     assert insurance is not None
@@ -1320,7 +1334,7 @@ def test_common_workflow_contract_handles_loan_app_harassment():
     )
     assert "instant loan app sending your photo to contacts" in answer
     assert "RBI Ombudsman" in answer
-    assert "phone contacts, calls, messages, photos, or public-shaming pressure" in answer
+    assert "lender grievance, personal-data misuse" in answer
     assert "sending your photo to contacts" in answer
     assert "cyber police/1930" in answer
     assert "messages sent to contacts" in answer
@@ -1336,8 +1350,8 @@ def test_common_workflow_contract_handles_loan_app_harassment():
     )
     assert "collection/recovery people threatening workplace" in workplace
     assert "RBI Ombudsman" in workplace
-    assert "police/cyber criminal track" in workplace
-    assert "workplace/society threat proof" in workplace
+    assert "threat or criminal complaint as separate tracks" in workplace
+    assert "workplace or neighbour contact proof" in workplace
 
     boss_contact = _joined(
         "loan app people are calling my boss and saying I am fraud",
@@ -1350,8 +1364,8 @@ def test_common_workflow_contract_handles_loan_app_harassment():
     )
     assert "calling your boss or employer" in boss_contact
     assert "cybercrime.gov.in" in boss_contact
-    assert "boss/manager/employer calls" in boss_contact
-    assert "boss/manager/employer call proof" in boss_contact
+    assert "calling your boss or employer" in boss_contact
+    assert "workplace or neighbour contact proof" in boss_contact
 
 
 def test_stage2_false_nbfc_loan_uses_credit_identity_workflow_not_loan_app():
@@ -1434,7 +1448,8 @@ def test_stage2_failed_family_workflows_use_specific_user_frame():
     arrest_sources = [
         {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
         {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-48"},
-        {"index": 3, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-57"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-57"},
+        {"index": 4, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-57"},
     ]
     arrest_query = "police has picked my son from my home in the night, i have not got FIR copy"
     assert _workflow_id(arrest_query, arrest_sources) == "arrest_custody_station_case_not_disclosed"
@@ -1481,6 +1496,34 @@ def test_stage2_failed_family_workflows_use_specific_user_frame():
     assert "[2]" in tribal_answer
 
 
+def test_property_custody_phrasing_never_selects_habeas_workflow():
+    passages = [
+        {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-497"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+    ]
+    queries = (
+        "Police kept my laptop in custody and gave no FIR copy",
+        "My laptop is in police custody and I received no FIR copy",
+        "Police kept my laptop in their custody and gave no FIR copy",
+        "Police have custody of my laptop and gave no FIR copy",
+        "The police retain custody of my laptop and gave no FIR copy",
+        "Police retain custody of my external hard drive and gave no FIR copy",
+        "Police have custody of my passport and gave no FIR copy",
+        "Police retained my tablet in custody and gave no FIR copy",
+        "Police took the phone belonging to my son and will not tell me the case",
+        "Police took my son's phone and will not tell me the case",
+        "Police have custody of my partner's laptop and gave no FIR copy",
+        "Police took my phone during the arrest of my brother and gave no seizure memo",
+        "Police seized my phone and have not produced it before court; they will not tell me the case",
+        "The seized hard drive has remained in police custody for five days without production before the Magistrate",
+    )
+
+    for query in queries:
+        result = common_workflow_contract_result(query, route_matter(query), passages)
+        assert result is None or result.id != "custody_habeas_lockup_abuse", query
+
+
 def test_stage5_money_cyber_identity_rendered_contracts_hit_user_variant_terms():
     bank_sources = [
         {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
@@ -1509,8 +1552,9 @@ def test_stage5_money_cyber_identity_rendered_contracts_hit_user_variant_terms()
         ],
     )
     assert "written freeze/lien reason" in freeze
-    assert "police or court reference" in freeze
-    assert "RBI Ombudsman" in freeze
+    assert "originating request/reference" in freeze
+    assert "does not by itself prove" in freeze
+    assert "Use RBI Scheme clauses 9 and 10" not in freeze
 
     loan_app = _grounded_joined(
         "loan app threatening to make morphed nude photo if I dont pay today",
@@ -1522,7 +1566,7 @@ def test_stage5_money_cyber_identity_rendered_contracts_hit_user_variant_terms()
         ],
     )
     assert "RBI Ombudsman" in loan_app
-    assert "morphed nude/non-consensual image threat" in loan_app
+    assert "morphed nude" in loan_app
     assert "Do not pay" in loan_app
     assert "cyber police" in loan_app
     assert "threat" in loan_app.lower()
@@ -1538,7 +1582,8 @@ def test_stage5_money_cyber_identity_rendered_contracts_hit_user_variant_terms()
         ],
     )
     assert "unregistered loan app blackmailing you with a morphed nude" in exact_loan_app_morph
-    assert "not as ordinary EMI recovery" in exact_loan_app_morph
+    assert "morphed nude" in exact_loan_app_morph
+    assert "do not reshare the image" in exact_loan_app_morph
     assert "1930" in exact_loan_app_morph
     assert "RBI Ombudsman/CMS" in exact_loan_app_morph
 
@@ -1700,7 +1745,7 @@ def test_stage3_money_property_workflows_emit_full_user_paths():
     debit = _grounded_joined("Bank deducted money wrongly and customer care not helping.", bank_sources)
     assert "written complaint" in debit
     assert "RBI Ombudsman/CMS" in debit
-    assert "consumer service-deficiency" in debit
+    assert "service-deficiency forum backup" in debit
     assert "UPI/transaction ID/RRN" in debit
 
     loan_app = _grounded_joined(
@@ -1712,10 +1757,9 @@ def test_stage3_money_property_workflows_emit_full_user_paths():
             {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
         ],
     )
-    assert "lender/NBFC or regulated-entity" in loan_app
-    assert "phone contacts, calls, messages" in loan_app
-    assert "cyber/electronic-record track" in loan_app
-    assert "separate police/cyber criminal track" in loan_app
+    assert "lender/NBFC or regulated partner" in loan_app
+    assert "contact-data abuse" in loan_app
+    assert "cyber police/1930/cybercrime.gov.in" in loan_app
 
     tenant = _grounded_joined(
         "My tenant is not vacating house and not paying rent",
@@ -1794,9 +1838,10 @@ def test_stage5_high_volume_contracts_select_expected_workflows():
     victim_freeze = _joined(victim_freeze_query, freeze_sources)
     assert _workflow_id(victim_freeze_query, freeze_sources) == "bank_account_freeze_legal_hold"
     assert "written freeze/lien reason" in victim_freeze
-    assert "police or court reference" in victim_freeze
-    assert "RBI Ombudsman/CMS is for bank-service failure" in victim_freeze
-    assert "legal-hold route" in victim_freeze
+    assert "originating request/reference" in victim_freeze
+    assert "does not by itself prove" in victim_freeze
+    assert "Use RBI Scheme clauses 9 and 10" not in victim_freeze
+    assert "exact freeze date" in victim_freeze
 
     pan_leak_sources = [
         {"index": 1, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-8"},
@@ -2129,7 +2174,7 @@ def test_common_workflow_contract_handles_recovery_agent_and_cyber_money_lanes()
     )
     assert "recovery-agent harassment" in recovery
     assert "RBI Ombudsman" in recovery
-    assert "police/cyber criminal track" in recovery
+    assert "threat or criminal complaint as separate tracks" in recovery
     assert "visit details" in recovery or "call logs" in recovery
 
     office_recovery = _joined(
@@ -2225,11 +2270,12 @@ def test_common_workflow_contract_handles_fresh50_critical_families():
 
     domestic = _joined(
         "in laws beat me and took my phone i am unsafe",
-        [
-            {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-12"},
-            {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-115"},
-            {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
-        ],
+            [
+                {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
+                {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-115"},
+                {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+                {"index": 4, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-12"},
+            ],
     )
     assert "treat immediate safety first" in domestic
     assert "contact 112/police" in domestic
@@ -2246,7 +2292,7 @@ def test_common_workflow_contract_handles_fresh50_critical_families():
     )
     assert "not telling the station, case, FIR copy, or grounds" in arrest
     assert "arrest memo" in arrest
-    assert "habeas" in arrest
+    assert "habeas" not in arrest
 
     caste = _joined(
         "neighbour used caste slur and hit me but station refuses case",
@@ -2557,8 +2603,8 @@ def test_common_workflow_contract_handles_family_intimacy_safely():
     assert "marriage-breakdown or matrimonial-remedy" in answer
     assert "Consent matters" in answer
     assert "do not force, threaten, or pressure" in answer
-    assert "judicial separation, divorce, restitution" in answer
-    assert "DLSA or a family-law lawyer" in answer
+    assert "Section 13 divorce-ground" in answer
+    assert "matrimonial-relief source with the full facts" in answer
 
 
 def test_common_workflow_contract_handles_paraphrase_stress_families():
@@ -2575,14 +2621,16 @@ def test_common_workflow_contract_handles_paraphrase_stress_families():
     assert "ration-card file" in pds
 
     domestic = _joined(
-        "spouse assaulted me today and keeps saying he will evict me from matrimonial home",
+        "my husband assaulted me today and keeps saying he will evict me from matrimonial home",
         [
-            {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-18"},
+            {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
+            {"index": 4, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-18"},
             {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-117"},
             {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+            {"index": 5, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-12"},
         ],
     )
-    assert "spouse assaulted you" in domestic
+    assert "domestic violence" in domestic
     assert "matrimonial home" in domestic
     assert "BNSS FIR/information and Magistrate-escalation route" in domestic
     assert "Protection Officer" in domestic
@@ -2593,15 +2641,15 @@ def test_common_workflow_contract_handles_paraphrase_stress_families():
             {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
             {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-115"},
             {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+            {"index": 4, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-12"},
         ],
     )
-    assert "forcing you for sex and threatening you" in coercion
+    assert "forcing you for sex" in coercion
+    assert "threatening you" in coercion
     assert "domestic violence and safety" in coercion
     assert "sexual abuse and related physical or emotional harm" in coercion
-    assert "not ordinary marital counselling" in coercion
-    assert "forced sex/refusal" in coercion
-    assert "without guessing the final offence label" in coercion
-    assert "112/police" in coercion
+    assert "Protection Officer" in coercion
+    assert "move to a safe place or trusted person first" in coercion
     assert "Protection Officer" in coercion
 
     thrown_out = _grounded_joined(
@@ -2611,9 +2659,8 @@ def test_common_workflow_contract_handles_paraphrase_stress_families():
             {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
         ],
     )
-    assert "threatens to throw you out if you refuse sex" in thrown_out
     assert "domestic violence and safety" in thrown_out
-    assert "not ordinary marital counselling" in thrown_out
+    assert "move to a safe place or trusted person first" in thrown_out
 
     maintenance = _joined(
         "magistrate maintenance order is there but husband not depositing amount for many months",
@@ -2937,8 +2984,8 @@ def test_authority_graph_high_volume_failure_families_are_concrete():
     )
     assert "buyer is threatening possession" in coowner
     assert "undivided interest" in coowner
-    assert "partition, declaration" in coowner
-    assert "sale deed/certified copy" in coowner
+    assert "adjudged and cancelled" in coowner
+    assert "registered sale deed or certified copy" in coowner
 
     epf = _joined(
         "employer deducted pf but no deposit and says company closed",
@@ -4688,9 +4735,10 @@ def test_stage2_money_identity_failures_have_deterministic_workflow_owners():
         {"index": 6, "title": "Telecommunications Act 2023", "anchor": "telecommunications-2023/sec-29"},
         {"index": 7, "title": "Credit Information Companies (Regulation) Act 2005", "anchor": "credit-information-companies-2005/sec-18"},
         {"index": 8, "title": "Banking Regulation Act 1949", "anchor": "banking-regulation-1949/sec-35A"},
-        {"index": 9, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
-        {"index": 10, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-    ]
+            {"index": 9, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+            {"index": 10, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
+            {"index": 11, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-106"},
+        ]
     cases = {
         "someone posted my phone number on dating app and strangers are calling me": (
             "dating_app_phone_number_abuse",
@@ -4722,7 +4770,7 @@ def test_stage2_money_identity_failures_have_deterministic_workflow_owners():
         ),
         "my salary account has lien after cyber complaint but bank is not giving order copy": (
             "bank_account_freeze_legal_hold",
-            ("written freeze/lien reason", "BNSS seizure/legal-hold"),
+            ("written freeze/lien reason", "BNSS Section 106 says a police officer may seize property"),
         ),
     }
 
@@ -4815,7 +4863,7 @@ def test_fresh_ui_real_50_stage_contracts_cover_answer_and_latency_clusters():
 
 
 def test_domestic_violence_divorce_prompt_keeps_safety_and_family_court_tracks():
-    query = "sir I want divorce from husband he is alcoholic and beats me mutual consent possible where to go"
+    query = "sir I want divorce from my husband he is alcoholic and beats me mutual consent possible where to go"
     passages = [
         {"index": 1, "title": "Family Courts Act 1984", "anchor": "family-courts-1984/sec-7"},
         {"index": 2, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
@@ -4864,13 +4912,12 @@ def test_domestic_acid_threat_uses_specific_safety_frame():
     ]
     result = common_workflow_contract_result(query, route_matter(query), passages)
     assert result is not None
-    assert result.id == "domestic_violence_immediate_safety"
+    assert result.id == "acid_chemical_attack_first_response"
     assert result.answer_mode == "safety_primary"
     rendered = " ".join(result.lines)
-    assert "threatening to throw acid" in rendered
-    assert "BNS Section 125 source" in rendered
-    assert "act so rashly or negligently" in rendered
-    assert "endanger human life or personal safety" in rendered
+    assert "threat to throw acid" in rendered
+    assert "completed acid injury" in rendered
+    assert "PWDVA protection-order route" in rendered
     assert "Protection Officer" in rendered
     assert _is_safe_template_source_bridge(
         "For the police/BNS side, ask police or legal aid to verify the BNS Section 125 source only if the facts show an act so rashly or negligently as to endanger human life or personal safety; keep the exact acid-threat words, date, witnesses, and any follow-up act separate for the complaint [2].",
@@ -6115,7 +6162,7 @@ def test_stage3_critical_failure_contract_repairs():
     assert "Maharashtra Prohibition/State Excise Act source" in bhang
     assert "NDPS, Maharashtra prohibition/excise" in bhang
 
-    dv_q = "he gets angry and slaps me but says sorry next day my parents say all marriages are like this should I stay"
+    dv_q = "my husband gets angry and slaps me but says sorry next day my parents say all marriages are like this should I stay"
     dv_sources = [
         {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
         {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-115"},
@@ -6591,6 +6638,7 @@ def test_stage4b_failure_ledger_answer_repairs_are_grounded_and_user_shaped():
     dv_residence = _grounded_joined(
         "sasural waale mujhe ghar se nikal diya raat ko bina kuch diye kya main wapis ja sakti hoon",
         [
+            {"index": 5, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
             {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-17"},
             {"index": 2, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-19"},
             {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-115"},
@@ -6600,12 +6648,14 @@ def test_stage4b_failure_ledger_answer_repairs_are_grounded_and_user_shaped():
     assert _workflow_id(
         "sasural waale mujhe ghar se nikal diya raat ko bina kuch diye kya main wapis ja sakti hoon",
         [
+            {"index": 5, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-3"},
             {"index": 1, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-17"},
             {"index": 2, "title": "Protection of Women from Domestic Violence Act 2005", "anchor": "domestic-violence-2005/sec-19"},
         ],
     ) == "domestic_violence_immediate_safety"
-    assert "residence, protection, shelter" in dv_residence
-    assert "do not try forced entry alone at night" in dv_residence
+    assert "put you out of the matrimonial home" in dv_residence
+    assert "return safely" in dv_residence
+    assert "immediate safety first" in dv_residence
 
 
 def test_stage3_refusal_families_get_reviewed_source_gated_owners():
@@ -6690,12 +6740,13 @@ def test_stage3_refusal_families_get_reviewed_source_gated_owners():
         (
             "urgent police refused to file FIR for theft of my bike where do I go next how to complain",
             [
-                {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-b@2024-07-01"},
-                {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-317@2024-07-01"},
+                {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a@2024-07-01"},
+                {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c@2024-07-01"},
+                {"index": 3, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154"},
             ],
             "vehicle_theft_fir_refusal",
             "primary",
-            ("stolen bike", "cognizable-theft FIR/refusal", "Superintendent of Police"),
+            ("pre-1-July-2024", "incident on or after 1 July 2024", "Superintendent of Police"),
         ),
         (
             "please help delhi labour chowk police picking us morning saying nautanki begging not work how to stop any remedy",

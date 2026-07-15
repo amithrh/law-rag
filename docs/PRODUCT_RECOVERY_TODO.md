@@ -7,8 +7,9 @@ Status: not production ready.
 The reproducible recovery baseline is committed and green locally and in remote
 CI. The product is still not launch-ready: a fresh independent holdout run,
 manual legal-quality review, and the operational/privacy gates below remain
-open. Its architecture still contains interim answer ownership and source-gap
-arbitration that must move into canonical MatterPlan v2.
+open. The first ten released scenario families now use canonical MatterPlan v2
+answer ownership; authority-registry coverage, guided intake, independent
+holdout evaluation, learning governance, and production operations remain open.
 
 P0 ownership baseline, 2026-07-11:
 
@@ -72,6 +73,29 @@ P0 ownership baseline, 2026-07-11:
   `4 passed`, frontend type-check and production build pass, integrated SSE
   contract passes, and the full API suite is `1,369 passed, 0 failed` with `15`
   warnings in `384.12s` on 2026-07-15.
+- P1C retires legacy/freeform ownership for ten released high-volume or
+  safety-sensitive scenario families: immediate domestic violence, hidden
+  arrest/custody, identity-only LGBTQ arrest, vehicle-theft FIR refusal,
+  loan-app harassment, criminal bank-account hold, wrongful bank debit,
+  insurance claim/mis-selling, joint co-owner sale, and marital-intimacy
+  remedy. Each plan names one exact source-gated owner, an explicit
+  `source_gap_handoff`, and `allow_freeform_llm=false`.
+- P1C also centralizes actor, case-stage, legal-regime, and negation predicates
+  used by routing, source packs, and answer selection. It separates initial FIR
+  refusal from an existing-FIR investigation complaint; criminal bank holds
+  from civil/arbitral attachments; direct domestic harm from a threat by a
+  tenant or other third party; and current, legacy, or unknown criminal-law
+  regimes. Arbitration and pre-judgment attachment now fail closed before any
+  legal sentence when their controlling source is missing.
+- P1C live proof on the local `747,574`-chunk / `26,270`-document corpus:
+  released-route gate `10/10`, adversarial-neighbour gate `9/9`, and exact
+  reviewer/user-shaped gate `11/11`, including reported-spousal-threat pronoun
+  binding. The final closed reviews are PASS, including architecture replay
+  `69 prompts / 226 assertions / 0 failures`. The final broad ownership/API
+  gate is `1,236 passed, 41 deselected` in `397.78s`; frontend contract tests,
+  type-check, and production build also pass. This proves ownership and
+  fail-closed behavior for this release slice, not overall legal coverage or
+  production readiness.
 - This is a regression result, not launch evidence. A fresh 500-prompt
   human-style evaluation, independent legal-quality review, and the operational
   release gates remain required before any production claim.
@@ -139,11 +163,11 @@ and a documented local startup path.
   keyword logic.
 - [x] Make answer rendering and UI visibility consume the same plan; invalid,
   missing, interrupted, or authority-free plans cannot reveal legal sentences.
-- [ ] Migrate the first ten high-volume/safety routes to the plan owner and
+- [x] Migrate the first ten high-volume/safety routes to the plan owner and
   retire their legacy template branches.
 - [x] Make source-gap checks and eval scoring consume plan authority IDs instead
   of duplicated title/anchor alias heuristics.
-- [ ] Add an ownership test: each supported scenario has exactly one primary
+- [x] Add an ownership test: each supported scenario has exactly one primary
   answer owner and an explicit fallback policy.
 
 Exit gate: the first ten high-volume/safety routes have one plan, one authority

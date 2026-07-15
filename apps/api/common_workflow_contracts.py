@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 
-from apps.api.authority_graph import authority_graph_template_result
+from apps.api.authority_graph import (
+    authority_graph_contract_template_result,
+    authority_graph_template_result,
+)
 from apps.api.customs_logic import (
     customs_classification_issue,
     customs_drawback_issue,
@@ -18,7 +22,7 @@ from apps.api.customs_logic import (
     customs_related_party_negated,
     customs_svb_issue,
 )
-from apps.api.matter_router import MatterRoute
+from apps.api.matter_router import MatterRoute, has_person_custody_context
 
 
 _WORKFLOW_ANSWER_MODES: dict[str, str] = {
@@ -273,6 +277,135 @@ class WorkflowTemplateResult:
 def workflow_contract_answer_mode(workflow_id: str) -> str:
     """Return whether a reviewed workflow may own, merge into, or only observe."""
     return _WORKFLOW_ANSWER_MODES.get(workflow_id, "merge")
+
+
+def common_workflow_contract_query_matches(
+    query: str,
+    route: MatterRoute,
+    workflow_id: str,
+    *,
+    route_independent: bool = False,
+) -> bool:
+    """Whether a reviewed common contract owns the facts before retrieval."""
+    q = _norm(query)
+    if workflow_id == "loan_app_harassment":
+        return (
+            (route_independent or route.category in {
+                "banking_credit_dispute",
+                "cyber_fraud_or_harassment",
+                "criminal_general",
+            })
+            and _is_loan_app(q)
+        )
+    return False
+
+
+_COMMON_WORKFLOW_ACTIVATION_SPECS: dict[
+    str,
+    tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
+] = {
+    "loan_app_harassment": (
+        (
+            "rbi_scope",
+            ("reserve bank integrated ombudsman", "integrated ombudsman"),
+            ("/sec-2", "/sec-3"),
+        ),
+        (
+            "rbi_complaint",
+            ("reserve bank integrated ombudsman", "integrated ombudsman"),
+            ("/sec-9", "/sec-10"),
+        ),
+    ),
+}
+
+
+DPDP_SECTION_13_EFFECTIVE_FROM = date(2027, 5, 13)
+
+
+def dpdp_section_13_in_force(*, as_of: date | None = None) -> bool:
+    """Return whether DPDP Act Section 13 has commenced for a legal answer."""
+    return (as_of or date.today()) >= DPDP_SECTION_13_EFFECTIVE_FROM
+
+
+def common_workflow_contract_required_source_specs(
+    workflow_id: str,
+) -> tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]:
+    """Return exact plan-time activation authorities for common workflows."""
+    return tuple(
+        (title_terms, anchor_terms)
+        for _key, title_terms, anchor_terms
+        in _COMMON_WORKFLOW_ACTIVATION_SPECS.get(workflow_id, ())
+    )
+
+
+def plan_owned_workflow_contract_result(
+    query: str,
+    route: MatterRoute,
+    passages: list[dict],
+    *,
+    owner_provider: str,
+    owner_contract_id: str,
+) -> WorkflowTemplateResult | None:
+    """Resolve only the exact immutable answer owner selected by MatterPlan."""
+    if owner_provider == "authority_graph":
+        result = authority_graph_contract_template_result(
+            query,
+            route,
+            passages,
+            owner_contract_id,
+        )
+        if result is None:
+            return None
+        return WorkflowTemplateResult(
+            id=result.id,
+            source="authority_graph",
+            lines=result.lines,
+            answer_mode=workflow_contract_answer_mode(result.id),
+            required_sources=result.required_sources,
+            optional_sources=result.optional_sources,
+            source_indices=result.source_indices,
+        )
+    if owner_provider == "common_workflow_contracts":
+        if not common_workflow_contract_query_matches(
+            query,
+            route,
+            owner_contract_id,
+        ):
+            return None
+        source_indices: dict[str, int] = {}
+        for key, title_terms, anchor_terms in _COMMON_WORKFLOW_ACTIVATION_SPECS.get(
+            owner_contract_id,
+            (),
+        ):
+            source_index = _find(
+                passages,
+                title_terms=title_terms,
+                anchor_terms=anchor_terms,
+            )
+            if source_index is None:
+                return None
+            source_indices[key] = source_index
+        builder = dict(_workflow_builders()).get(owner_contract_id)
+        if owner_contract_id == "loan_app_harassment":
+            lines = _loan_app_harassment_lines(
+                _norm(query),
+                route,
+                passages,
+                enforced_source_indices=source_indices,
+            )
+        else:
+            lines = builder(_norm(query), route, passages) if builder is not None else []
+        if not lines:
+            return None
+        return WorkflowTemplateResult(
+            id=owner_contract_id,
+            source="common_workflow_contracts",
+            lines=lines,
+            answer_mode=workflow_contract_answer_mode(owner_contract_id),
+            required_sources=tuple(source_indices),
+            source_indices=source_indices,
+        )
+    raise ValueError(f"unknown plan answer owner provider: {owner_provider}")
 
 
 _REVIEWED_COMMON_PRIMARY_OWNERS = frozenset({
@@ -1761,6 +1894,8 @@ def _regional_slur_wage_retaliation_lines(q: str, route: MatterRoute, passages: 
 def _custody_habeas_lockup_abuse_lines(q: str, route: MatterRoute, passages: list[dict]) -> list[str]:
     if route.category not in {"arrest_custody_safeguard", "police_fir", "criminal_general", "custody_compensation"}:
         return []
+    if not has_person_custody_context(q):
+        return []
     custody_context = _has_any(q, (
         "lockup", "custody", "custodial", "detained", "detention",
         "habeas", "arrest memo", "police beating", "police beat",
@@ -1898,12 +2033,23 @@ def _acid_chemical_attack_first_response_lines(q: str, route: MatterRoute, passa
     bns_hurt = _find(passages, title_terms=("bharatiya nyaya",), anchor_terms=("/sec-115", "/sec-117", "/sec-118", "/sec-125", "/sec-351"))
     bnss_fir = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-173", "/sec-175"))
     crpc_fir = _find(passages, title_terms=("code of criminal procedure",), anchor_terms=("/sec-154", "/sec-156"))
-    primary = bns_acid or bns_hurt or bnss_fir or crpc_fir
+    pwdva = _find(passages, title_terms=("domestic violence",), anchor_terms=("/sec-3", "/sec-18"))
+    mere_threat = _has_any(q, (
+        "threatened to throw", "threatening to throw", "threatens to throw",
+        "will throw acid", "throw acid on me", "throw chemical on me",
+    )) and not _has_any(q, (
+        "threw acid", "acid thrown", "chemical thrown", "eyes burning", "face burning",
+    ))
+    primary = bns_acid or bns_hurt or bnss_fir or crpc_fir or pwdva
     if primary is None:
         return []
 
     lines = ["**Short answer**"]
-    if bns_acid is not None:
+    if mere_threat and bns_hurt is not None:
+        lines.append(
+            f"A threat to throw acid is an urgent prevention and criminal-intimidation issue; do not describe it as a completed acid injury unless acid or another chemical was actually thrown [{bns_hurt}]."
+        )
+    elif bns_acid is not None:
         lines.append(
             f"For suspected acid or chemical injury to the face/eyes, treat this as an emergency acid-attack/hurt track first, not a normal road quarrel or only a compensation question [{bns_acid}]."
         )
@@ -1911,15 +2057,31 @@ def _acid_chemical_attack_first_response_lines(q: str, route: MatterRoute, passa
         lines.append(
             f"For burning eyes or chemical injury where the exact substance is still being confirmed, keep the hurt/endangering-life source with the hospital papers and complaint [{bns_hurt}]."
         )
+    if pwdva is not None and _has_any(q, (
+        "mother in law", "mother-in-law", "in laws", "in-laws", "dowry",
+        "more money", "parents",
+    )):
+        lines.append(
+            f"Because the threat is from an in-law or linked to pressure for money from your parents, keep the PWDVA protection-order route active alongside the police track [{pwdva}]."
+        )
     if bnss_fir is not None or crpc_fir is not None:
         procedure = bnss_fir or crpc_fir
-        lines.append(
-            f"Do the medical and police steps together: get emergency treatment/MLC, preserve clothes/photos/CCTV/witnesses, and file a written complaint/FIR with acknowledgement [{procedure}]."
-        )
-    action_cites = _cite_many(bns_acid, bns_hurt, bnss_fir, crpc_fir)
+        if mere_threat:
+            lines.append(
+                f"Preserve the exact threat, messages/calls, witness details, location, and any attempt to obtain acid or another chemical; file a written police complaint and keep its acknowledgement [{procedure}]."
+            )
+        else:
+            lines.append(
+                f"Do the medical and police steps together: get emergency treatment/MLC, preserve clothes/photos/CCTV/witnesses, and file a written complaint/FIR with acknowledgement [{procedure}]."
+            )
+    action_cites = _cite_many(bns_acid, bns_hurt, bnss_fir, crpc_fir, pwdva)
     lines.extend([
         "**What you can do next**",
-        f"- Go to hospital/emergency care first, ask for MLC/medical record, preserve the container/substance if safe, clothes, photos, vehicle/auto details, CCTV location, witness names, and complaint acknowledgement; contact DLSA/legal aid or police senior officers if the station delays {action_cites}.",
+        (
+            f"- Move to a safe place, tell a trusted person, contact 112/police if danger is immediate, and keep the written threat complaint, messages/calls, witnesses, location, and any known access to acid/chemicals; contact a Protection Officer/One Stop Centre where the domestic relationship applies, and use DLSA or senior police if the station delays {action_cites}."
+            if mere_threat
+            else f"- Go to hospital/emergency care first, ask for MLC/medical record, preserve the container/substance if safe, clothes, photos, vehicle/auto details, CCTV location, witness names, and complaint acknowledgement; contact DLSA/legal aid or police senior officers if the station delays {action_cites}."
+        ),
     ])
     return lines
 
@@ -1996,6 +2158,13 @@ def _police_fir_first_response_lines(q: str, route: MatterRoute, passages: list[
             lines.append(
                 f"For a company laptop or device seized in another person's investigation, first ask for the seizure memo, case reference, officer/court details, and the legal authority for keeping it; verify the property-return authority before assuming the return process [{cite}]."
             )
+    elif bns_property is not None and _has_any(q, (
+        "broke", "broken", "damaged", "damage", "smashed", "mirror",
+        "vandal", "mischief",
+    )):
+        lines.append(
+            f"For a broken scooter mirror or other deliberate property damage, keep the BNS mischief/property-damage source with repair estimates, photos/CCTV, witnesses, ownership proof, and the police complaint; an insurance issue does not replace the offence complaint [{bns_property}]."
+        )
     elif _has_any(q, ("theft of my bike", "bike", "stolen", "lost phone")):
         cite = bns_property or it_act or procedure or primary
         lines.append(
@@ -4065,11 +4234,36 @@ def _friendly_loan_civil_recovery_lines(q: str, route: MatterRoute, passages: li
     return lines
 
 
-def _loan_app_harassment_lines(q: str, route: MatterRoute, passages: list[dict]) -> list[str]:
+def _loan_app_harassment_lines(
+    q: str,
+    route: MatterRoute,
+    passages: list[dict],
+    *,
+    enforced_source_indices: dict[str, int] | None = None,
+) -> list[str]:
     if route.category not in {"banking_credit_dispute", "cyber_fraud_or_harassment", "criminal_general"} or not _is_loan_app(q):
         return []
-    rbi = _find(passages, title_terms=("reserve bank integrated ombudsman",))
-    dpdp = _find(passages, title_terms=("digital personal data protection",))
+    source_indices = enforced_source_indices or {}
+    rbi_scope = source_indices.get("rbi_scope") or _find(
+        passages,
+        title_terms=("reserve bank integrated ombudsman",),
+        anchor_terms=("/sec-2", "/sec-3"),
+    )
+    rbi_complaint = source_indices.get("rbi_complaint") or _find(
+        passages,
+        title_terms=("reserve bank integrated ombudsman",),
+        anchor_terms=("/sec-9", "/sec-10"),
+    )
+    rbi = rbi_complaint or rbi_scope
+    dpdp = (
+        _find(
+            passages,
+            title_terms=("digital personal data protection",),
+            anchor_terms=("/sec-13",),
+        )
+        if dpdp_section_13_in_force()
+        else None
+    )
     it_act = _find(passages, title_terms=("information technology",), anchor_terms=("/sec-66C", "/sec-66D", "/sec-66E", "/sec-67"))
     bns = _find(passages, title_terms=("bharatiya nyaya",), anchor_terms=("/sec-308", "/sec-351", "/sec-356"))
     bnss = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-173",))
@@ -4108,66 +4302,36 @@ def _loan_app_harassment_lines(q: str, route: MatterRoute, passages: list[dict])
         else "Loan app or recovery harassment (loan app or recovery-agent harassment)"
     )
     lines = ["**Short answer**"]
-    if (bns is not None or bnss is not None) and route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc":
-        regime_cite = bns if bns is not None else bnss
+    lines.append(
+        f"For {recovery_subject}, keep the lender grievance, personal-data misuse, and any threat or criminal complaint as separate tracks; a normal due-date reminder alone is not this harassment route [{primary}]."
+    )
+    if dpdp is not None:
         lines.append(
-            f"The incident date decides whether BNS/BNSS/BSA or IPC/CrPC/Evidence Act applies; keep the newer-code criminal track conditional until the date is fixed [{regime_cite}]."
+            f"DPDP Act Section 13 gives a Data Principal the right to a readily available grievance-redressal mechanism from the Data Fiduciary for acts or omissions concerning personal-data obligations [{dpdp}]."
+        )
+    if rbi_scope is not None:
+        lines.append(
+            f"The RBI Integrated Ombudsman Scheme applies only if the lender or its regulated partner is a covered regulated entity; identify that entity before using the RBI Ombudsman/CMS route [{rbi_scope}]."
+        )
+    if rbi_complaint is not None:
+        lines.append(
+            f"For a covered regulated entity, the Scheme's complaint and maintainability clauses require the prior written grievance and its reply or no-reply record before RBI Ombudsman/CMS escalation [{rbi_complaint}]."
         )
     if image_blackmail and it_act is not None:
         lines.append(
-            f"For {recovery_subject}, treat it first as loan-app cyber blackmail and a morphed nude/non-consensual image threat, not as ordinary EMI recovery; preserve the threat messages and use cyber police, 1930, or cybercrime.gov.in for the electronic-record track [{it_act}]."
-        )
-    if image_blackmail and bns is not None:
-        lines.append(
-            f"Do not pay because of the morphed nude threat; keep a separate BNS extortion/intimidation track for police or cyber police if the app or caller uses blackmail, public shaming, or payment-tonight pressure [{bns}]."
-        )
-    if rbi is not None:
-        if image_blackmail:
-            lines.append(
-                f"Also keep the lender/NBFC or regulated-entity complaint record and use the RBI Ombudsman/CMS route where the lender is covered, but do not wait on the banking route before reporting the morphed nude blackmail threat [{rbi}]."
-            )
-        else:
-            lines.append(
-                f"For {recovery_subject}, do not treat it as only a missed-EMI dispute: ask for the lender/NBFC or regulated-entity details and use the RBI Ombudsman/CMS route where the lender is covered [{rbi}]."
-            )
-    if dpdp is not None:
-        lines.append(
-            f"Because recovery harassment may use your contact list, phone contacts, calls, messages, photos, or public-shaming pressure, and may also involve workplace visits, neighbours, or staff, keep a personal-data grievance/privacy track with screenshots, app permissions, call recordings, and messages sent to contacts or workplace/society groups [{dpdp}]."
-        )
-    if photo_contacts_context and it_act is not None:
-        lines.append(
-            f"Because the app is sending your photo to contacts or saying you are a fraud, preserve the electronic-message/photo trail for cyber police or 1930/cybercrime.gov.in instead of treating it as only repayment pressure [{it_act}]."
-        )
-    if it_act is not None and not image_blackmail:
-        lines.append(
-            f"Because the harassment uses phone contacts or electronic messages, preserve the cyber/electronic-record track for the cyber police or 1930/cybercrime.gov.in route [{it_act}]."
-        )
-    if bns is not None:
-        if image_blackmail:
-            pass
-        elif _has_any(q, ("workplace", "office", "emi default", "shouting")):
-            lines.append(
-            f"If collection people came to your workplace shouting about an EMI default or loan, keep it as workplace recovery harassment/public-shaming evidence and preserve a police/cyber criminal track if intimidation, threats, extortion, or reputation harm continues [{bns}]."
-            )
-        else:
-            lines.append(
-                f"If there are threats to tell neighbours/neighbors, abuse, office visits, public-shaming threats, extortion, morphed-image pressure, photo pressure, or intimidation, keep a separate police/cyber criminal track, meaning a police/cyber track for threat or intimidation facts, instead of reducing it to civil loan recovery [{bns}]."
-            )
-    elif bnss is not None:
-        lines.append(
-            f"For a police complaint, use the current FIR/information route with the call logs, messages, app name, and contact-harassment proof [{bnss}]."
+            f"IT Act Section 66E applies to intentional or knowing capture, publication, or transmission of an image of a person's private area without consent in privacy-violating circumstances [{it_act}]."
         )
     lines.extend([
         "**What you can do next**",
         (
-            f"- Do not pay or forward the morphed nude threat; preserve screenshots, caller/app name, loan account, repayment proof, phone numbers, UPI/payment demand, WhatsApp/SMS messages, and report to cyber police/1930/cybercrime.gov.in while also keeping the lender/NBFC grievance and RBI Ombudsman/CMS record where covered [{it_act or bns or rbi or bnss or primary}]."
+            f"- Do not pay or forward the morphed nude threat; preserve screenshots, caller/app name, loan account, repayment proof, phone numbers, UPI/payment demand, WhatsApp/SMS messages, and report to cyber police/1930/cybercrime.gov.in while also keeping the lender/NBFC and personal-data grievance records [{it_act or dpdp or rbi or primary}]."
             if image_blackmail
-            else f"- Lender/NBFC/finance-company grievance officer first for the regulated-entity record; RBI Ombudsman/CMS where covered; local police or cyber police/1930/cybercrime.gov.in if threats, boss/manager/employer calls, office visits, staff shouting, neighbour fraud threats, public shaming, extortion, photo misuse, family WhatsApp pressure, or contact-data abuse continue [{rbi or it_act or bns or bnss or primary}]."
+            else f"- Identify the lender/NBFC or regulated partner; preserve the written grievance and response record, use RBI Ombudsman/CMS only where the entity and complaint are covered, and use local or cyber police/1930/cybercrime.gov.in if threats, extortion, photo misuse, or contact-data abuse continue [{rbi_complaint or rbi_scope or primary}]."
         ),
         (
             f"- Keep a private evidence folder for the morphed nude blackmail, contact-data abuse, call recordings, messages sent to contacts, complaint number, and any platform/profile links; do not reshare the image while reporting [{primary}]."
             if image_blackmail
-            else f"- Lender/NBFC name, loan account, repayment proof, call logs, WhatsApp/SMS screenshots, boss/manager/employer call proof, family/contact/neighbours messages, office/staff visit details, workplace/society threat proof, messages sent to contacts, complaint number, and any threat recordings [{it_act or primary}]."
+            else f"- Keep the lender/app name, loan account, repayment proof, app permissions, call logs, WhatsApp/SMS screenshots, messages sent to contacts, workplace or neighbour contact proof, complaint number, and any threat recordings [{primary}]."
         ),
     ])
     return lines
@@ -6278,7 +6442,12 @@ def _is_loan_app(q: str) -> bool:
         "normal emi reminder", "normal payment reminder",
         "no threats or contacts", "no threat or contact",
         "no threats", "no threat", "no contacts", "not harassing",
-        "not harassment", "no harassment",
+        "not harassment", "no harassment", "has not harassed",
+        "hasn't harassed", "did not harass", "never harassed",
+        "did not contact anyone", "has not contacted anyone",
+        "hasn't contacted anyone", "never contacted anyone",
+        "asks for contacts permission", "contacts permission during signup",
+        "permission during signup", "only asks permission",
     )) and not _has_any(q, (
         "calling my contacts", "calling contacts", "harassing my contacts",
         "sent message to contacts", "messages to contacts", "abusing",
@@ -6305,18 +6474,37 @@ def _is_loan_app(q: str) -> bool:
         "recovery agents", "loan recovery", "collection agent",
         "collection agents", "collection people",
     ))
-    harassment = _has_any(q, (
-        "harass", "harassing", "harrasing", "harassment", "contacts",
-        "relatives", "family", "abusing", "abuse", "threat", "threaten",
-        "threatening", "photo", "data leak", "whatsapp group", "came home",
-        "visiting office", "office", "workplace", "shame", "society", "mother",
-        "neighbours", "neighbors", "tell my office", "tell my neighbours",
-        "tell my neighbors", "shouting", "emi default", "morphed", "nude",
-        "blackmail", "extortion", "dont pay", "don't pay",
-        "boss", "manager", "employer", "calling my boss", "calling my manager",
-        "saying i am fraud", "saying I am fraud",
+    return lender and _has_loan_harassment_adverse_act(q)
+
+
+def _has_loan_harassment_adverse_act(q: str) -> bool:
+    explicit_abuse = _has_any(q, (
+        "harass", "harassing", "harrasing", "harassment", "abusing", "abuse",
+        "threat", "threaten", "threatening", "blackmail", "extortion",
+        "publicly shame", "shaming", "shouting", "saying i am fraud",
+        "saying I am fraud", "morphed", "nude", "data leak",
     ))
-    return lender and harassment
+    third_party_contact = (
+        _has_any(q, (
+            "calling", "called", "contacted", "contacting", "messaging",
+            "messaged", "sent message", "sending", "sent my", "shared",
+            "sharing", "leaked", "posted", "telling", "tell my",
+        ))
+        and _has_any(q, (
+            "contacts", "contact list", "relatives", "family", "mother",
+            "neighbours", "neighbors", "boss", "manager", "employer",
+            "office", "workplace", "society", "whatsapp group",
+        ))
+    )
+    intrusive_recovery = _has_any(q, (
+        "came home", "came to my house", "visiting office", "came to my office",
+        "recovery agent visited", "collection agent visited",
+    ))
+    photo_misuse = (
+        _has_any(q, ("photo", "image", "picture"))
+        and _has_any(q, ("sending", "sent", "shared", "sharing", "posted", "morphed", "blackmail"))
+    )
+    return explicit_abuse or third_party_contact or intrusive_recovery or photo_misuse
 
 
 def _is_intimate_image_blackmail(q: str) -> bool:

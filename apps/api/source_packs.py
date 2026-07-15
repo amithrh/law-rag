@@ -19,7 +19,15 @@ from .customs_logic import (
     customs_misdeclaration_issue,
     customs_svb_issue,
 )
-from .matter_router import MatterRoute
+from .matter_router import (
+    MatterRoute,
+    has_positive_criminal_bank_hold_context,
+    is_arbitral_account_restraint,
+    is_civil_execution_bank_attachment,
+    is_civil_prejudgment_bank_attachment,
+    is_existing_vehicle_theft_fir_followup,
+    is_third_party_reported_family_threat,
+)
 
 
 MEDICAL_STATUS_ONLINE_DISCLOSURE_TERMS = (
@@ -1107,6 +1115,13 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             elif _has_any(q, ("dowry", "dahej", "taunts", "not let me eat", "does not let me eat", "no food")):
                 pwdva_search = "Protection of Women from Domestic Violence Act 2005 section 3 verbal emotional economic abuse dowry section 18 protection order section 20 monetary relief section 12 application"
                 pwdva_anchors = ("/sec-3", "/sec-18", "/sec-20", "/sec-12")
+            elif _has_any(q, (
+                "threat", "threaten", "threatened", "threatening", "kill", "murder",
+                "burn me", "poison me", "stab me", "shoot me", "strangle me", "slit my throat",
+                "dhamki", "jaan se", "mujhe jala", "mujhe maar", "mujhe mar",
+            )):
+                pwdva_search = "Protection of Women from Domestic Violence Act 2005 section 3 threats verbal emotional physical abuse section 18 protection order section 12 application"
+                pwdva_anchors = ("/sec-3", "/sec-18", "/sec-12")
             elif not _has_any(q, ("bhang", "bhang lassi")) and _has_any(q, (
                 "slap", "slapped", "slaps", "beat", "beaten", "beating",
                 "hit me", "hits me", "hitting me", "pushed", "violent", "physical violence",
@@ -1335,7 +1350,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 title_patterns=("Insurance Ombudsman Rules 2017", "IRDAI Insurance Ombudsman Rules 2017"),
                 search_query="Insurance Ombudsman Rules 2017 complaints insurers agents intermediaries personal lines insurance Ombudsman grievance",
                 doc_ids=("insurance-ombudsman-rules-2017",),
-                anchor_patterns=("/sec-2", "/sec-3", "/sec-5"),
+                anchor_patterns=("/sec-2", "/sec-3", "/sec-5", "/sec-13", "/sec-14"),
                 priority=1.0,
             ))
         senior_cyber_money_context = _has_any(q, (
@@ -1606,7 +1621,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                     "digital lending recovery harassment complaint regulated entity"
                 ),
                 doc_ids=("rbi-integrated-ombudsman-2021",),
-                anchor_patterns=("/sec-2", "/sec-3"),
+                anchor_patterns=("/sec-2", "/sec-3", "/sec-9", "/sec-10"),
                 priority=1.24,
             ))
             packs.append(SourcePack(
@@ -1617,8 +1632,8 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                     "contact list processing data principal grievance loan app"
                 ),
                 doc_ids=("dpdp-2023",),
-                anchor_patterns=("/sec-8", "/sec-13", "/sec-27"),
-                priority=1.16,
+                anchor_patterns=("/sec-13",),
+                priority=1.34,
             ))
         aadhaar_identity_context = _has_aadhaar_identity_misuse_context(q)
         credit_identity_context = _has_credit_identity_misuse_context(q)
@@ -4639,14 +4654,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             "freeze marked", "ed freeze", "legal hold", "cyber cell email",
             "fraud complaint against my upi id",
         ))
-        account_freeze_legal_hold_context = account_freeze_context and _has_any(q, (
-            "cyber police", "police request", "police", "fir", "court",
-            "court order", "enforcement directorate", "ed freeze", "ed notice",
-            "ed case", "ed order", "legal hold", "cyber cell", "cybercrime",
-            "cyber complaint", "cyber case", "investigation officer",
-            "fraud complaint", "fraud complaint against my upi id",
-            "no order", "bank froze", "bank says fraud",
-        ))
+        account_freeze_legal_hold_context = _has_bank_account_legal_hold_context(q)
         loan_app_harassment_context = (
             bool(re.search(r"\bloan\s+apps?\b", q))
             or _has_any(q, (
@@ -4738,31 +4746,6 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             ))
             packs.append(_bns_pack(q, priority=1.32))
             packs.append(_bnss_pack(q, priority=1.16))
-        if account_freeze_legal_hold_context:
-            packs.append(SourcePack(
-                id="bnss_2023_bank_account_legal_hold",
-                title_patterns=("Bharatiya Nagarik Suraksha Sanhita 2023",),
-                search_query=(
-                    "Bharatiya Nagarik Suraksha Sanhita 2023 section 106 police officer "
-                    "seize property bank account lien freeze cyber complaint police request "
-                    "section 173 FIR information section 175 Magistrate investigation"
-                ),
-                doc_ids=("bnss-2023",),
-                anchor_patterns=("/sec-106", "/sec-173", "/sec-175"),
-                priority=1.42,
-            ))
-            packs.append(_bnss_pack(q, priority=1.08))
-            packs.append(SourcePack(
-                id="it_act_2000_bank_freeze_cyber_hold",
-                title_patterns=("Information Technology Act 2000",),
-                search_query=(
-                    "Information Technology Act 2000 cyber complaint bank account freeze "
-                    "identity theft cheating computer resource electronic transaction"
-                ),
-                doc_ids=("it-2000",),
-                anchor_patterns=("/sec-66C", "/sec-66D", "/sec-66E"),
-                priority=1.06,
-            ))
         if _has_any(q, ("security cheque", "post dated cheque", "post-dated cheque", "cheque", "cheques")) and _has_any(q, ("misuse", "misusing", "landlord", "security", "notice under 138")):
             packs.append(SourcePack(
                 id="ni_act_138_security_cheque",
@@ -4956,7 +4939,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 ),
                 search_query=rbi_search_query,
                 doc_ids=("rbi-integrated-ombudsman-2021",),
-                anchor_patterns=("/sec-2", "/sec-3"),
+                anchor_patterns=("/sec-2", "/sec-3", "/sec-9", "/sec-10"),
                 priority=1.40 if (forged_loan_context or identity_fake_loan_context or _has_any(q, (
                     "loan showing on my documents", "loan showing in my documents",
                     "signature not mine", "not my signature",
@@ -4964,25 +4947,35 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             ))
         if loan_app_harassment_context:
             packs.append(SourcePack(
-                id="dpdp_2023",
-                title_patterns=("Digital Personal Data Protection Act 2023",),
-                search_query="Digital Personal Data Protection Act 2023 personal data processing grievance data principal contacts breach notice Board complaint",
-                doc_ids=("dpdp-2023",),
-                anchor_patterns=("/sec-8", "/sec-13", "/sec-27"),
-                priority=1.04,
-            ))
-            packs.append(SourcePack(
-                id="it_act_2000",
-                title_patterns=("Information Technology Act 2000",),
-                search_query=(
-                    "Information Technology Act 2000 section 66C identity theft "
-                    "section 66D cheating by personation section 66E privacy "
-                    "loan app contact data relatives harassment electronic messages"
+                id="rbi_integrated_ombudsman_2021_loan_app_cyber",
+                title_patterns=(
+                    "Reserve Bank Integrated Ombudsman Scheme 2021",
+                    "Reserve Bank - Integrated Ombudsman Scheme 2021",
                 ),
-                doc_ids=("it-2000",),
-                anchor_patterns=("/sec-66C", "/sec-66D", "/sec-66E", "/sec-67"),
-                priority=1.32,
+                search_query=(
+                    "Reserve Bank Integrated Ombudsman Scheme 2021 clauses 2 3 9 10 "
+                    "regulated entity bank NBFC loan app recovery complaint coverage "
+                    "prior written grievance maintainability"
+                ),
+                doc_ids=("rbi-integrated-ombudsman-2021",),
+                anchor_patterns=("/sec-2", "/sec-3", "/sec-9", "/sec-10"),
+                priority=1.34,
             ))
+            if _has_any(q, (
+                "morphed nude", "fake nude", "nude", "private area",
+                "morphed-image", "morphed image",
+            )):
+                packs.append(SourcePack(
+                    id="it_act_2000_loan_app_private_image",
+                    title_patterns=("Information Technology Act 2000",),
+                    search_query=(
+                        "Information Technology Act 2000 section 66E private area image "
+                        "capture publication transmission without consent loan app blackmail"
+                    ),
+                    doc_ids=("it-2000",),
+                    anchor_patterns=("/sec-66E",),
+                    priority=1.30,
+                ))
             if not _uses_legacy_criminal_regime(route):
                 packs.append(SourcePack(
                     id="bns_2023_recovery_harassment",
@@ -6841,7 +6834,7 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             ))
             packs.append(_bnss_pack(q, priority=1.12))
             packs.append(_constitution_article_21_pack("Article 21 dignity life personal liberty caste atrocity violence police protection"))
-        if category in {"police_fir", "criminal_general"} and not _is_wife_as_aggressor_context(q) and _has_any(q, ("mother in law", "father in law", "in laws", "in-laws", "husband", "wife", "domestic")) and _has_any(q, ("acid", "dowry", "threat", "threatening", "violence")):
+        if category in {"police_fir", "criminal_general"} and not _is_wife_as_aggressor_context(q) and not is_third_party_reported_family_threat(q) and _has_any(q, ("mother in law", "father in law", "in laws", "in-laws", "husband", "wife", "domestic")) and _has_any(q, ("acid", "dowry", "threat", "threatening", "violence")):
             packs.append(SourcePack(
                 id="pwdva_2005",
                 title_patterns=("Protection of Women from Domestic Violence Act 2005",),
@@ -6966,23 +6959,55 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
                 anchor_patterns=("/sec-22",),
                 priority=1.26,
             ))
-        if category in {"police_fir", "criminal_general"} and _has_any(q, ("theft", "stolen", "stole")) and _has_any(q, ("bike", "car", "scooter", "vehicle")):
-            packs.append(SourcePack(
-                id="bns_2023_vehicle_theft",
-                title_patterns=("Bharatiya Nyaya Sanhita 2023",),
-                search_query="Bharatiya Nyaya Sanhita 2023 section 303 theft section 317 stolen property vehicle bike car scooter",
-                doc_ids=("bns-2023",),
-                anchor_patterns=("/sec-303", "/sec-317"),
-                priority=1.30,
-            ))
-            packs.append(SourcePack(
-                id="bnss_2023_vehicle_theft_fir",
-                title_patterns=("Bharatiya Nagarik Suraksha Sanhita 2023",),
-                search_query="Bharatiya Nagarik Suraksha Sanhita 2023 section 173 FIR information police refusal cognizable theft section 175 Magistrate investigation",
-                doc_ids=("bnss-2023",),
-                anchor_patterns=("/sec-173", "/sec-175"),
-                priority=1.24,
-            ))
+        if category in {"police_fir", "criminal_general"} and _has_any(q, ("theft", "stolen", "stole")) and _has_any(q, ("bike", "car", "scooter", "vehicle", "motorcycle", "motor cycle")):
+            legacy_vehicle = _uses_legacy_criminal_regime(route)
+            existing_vehicle_fir = is_existing_vehicle_theft_fir_followup(q)
+            unknown_vehicle_date = (
+                route.legal_regime
+                == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+            )
+            if not legacy_vehicle:
+                packs.append(SourcePack(
+                    id="bns_2023_vehicle_theft",
+                    title_patterns=("Bharatiya Nyaya Sanhita 2023",),
+                    search_query="Bharatiya Nyaya Sanhita 2023 section 303 theft section 317 stolen property vehicle bike car scooter",
+                    doc_ids=("bns-2023",),
+                    anchor_patterns=("/sec-303", "/sec-317"),
+                    priority=1.30,
+                ))
+                packs.append(SourcePack(
+                    id=("bnss_2023_vehicle_theft_investigation" if existing_vehicle_fir else "bnss_2023_vehicle_theft_fir"),
+                    title_patterns=("Bharatiya Nagarik Suraksha Sanhita 2023",),
+                    search_query=(
+                        "Bharatiya Nagarik Suraksha Sanhita 2023 section 175 police investigation cognizable vehicle theft case status"
+                        if existing_vehicle_fir
+                        else "Bharatiya Nagarik Suraksha Sanhita 2023 section 173 FIR information police refusal cognizable theft section 175 Magistrate investigation"
+                    ),
+                    doc_ids=("bnss-2023",),
+                    anchor_patterns=(("/sec-175",) if existing_vehicle_fir else ("/sec-173-a", "/sec-173-c", "/sec-175")),
+                    priority=1.24,
+                ))
+            if legacy_vehicle or unknown_vehicle_date:
+                packs.append(SourcePack(
+                    id="ipc_1860_vehicle_theft",
+                    title_patterns=("Indian Penal Code 1860", "Indian Penal Code, 1860"),
+                    search_query="Indian Penal Code 1860 section 378 theft section 379 punishment section 411 stolen property vehicle",
+                    doc_ids=("ipc-1860",),
+                    anchor_patterns=("/sec-378", "/sec-379", "/sec-411"),
+                    priority=1.30,
+                ))
+                packs.append(SourcePack(
+                    id=("crpc_1973_vehicle_theft_investigation" if existing_vehicle_fir else "crpc_1973_vehicle_theft_fir"),
+                    title_patterns=("Code of Criminal Procedure 1973", "Code of Criminal Procedure, 1973"),
+                    search_query=(
+                        "Code of Criminal Procedure 1973 section 156 police investigation cognizable vehicle theft case status"
+                        if existing_vehicle_fir
+                        else "Code of Criminal Procedure 1973 section 154 FIR cognizable offence police refusal section 156 Magistrate investigation"
+                    ),
+                    doc_ids=("crpc-1973",),
+                    anchor_patterns=(("/sec-156",) if existing_vehicle_fir else ("/sec-154",)),
+                    priority=1.24,
+                ))
         default_bail_context = _has_default_bail_source_context(q) or _has_any(q, (
             "default bail", "no chargesheet", "no charge sheet", "chargesheet not",
             "charge sheet not", "no complaint filed", "complaint not filed",
@@ -8114,6 +8139,12 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
         ))
 
     elif category == "court_procedure":
+        if is_arbitral_account_restraint(q):
+            # No verified Arbitration Act pack is indexed yet. Returning no
+            # substitute is intentional: the plan must surface a source gap
+            # rather than cite criminal seizure, RBI consumer, or CPC
+            # execution provisions for an arbitral interim measure.
+            return _dedupe_source_packs(packs)
         if _has_any(q, ("industrial dispute", "labour court", "section 10", "sec 10")) and _has_any(q, (
             "refer", "reference", "labour court", "industrial dispute", "conciliation",
             "termination", "terminated", "wrongfully terminated",
@@ -8378,6 +8409,62 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             priority=0.92,
         ))
 
+    # Cross-route source floor: legal-hold queries can route through cyber or
+    # police before the banking bucket, but the released answer owner always
+    # needs the same RBI and BNSS records.
+    if _has_bank_account_legal_hold_context(q):
+        packs.append(SourcePack(
+            id="rbi_integrated_ombudsman_2021",
+            title_patterns=(
+                "Reserve Bank Integrated Ombudsman Scheme 2021",
+                "Reserve Bank - Integrated Ombudsman Scheme 2021",
+            ),
+            search_query=(
+                "Reserve Bank Integrated Ombudsman Scheme 2021 bank account "
+                "freeze lien police cyber legal hold scope complaint maintainability"
+            ),
+            doc_ids=("rbi-integrated-ombudsman-2021",),
+            anchor_patterns=("/sec-2", "/sec-3", "/sec-9", "/sec-10"),
+            priority=1.34,
+        ))
+        legacy_hold = _uses_legacy_criminal_regime(route)
+        unknown_hold_date = route.legal_regime is None or (
+            route.legal_regime
+            == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+        )
+        if not legacy_hold:
+            packs.append(SourcePack(
+                id="bnss_2023_bank_account_legal_hold",
+                title_patterns=("Bharatiya Nagarik Suraksha Sanhita 2023",),
+                search_query=(
+                    "Bharatiya Nagarik Suraksha Sanhita 2023 section 106 police "
+                    "seize property bank account lien freeze"
+                ),
+                doc_ids=("bnss-2023",),
+                anchor_patterns=("/sec-106",),
+                priority=1.42,
+            ))
+        if legacy_hold or unknown_hold_date:
+            packs.append(SourcePack(
+                id="crpc_1973_bank_account_legal_hold",
+                title_patterns=("Code of Criminal Procedure 1973", "Code of Criminal Procedure, 1973"),
+                search_query="Code of Criminal Procedure 1973 section 102 police seize property bank account freeze",
+                doc_ids=("crpc-1973",),
+                anchor_patterns=("/sec-102",),
+                priority=1.42,
+            ))
+        packs.append(SourcePack(
+            id="it_act_2000_bank_freeze_cyber_hold",
+            title_patterns=("Information Technology Act 2000",),
+            search_query=(
+                "Information Technology Act 2000 cyber complaint bank account "
+                "freeze identity theft electronic transaction"
+            ),
+            doc_ids=("it-2000",),
+            anchor_patterns=("/sec-66C", "/sec-66D", "/sec-66E"),
+            priority=1.06,
+        ))
+
     return _dedupe_source_packs(packs)
 
 
@@ -8385,7 +8472,15 @@ def _cpc_pack(query: str) -> SourcePack:
     search_query = "Code of Civil Procedure 1908 civil court procedure filing appeal decree"
     anchor_patterns: tuple[str, ...] = ()
     priority = 1.0
-    if _has_any(query, (
+    if is_civil_execution_bank_attachment(query):
+        search_query = "Code of Civil Procedure 1908 section 51 Order XXI execution of decree judgment debtor money decree bank account attachment"
+        anchor_patterns = ("/sec-51", "/sec-47")
+        priority = 1.20
+    elif is_civil_prejudgment_bank_attachment(query):
+        search_query = "Code of Civil Procedure 1908 Order XXXVIII Rule 5 attachment before judgment security pending suit objection vacation"
+        anchor_patterns = ("/sec-5", "/sec-6", "/sec-9")
+        priority = 1.20
+    elif _has_any(query, (
         "summons not served", "service of summons", "summons service",
         "registered post", "registered-post", "service failed",
     )):
@@ -8770,8 +8865,27 @@ def _has_ndps_criminal_procedure_context(query: str) -> bool:
     return substance_context and procedure_context and not fake_authority_context
 
 
+def _has_bank_account_legal_hold_context(query: str) -> bool:
+    q = query.lower()
+    account_freeze = (
+        _has_any(q, ("bank", "account", "upi", "salary account"))
+        and _has_any(q, ("freeze", "frozen", "froze", "lien", "blocked", "legal hold"))
+    )
+    legal_authority = has_positive_criminal_bank_hold_context(q)
+    return (
+        account_freeze
+        and legal_authority
+        and not is_arbitral_account_restraint(q)
+        and not is_civil_execution_bank_attachment(q)
+        and not is_civil_prejudgment_bank_attachment(q)
+    )
+
+
 def _bnss_pack(query: str, *, priority: float = 1.0) -> SourcePack:
-    if _has_criminal_quashing_context(query):
+    if is_existing_vehicle_theft_fir_followup(query):
+        search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 section 175 police investigation cognizable vehicle theft case status"
+        anchor_patterns = ("/sec-175",)
+    elif _has_criminal_quashing_context(query):
         search_query = "Bharatiya Nagarik Suraksha Sanhita 2023 section 528 saving inherent powers High Court quashing criminal proceeding FIR"
         anchor_patterns = ("/sec-528",)
     elif _has_police_questioning_notice_context(query):
@@ -8996,7 +9110,10 @@ def _bnss_pack(query: str, *, priority: float = 1.0) -> SourcePack:
 
 
 def _crpc_pack(query: str, *, notice: bool = False, priority: float = 1.0) -> SourcePack:
-    if _has_criminal_quashing_context(query):
+    if is_existing_vehicle_theft_fir_followup(query):
+        search_query = "Code of Criminal Procedure 1973 section 156 police investigation cognizable vehicle theft case status"
+        anchor_patterns = ("/sec-156",)
+    elif _has_criminal_quashing_context(query):
         search_query = "Code of Criminal Procedure 1973 section 482 saving inherent powers High Court quashing criminal proceeding FIR"
         anchor_patterns = ("/sec-482",)
     elif _has_police_questioning_notice_context(query):
@@ -9711,12 +9828,15 @@ def _has_police_pickup_arrest_info_context(text: str) -> bool:
     pickup_or_detention = _has_any(text, (
         "police picked", "police took", "picked my", "took my",
         "picked up", "took away", "utha liya", "detained", "arrested",
+        "holding", "has kept", "have kept", "kept our", "kept my",
     ))
     arrest_info_problem = _has_any(text, (
         "fir copy", "copy of fir", "no fir copy", "not got fir",
         "not received fir", "family not informed", "not informed",
         "grounds", "reason", "arrest memo", "no arrest memo",
         "from my home", "from home", "night",
+        "undisclosed station", "not produced", "won't produce", "will not produce",
+        "cannot find which police station", "cannot find the police station",
     ))
     return pickup_or_detention and arrest_info_problem
 

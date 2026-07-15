@@ -2418,6 +2418,92 @@ def test_custody_status_neighbors_route_to_distinct_safe_paths():
     assert notice.label == "Police questioning / appearance notice"
     assert any("section 35" in source.lower() for source in notice.required_sources)
 
+
+def test_property_in_police_custody_is_not_routed_as_hidden_person_detention():
+    queries = (
+        "Police kept my laptop in custody and gave no FIR copy",
+        "My laptop is in police custody and I received no FIR copy",
+        "Police kept my laptop in their custody and gave no FIR copy",
+        "Police have custody of my laptop and gave no FIR copy",
+        "The police retain custody of my laptop and gave no FIR copy",
+        "Police retain custody of my external hard drive and gave no FIR copy",
+        "Police have custody of my passport and gave no FIR copy",
+        "Police retained my tablet in custody and gave no FIR copy",
+        "Police took the phone belonging to my son and will not tell me the case",
+        "Police took my son's phone and will not tell me the case",
+        "Police have custody of my partner's laptop and gave no FIR copy",
+        "Police took my phone during the arrest of my brother and gave no seizure memo",
+        "Police seized my phone and have not produced it before court; they will not tell me the case",
+        "The seized hard drive has remained in police custody for five days without production before the Magistrate",
+    )
+
+    for query in queries:
+        route = route_matter(query)
+        assert route.category != "arrest_custody_safeguard", query
+        assert "habeas corpus" not in route.label.lower(), query
+
+
+def test_negated_criminal_bank_hold_and_prejudgment_attachment_stay_civil():
+    garnishee = route_matter(
+        "The executing court blocked my bank account under a garnishee order; no police or cyber case is involved"
+    )
+    assert garnishee.category == "court_procedure"
+    assert "decree execution" in garnishee.label.lower()
+
+    prejudgment = route_matter(
+        "A money decree case is pending with no decree yet and the court ordered attachment before judgment"
+    )
+    assert prejudgment.category == "court_procedure"
+    assert "decree execution" not in prejudgment.label.lower()
+
+    for query in (
+        "The executing court froze my account; police and cybercrime have nothing to do with it",
+        "An arbitral tribunal blocked my account and police are not involved",
+        "The recovery suit is pending adjudication and no decree has been issued, but the court attached my account",
+        "The case remains undecided and the court froze my account before entering a decree",
+        "Cyber police did not freeze my bank account; the civil court froze it before judgment",
+        "It was not the police but an arbitral tribunal that blocked my bank account before judgment",
+        "Neither the police nor the cyber cell is involved; the court froze my account pending trial",
+        "The bank says the debit freeze is under an arbitral interim order; police are not connected with it",
+        "The money decree proceeding is still awaiting final judgment; the commercial court ordered interim attachment of my salary account",
+    ):
+        route = route_matter(query)
+        pack_ids = {pack.id for pack in source_packs_for_route(route, query)}
+        assert "bnss_2023_bank_account_legal_hold" not in pack_ids, query
+        assert "crpc_1973_bank_account_legal_hold" not in pack_ids, query
+
+    criminal = route_matter("Cyber police froze my bank account, but there is no FIR yet")
+    assert criminal.action_pack is not None
+    assert criminal.action_pack.id == "bank_account_freeze"
+
+
+def test_explicit_person_pickups_keep_the_arrest_safeguard_route():
+    for query in (
+        "Police took Mr Rohan and will not tell me the station",
+        "Police mere papa ko utha le gayi and will not tell the station",
+        "Police ne Amit ko dhaba se utha ke le gaye, ab station ka naam nahi bata rahe",
+        "Police took away my partner and will not tell me the station",
+        "Officers took our roommate and will not tell us the case",
+    ):
+        route = route_matter(query)
+        assert route.category == "arrest_custody_safeguard", query
+
+    for query in (
+        "Police took Rohan and will not tell me the station",
+        "police took rahul and will not tell me the station",
+        "Police detained Meera and will not tell us the case",
+        "Officers took Priya's handbag and will not tell us the case",
+        "Police took Samsung Galaxy from my room and will not tell us the case",
+        "Officers held Amazon parcel overnight and will not tell me the case",
+        "Officers held GoPro overnight and will not disclose the station",
+        "Police took Kindle from the office and will not tell us the case",
+        "Officers held Rolex overnight and will not disclose the station",
+        "Police held partner company records overnight and gave no FIR copy",
+        "Police held sister company server records overnight and will not tell us where they are",
+    ):
+        route = route_matter(query)
+        assert route.category != "arrest_custody_safeguard", query
+
     lawyer_access = route_matter(
         "jail superintendent not allowing lawyer meeting for my brother first time arrest what legal aid route"
     )

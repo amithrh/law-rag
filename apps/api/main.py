@@ -27,6 +27,7 @@ from apps.api.common_workflow_contracts import (
     WorkflowTemplateResult,
     common_workflow_contract_diagnostics,
     common_workflow_contract_result,
+    plan_owned_workflow_contract_result,
     workflow_contract_preempts_legacy,
     workflow_contract_promotes_verifier,
 )
@@ -52,7 +53,13 @@ from apps.api.legal_issue_plan import (
     authority_ids_for_passage,
     build_matter_plan,
 )
-from apps.api.matter_router import MatterRoute, route_matter, route_matter_trace
+from apps.api.matter_router import (
+    MatterRoute,
+    is_arbitral_account_restraint,
+    is_civil_prejudgment_bank_attachment,
+    route_matter,
+    route_matter_trace,
+)
 from apps.api.model_warmup import get_model_warmup_state, prewarm_models
 from apps.api.relevance import RelevanceResult, RelevanceVerdict, compute_relevance
 from apps.api.retrieval import (
@@ -469,15 +476,168 @@ def _matter_plan_event(plan: MatterPlan) -> dict:
     return {"event": "matter_plan", "data": json.dumps(plan.to_event())}
 
 
+def _exact_plan_owner(plan: MatterPlan | None) -> str | None:
+    if plan is None:
+        return None
+    owner = plan.answer_policy.required_primary_owner.strip()
+    return owner if ":" in owner else None
+
+
+def _additional_exact_plan_owners(plan: MatterPlan | None) -> tuple[str, ...]:
+    if plan is None:
+        return ()
+    return tuple(
+        owner.strip()
+        for owner in plan.answer_policy.additional_primary_owners
+        if ":" in owner
+    )
+
+
+def _plan_requires_fallback_only(plan: MatterPlan | None) -> bool:
+    return bool(
+        plan is not None
+        and plan.answer_policy.required_primary_owner == "source_gap_handoff"
+    )
+
+
+def _workflow_owner_token(workflow: WorkflowTemplateResult | None) -> str | None:
+    if workflow is None:
+        return None
+    return f"{workflow.source}:{workflow.id}"
+
+
+def _workflow_matches_plan_owner(
+    plan: MatterPlan | None,
+    workflow: WorkflowTemplateResult | None,
+) -> bool:
+    expected = _exact_plan_owner(plan)
+    return expected is None or _workflow_owner_token(workflow) == expected
+
+
+_WORKFLOW_RESULT_UNSET = object()
+
+
+def _resolved_workflow_result(
+    query: str,
+    route: MatterRoute,
+    passages: list[dict],
+    workflow_result: WorkflowTemplateResult | None | object = _WORKFLOW_RESULT_UNSET,
+) -> WorkflowTemplateResult | None:
+    if workflow_result is _WORKFLOW_RESULT_UNSET:
+        return common_workflow_contract_result(query, route, passages)
+    return workflow_result  # type: ignore[return-value]
+
+
+def _selected_workflow_result(
+    query: str,
+    route: MatterRoute,
+    passages: list[dict],
+    plan: MatterPlan | None,
+) -> WorkflowTemplateResult | None:
+    if _plan_requires_fallback_only(plan):
+        return None
+    exact_owner = _exact_plan_owner(plan)
+    if exact_owner is None:
+        return common_workflow_contract_result(query, route, passages)
+    owner_provider, owner_contract_id = exact_owner.split(":", 1)
+    primary = plan_owned_workflow_contract_result(
+        query,
+        route,
+        passages,
+        owner_provider=owner_provider,
+        owner_contract_id=owner_contract_id,
+    )
+    if primary is None:
+        return None
+
+    additional_results: list[WorkflowTemplateResult] = []
+    for additional_owner in _additional_exact_plan_owners(plan):
+        provider, contract_id = additional_owner.split(":", 1)
+        result = plan_owned_workflow_contract_result(
+            query,
+            route,
+            passages,
+            owner_provider=provider,
+            owner_contract_id=contract_id,
+        )
+        if result is None:
+            return None
+        additional_results.append(result)
+    if not additional_results:
+        return primary
+
+    lines = list(primary.lines)
+    source_indices = dict(primary.source_indices or {})
+    required_sources = list(primary.required_sources)
+    optional_sources = list(primary.optional_sources)
+    for result in additional_results:
+        secondary_lines = list(result.lines)
+        if secondary_lines and secondary_lines[0].strip().lower() == "**short answer**":
+            secondary_lines = secondary_lines[1:]
+        lines.append("**Related urgent legal track**")
+        lines.extend(secondary_lines)
+        for key, index in (result.source_indices or {}).items():
+            if key in source_indices and source_indices[key] != index:
+                source_indices[f"{result.id}:{key}"] = index
+            else:
+                source_indices[key] = index
+        required_sources.extend(
+            key for key in result.required_sources if key not in required_sources
+        )
+        optional_sources.extend(
+            key for key in result.optional_sources
+            if key not in optional_sources and key not in required_sources
+        )
+    return WorkflowTemplateResult(
+        id=primary.id,
+        source=primary.source,
+        lines=lines,
+        answer_mode=primary.answer_mode,
+        required_sources=tuple(required_sources),
+        optional_sources=tuple(optional_sources),
+        source_indices=source_indices,
+    )
+
+
 def _workflow_diagnostics_event(
     query: str,
     route: MatterRoute,
     passages: list[dict],
     *,
     template_lines: list[str],
+    plan: MatterPlan | None = None,
+    workflow_result: WorkflowTemplateResult | None | object = _WORKFLOW_RESULT_UNSET,
 ) -> dict:
-    workflow_result = common_workflow_contract_result(query, route, passages)
-    if workflow_result is not None and template_lines == workflow_result.lines:
+    if _plan_requires_fallback_only(plan):
+        return {"event": "workflow", "data": json.dumps({
+            "id": None,
+            "source": "matter_plan",
+            "selected": False,
+            "answer_owner": "source_gap_handoff",
+            "line_count": 0,
+            "answer_mode": None,
+            "required_sources": [],
+            "optional_sources": [],
+            "source_indices": {},
+            "contract_miss_reason": plan.answer_policy.fallback_reason,
+            "conflicting_primary_owners": list(
+                plan.answer_policy.conflicting_primary_owners
+            ),
+            "workflow_shadowed_by_legacy": False,
+        })}
+    workflow_result = _resolved_workflow_result(
+        query,
+        route,
+        passages,
+        workflow_result,
+    )
+    expected_plan_owner = _exact_plan_owner(plan)
+    candidate_owner = _workflow_owner_token(workflow_result)
+    if (
+        workflow_result is not None
+        and template_lines == workflow_result.lines
+        and _workflow_matches_plan_owner(plan, workflow_result)
+    ):
         workflow = {
             "id": workflow_result.id,
             "source": workflow_result.source,
@@ -490,9 +650,23 @@ def _workflow_diagnostics_event(
             "source_indices": workflow_result.source_indices or {},
             "contract_miss_reason": None,
             "workflow_shadowed_by_legacy": False,
+            "expected_plan_owner": expected_plan_owner,
         }
     else:
         workflow = common_workflow_contract_diagnostics(query, route, passages)
+
+    if expected_plan_owner is not None and candidate_owner != expected_plan_owner:
+        workflow = {
+            **workflow,
+            "selected": False,
+            "answer_owner": plan.answer_policy.fallback_owner if plan is not None else "source_gap_handoff",
+            "line_count": 0,
+            "contract_miss_reason": "plan_required_owner_not_selected",
+            "expected_plan_owner": expected_plan_owner,
+            "candidate_owner": candidate_owner,
+            "workflow_shadowed_by_legacy": False,
+        }
+        return {"event": "workflow", "data": json.dumps(workflow)}
 
     if template_lines and workflow_result is not None and template_lines != workflow_result.lines:
         workflow = {
@@ -581,6 +755,7 @@ def _critical_route_needs_reviewed_contract(
     workflow_result: WorkflowTemplateResult | None,
     *,
     plan: MatterPlan | None = None,
+    source_gap_event: dict | None = None,
 ) -> bool:
     """Launch guard: critical routes cannot be owned by freeform LLM fallback.
 
@@ -596,6 +771,16 @@ def _critical_route_needs_reviewed_contract(
     )
     if not requires_reviewed_contract:
         return False
+    if _plan_requires_fallback_only(plan):
+        return True
+    if (
+        _exact_plan_owner(plan) is not None
+        and source_gap_event is not None
+        and source_gap_event.get("has_gap")
+    ):
+        return True
+    if not _workflow_matches_plan_owner(plan, workflow_result):
+        return True
     return not workflow_contract_preempts_legacy(workflow_result)
 
 
@@ -614,6 +799,19 @@ def _critical_route_contract_gap_message(route: MatterRoute, source_gap: dict | 
         "model answer for a high-risk route. Collect the basic dates, documents, "
         "police/court papers if any, and contact DLSA/legal aid or a qualified "
         "lawyer for the next step."
+    )
+
+
+def _controlling_source_gap_requires_handoff(
+    query: str,
+    source_gap_event: dict | None,
+) -> bool:
+    """Fail closed where a neighboring civil source would change the remedy."""
+    if not source_gap_event or not source_gap_event.get("has_gap"):
+        return False
+    return (
+        is_arbitral_account_restraint(query)
+        or is_civil_prejudgment_bank_attachment(query)
     )
 
 
@@ -761,7 +959,7 @@ def _legacy_template_preempts_workflow(
             passages,
             title_terms=("scheduled castes", "prevention of atrocities"),
         )
-        return _is_adult_age_record_correction_query(q) or (
+        return _is_simple_assault_fir_delay_query(q) or _is_adult_age_record_correction_query(q) or (
             poa_source is not None and _is_caste_fir_refusal_query(q)
         )
 
@@ -915,6 +1113,8 @@ def _grounded_template_lines(
     query: str,
     route: MatterRoute,
     passages: list[dict],
+    plan: MatterPlan | None = None,
+    workflow_result: WorkflowTemplateResult | None | object = _WORKFLOW_RESULT_UNSET,
 ) -> list[str]:
     """Return deterministic cited lines for high-confidence procedural routes.
 
@@ -925,7 +1125,25 @@ def _grounded_template_lines(
     the LLM to improvise forums, deadlines, or next steps.
     """
     q = query.lower()
-    common_workflow = common_workflow_contract_result(query, route, passages)
+    common_workflow = _resolved_workflow_result(
+        query,
+        route,
+        passages,
+        workflow_result,
+    )
+
+    if _plan_requires_fallback_only(plan):
+        return []
+
+    # P1C plan-owned scenarios retire the legacy decision tree completely.
+    # The exact source-backed owner named by MatterPlan either renders, or the
+    # endpoint takes the plan's fail-closed fallback path.
+    if _exact_plan_owner(plan) is not None:
+        return (
+            common_workflow.lines
+            if _workflow_matches_plan_owner(plan, common_workflow)
+            else []
+        )
 
     if (
         route.category == "workplace_injury_compensation"
@@ -21024,6 +21242,7 @@ def _is_safe_template_next_step(
         "education_rights",
         "environment_compensation",
         "banking_credit_dispute",
+        "bank_account_freeze",
         "business_contract_partnership",
         "child_custody_adoption",
         "consumer",
@@ -21051,6 +21270,7 @@ def _is_safe_template_next_step(
         "undertrial_review_release",
         "forest_rights_fra",
         "legal_aid",
+        "loan_app_harassment",
         "municipal_shop_sealing",
         "self_harm_crisis",
         "street_vendor_municipal",
@@ -22934,6 +23154,7 @@ def _promote_safe_route_next_step(
     v: SentenceVerification,
     route: MatterRoute,
     pending_header: SentenceVerification | None,
+    plan: MatterPlan | None = None,
 ) -> SentenceVerification:
     """Let server-authored action-pack bullets pass as weak support.
 
@@ -22944,11 +23165,25 @@ def _promote_safe_route_next_step(
     user needs. Keep this narrowly scoped to cited bullets immediately under
     the server's "What you can do next" header.
     """
-    if v.status not in (SentenceStatus.UNSUPPORTED, SentenceStatus.WEAK_SUPPORT):
+    if not _is_safe_template_next_step(v.text, route, pending_header):
+        return v
+    if _exact_plan_owner(plan) is not None:
+        if _is_uncited_operational_guidance(v.text):
+            guidance_text = re.sub(r"\s*\[\d+(?:\s*,\s*\d+)*\]", "", v.text)
+            guidance_text = re.sub(r"\s*,\s*([.!?])", r"\1", guidance_text)
+            guidance_text = re.sub(r"\s+([,.!?])", r"\1", guidance_text)
+            return SentenceVerification(
+                text=guidance_text,
+                status=SentenceStatus.GUIDANCE,
+                citations=[],
+                entailment_score=None,
+                reason="reviewed operational guidance, not a legal claim",
+                auto_cited=False,
+            )
         return v
     if not v.citations:
         return v
-    if not _is_safe_template_next_step(v.text, route, pending_header):
+    if v.status not in (SentenceStatus.UNSUPPORTED, SentenceStatus.WEAK_SUPPORT):
         return v
     return SentenceVerification(
         text=v.text,
@@ -22960,13 +23195,64 @@ def _promote_safe_route_next_step(
     )
 
 
+def _is_uncited_operational_guidance(text: str) -> bool:
+    """Allow only evidence preservation or immediate physical-safety guidance.
+
+    Forum, remedy, eligibility, deadline, escalation, and filing instructions
+    are legal/procedural claims and must remain cited and verifier-controlled.
+    """
+    lower = re.sub(r"\s*\[\d+(?:\s*,\s*\d+)*\]", "", text).lower()
+    legal_terms = (
+        "legal right", "entitled", "section ", " act ", "rule ", "court",
+        "magistrate", "ombudsman", "cms", "tribunal", "commission",
+        "file a complaint", "lodge a complaint", "submit a complaint",
+        "grievance officer", "appeal", "petition", "legal notice", "fir",
+        "bail", "remand", "injunction", "compensation", "refund",
+        "escalate", "authority", "forum", "limitation", "deadline",
+        "within 24", "within twenty", "within 30", "within thirty",
+        "police station", "cybercrime.gov.in", "1930",
+    )
+    if any(term in f" {lower} " for term in legal_terms):
+        return False
+
+    evidence_action = lower.lstrip("- ").startswith((
+        "keep ", "preserve ", "save ", "take screenshots", "record ",
+        "write down ", "make a private evidence", "store ",
+    )) and any(term in lower for term in (
+        "photo", "message", "screenshot", "record", "receipt", "document",
+        "call log", "video", "witness", "timeline", "proof", "copy",
+    ))
+    immediate_safety = any(term in lower for term in (
+        "immediate danger", "unsafe right now", "safe place", "leave the scene",
+        "medical emergency", "emergency services", "trusted person",
+    )) and lower.lstrip("- ").startswith((
+        "call ", "go ", "move ", "leave ", "contact ", "ask ",
+    ))
+    urgent_help_seeking = lower.lstrip("- ").startswith("contact ") and any(
+        term in lower for term in ("dlsa", "legal aid", "lawyer")
+    ) and any(term in lower for term in (
+        "station remains unknown", "person is not produced", "hidden custody",
+        "immediate danger", "unsafe right now",
+    ))
+    information_request = lower.lstrip("- ").startswith(
+        "ask the bank in writing for "
+    ) and any(term in lower for term in (
+        "written freeze/lien reason", "request/reference", "order copy",
+        "amount and transactions affected", "nodal officer",
+    ))
+    return evidence_action or immediate_safety or urgent_help_seeking or information_request
+
+
 def _promote_safe_template_source_bridge(
     v: SentenceVerification,
     route: MatterRoute,
+    plan: MatterPlan | None = None,
 ) -> SentenceVerification:
     if v.status not in (SentenceStatus.UNSUPPORTED, SentenceStatus.WEAK_SUPPORT):
         return v
     if not v.citations:
+        return v
+    if _exact_plan_owner(plan) is not None:
         return v
     if not _is_safe_template_source_bridge(v.text, route):
         return v
@@ -22984,6 +23270,7 @@ def _promote_reviewed_workflow_contract_line(
     v: SentenceVerification,
     workflow_result: WorkflowTemplateResult | None,
     template_lines: list[str],
+    plan: MatterPlan | None = None,
 ) -> SentenceVerification:
     """Allow reviewed, source-gated workflow contract lines to survive NLI drift.
 
@@ -22994,6 +23281,10 @@ def _promote_reviewed_workflow_contract_line(
     is exactly that workflow, and the sentence already has valid citations.
     """
     if v.status not in (SentenceStatus.UNSUPPORTED, SentenceStatus.WEAK_SUPPORT):
+        return v
+    if _exact_plan_owner(plan) is not None:
+        # Released plan-owned routes must pass claim-level verification. A
+        # review label is not evidence and cannot upgrade weak/unsupported law.
         return v
     if not v.citations or workflow_result is None:
         return v
@@ -25425,13 +25716,26 @@ async def answer(req: AnswerRequest):
     system = load_answer_prompt()
     messages = build_messages(system=system, user_question=req.q, passages=passages)
     _record_stage(timings, "prompt_build", t_prompt)
-    template_lines = _grounded_template_lines(req.q, route, passages)
-    workflow_result_for_template = common_workflow_contract_result(req.q, route, passages)
+    workflow_result_for_template = _selected_workflow_result(
+        req.q,
+        route,
+        passages,
+        issue_plan,
+    )
+    template_lines = _grounded_template_lines(
+        req.q,
+        route,
+        passages,
+        plan=issue_plan,
+        workflow_result=workflow_result_for_template,
+    )
     workflow_event = _workflow_diagnostics_event(
         req.q,
         route,
         passages,
         template_lines=template_lines,
+        plan=issue_plan,
+        workflow_result=workflow_result_for_template,
     )
     source_gap_event = build_source_gap_event(
         query=req.q,
@@ -25444,7 +25748,13 @@ async def answer(req: AnswerRequest):
         route,
         workflow_result_for_template,
         plan=issue_plan,
+        source_gap_event=source_gap_event,
     )
+    controlling_source_gap = _controlling_source_gap_requires_handoff(
+        req.q,
+        source_gap_event,
+    )
+    critical_contract_gap = critical_contract_gap or controlling_source_gap
 
     # Coverage chip — sent up front so the UI can render bounds immediately
     seen_sources = set()
@@ -25502,7 +25812,7 @@ async def answer(req: AnswerRequest):
             # Drop verbatim repeats.
             "seen_sentences": set(),
             # Task #10: accumulator for the user-visible answer body —
-            # OK + WEAK_SUPPORT sentence texts only. After the stream
+            # OK + GUIDANCE + WEAK_SUPPORT sentence texts only. After the stream
             # closes, this concatenation is embedded and compared with
             # the query to compute the relevance verdict.
             # META lines (headers, refusal text, disclaimers) and
@@ -25652,16 +25962,24 @@ async def answer(req: AnswerRequest):
             if v.citations:
                 state["emitted_citation_indices"].update(v.citations)
             if (
-                v.status in (SentenceStatus.OK, SentenceStatus.WEAK_SUPPORT)
+                v.status in (
+                    SentenceStatus.OK,
+                    SentenceStatus.GUIDANCE,
+                    SentenceStatus.WEAK_SUPPORT,
+                )
                 and state.get("current_section") == "next_steps"
             ):
                 state["saw_next_step_sentence"] = True
-            # Task #10: accumulate user-visible cited prose (OK or
-            # WEAK_SUPPORT, never META) for the relevance check. We
+            # Task #10: accumulate user-visible answer prose (OK, reviewed
+            # GUIDANCE, or WEAK_SUPPORT; never META) for relevance. We
             # store the sentence text WITHOUT the [N] citation tags so
             # the cosine reflects the claim itself, not the citation
             # numerals.
-            if v.status in (SentenceStatus.OK, SentenceStatus.WEAK_SUPPORT):
+            if v.status in (
+                SentenceStatus.OK,
+                SentenceStatus.GUIDANCE,
+                SentenceStatus.WEAK_SUPPORT,
+            ):
                 state["answer_body_sentences"].append(
                     _CITATION_TAG_RE.sub("", v.text).strip()
                 )
@@ -25670,6 +25988,7 @@ async def answer(req: AnswerRequest):
         def _emit_contract_floor(*, source_floor_only: bool = False) -> tuple[list[dict], bool]:
             out: list[dict] = []
             pending_header: SentenceVerification | None = None
+            active_next_step_header: SentenceVerification | None = None
             for sent in _answer_contract_lines(
                 route,
                 passages,
@@ -25681,9 +26000,15 @@ async def answer(req: AnswerRequest):
                 v = _verify_with_timing(sent)
                 if _is_deferred_template_header(v.text):
                     pending_header = v
+                    active_next_step_header = v
                     continue
-                v = _promote_safe_route_next_step(v, route, pending_header)
-                v = _promote_safe_template_source_bridge(v, route)
+                v = _promote_safe_route_next_step(
+                    v,
+                    route,
+                    pending_header or active_next_step_header,
+                    issue_plan,
+                )
+                v = _promote_safe_template_source_bridge(v, route, issue_plan)
                 if not _candidate_sentence_should_emit(v, pending_header):
                     continue
                 header_ev: dict | None = None
@@ -25772,7 +26097,14 @@ async def answer(req: AnswerRequest):
                 out.append(sentence_ev)
             return out, should_stop
 
-        route_caveat = _route_regime_caveat(route, workflow_result_for_template)
+        # A fail-closed owner/source gap must not leak even harmless answer
+        # preamble before the refusal. Emit only routing diagnostics and the
+        # structured handoff for these cases.
+        route_caveat = (
+            None
+            if critical_contract_gap
+            else _route_regime_caveat(route, workflow_result_for_template)
+        )
         if route_caveat:
             caveat_v = _verify_with_timing(route_caveat)
             caveat_ev, caveat_stop = _emit_and_check(caveat_v)
@@ -25799,8 +26131,20 @@ async def answer(req: AnswerRequest):
             metrics.refused_total.inc()
             _add_stage_elapsed(timings, "llm_stream", 0.0)
             yield {"event": "refused", "data": json.dumps({
-                "message": _critical_route_contract_gap_message(route, source_gap_event),
-                "reason": "critical_route_needs_reviewed_contract",
+                "message": (
+                    "The controlling arbitration or pre-judgment attachment authority is "
+                    "missing from the retrieved source window. I will not substitute a "
+                    "neighboring CPC, criminal-seizure, or banking source. Treat this as "
+                    "intake and verify the order and controlling provision with DLSA, a "
+                    "qualified lawyer, or the relevant court/tribunal."
+                    if controlling_source_gap
+                    else _critical_route_contract_gap_message(route, source_gap_event)
+                ),
+                "reason": (
+                    "controlling_source_gap"
+                    if controlling_source_gap
+                    else "critical_route_needs_reviewed_contract"
+                ),
                 "disclaimer": DISCLAIMER_FOOTER,
             })}
             yield _timing_event(
@@ -25821,17 +26165,25 @@ async def answer(req: AnswerRequest):
             state["server_template_used"] = True
             _add_stage_elapsed(timings, "llm_stream", 0.0)
             pending_template_header: SentenceVerification | None = None
+            active_template_next_step_header: SentenceVerification | None = None
             for sent in template_lines:
                 v = _verify_with_timing(sent)
                 if _is_deferred_template_header(v.text):
                     pending_template_header = v
+                    active_template_next_step_header = v
                     continue
-                v = _promote_safe_route_next_step(v, route, pending_template_header)
-                v = _promote_safe_template_source_bridge(v, route)
+                v = _promote_safe_route_next_step(
+                    v,
+                    route,
+                    pending_template_header or active_template_next_step_header,
+                    issue_plan,
+                )
+                v = _promote_safe_template_source_bridge(v, route, issue_plan)
                 v = _promote_reviewed_workflow_contract_line(
                     v,
                     workflow_result_for_template,
                     template_lines,
+                    issue_plan,
                 )
                 if not _candidate_template_sentence_should_emit(v, pending_template_header):
                     continue
