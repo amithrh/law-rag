@@ -17,6 +17,10 @@ export interface CoverageEvent {
 export interface SourceGapItem {
   required_source: string;
   kind: string;
+  authority_id?: string | null;
+  source_pack_id?: string | null;
+  identity_status?: "canonical" | "provisional";
+  match_mode?: "authority_id" | "legacy_provisional";
 }
 
 export interface SourceGapEvent {
@@ -36,6 +40,10 @@ export interface PassageEvent {
   as_at: string | null;
   court: string | null;
   citation: string | null;
+  source_type?: string | null;
+  document_id?: string | null;
+  statute_short?: string | null;
+  authority_ids: string[];
 }
 
 export interface ActionPack {
@@ -59,6 +67,73 @@ export interface MatterRouteEvent {
   red_flags: string[];
   action_pack: ActionPack | null;
   legal_regime: string | null;
+}
+
+export interface AuthorityLedgerEntry {
+  source: string;
+  authority_id: string | null;
+  identity_status: "canonical" | "provisional";
+  canonical_name: string | null;
+  act: string | null;
+  section: string | null;
+  source_pack_id: string | null;
+  required_anchor_patterns: string[];
+  claim_type: string;
+  priority: "must_cite" | "conditional" | "background";
+  must_cite: boolean;
+  conditional: boolean;
+  note: string | null;
+}
+
+export interface RetrievalSourcePlan {
+  source_pack_id: string;
+  title_patterns: string[];
+  search_query: string;
+  doc_ids: string[];
+  anchor_patterns: string[];
+  source_types: string[];
+  priority: number;
+}
+
+export interface MatterPlanEvent {
+  schema_version: number;
+  plan_id: string;
+  primary_issue: string;
+  primary_label: string;
+  confidence: number;
+  user_role: string;
+  jurisdiction: {
+    state: string | null;
+    city: string | null;
+    forum_mentioned: string | null;
+    needs_state: boolean;
+  };
+  incident_date_status: string;
+  legal_regime: string | null;
+  case_stage: string;
+  desired_outcome: string;
+  urgency: "low" | "medium" | "high" | "emergency";
+  secondary_issues: string[];
+  required_facts: string[];
+  authority_ledger: AuthorityLedgerEntry[];
+  retrieval_sources: RetrievalSourcePlan[];
+  forums: string[];
+  remedies: string[];
+  deadlines: string[];
+  documents: string[];
+  action_pack_id: string | null;
+  action_pack_title: string | null;
+  next_steps: string[];
+  portals: string[];
+  escalation: string[];
+  cautions: string[];
+  safety_flags: string[];
+  answer_policy: {
+    required_primary_owner: string;
+    fallback_owner: string;
+    allow_freeform_llm: boolean;
+    requires_reviewed_contract: boolean;
+  };
 }
 
 export interface SentenceEvent {

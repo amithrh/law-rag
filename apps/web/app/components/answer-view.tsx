@@ -2,11 +2,16 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { readSse } from "../lib/sse";
+import {
+  canRevealPlannedAnswer,
+  parseMatterPlan,
+  PlannedSentenceGate,
+} from "../lib/matter-plan";
 import type {
   CoverageEvent,
   DisclaimerEvent,
   ErrorEvent as ApiErrorEvent,
-  MatterRouteEvent,
+  MatterPlanEvent,
   PassageEvent,
   RefusedEvent,
   RelevanceEvent,
@@ -30,7 +35,8 @@ type TimelineEntry =
 
 interface AnswerState {
   pending: boolean;
-  matterRoute: MatterRouteEvent | null;
+  matterPlan: MatterPlanEvent | null;
+  planContractError: string | null;
   coverage: CoverageEvent | null;
   sourceGap: SourceGapEvent | null;
   passages: PassageEvent[];
@@ -59,7 +65,8 @@ interface AnswerState {
 
 const INITIAL: AnswerState = {
   pending: false,
-  matterRoute: null,
+  matterPlan: null,
+  planContractError: null,
   coverage: null,
   sourceGap: null,
   passages: [],
@@ -138,11 +145,27 @@ export function AnswerView() {
           ...s,
           pending: false,
           error: e instanceof Error ? e.message : String(e),
+          planContractError:
+            s.planContractError ?? (
+              !s.matterPlan && s.sentences.length > 0
+                ? "The answer stream ended before a valid MatterPlan v2 contract arrived."
+                : null
+            ),
           finishedAt: performance.now(),
         }));
         return;
       }
-      setState((s) => ({ ...s, pending: false, finishedAt: performance.now() }));
+      setState((s) => ({
+        ...s,
+        pending: false,
+        finishedAt: performance.now(),
+        planContractError:
+          s.planContractError ?? (
+            !s.matterPlan && s.sentences.length > 0
+              ? "The answer stream did not include a valid MatterPlan v2 contract."
+              : null
+          ),
+      }));
     },
     [],
   );
@@ -227,8 +250,15 @@ export function AnswerView() {
           </Notice>
         )}
 
-        {state.matterRoute && state.matterRoute.category !== "off_topic" && (
-          <ActionPlan route={state.matterRoute} />
+        {state.planContractError && (
+          <Notice tone="red" title="Answer plan unavailable">
+            {state.planContractError} The legal answer has been hidden because its
+            controlling-source plan cannot be verified. Please retry.
+          </Notice>
+        )}
+
+        {state.matterPlan && state.matterPlan.primary_issue !== "off_topic" && (
+          <ActionPlan plan={state.matterPlan} />
         )}
 
         {state.coverage && <CoverageChip coverage={state.coverage} />}
@@ -253,7 +283,7 @@ export function AnswerView() {
             sentence). This notice is ADDITIVE — it warns when the
             cosine between query and answer-body falls below the
             calibrated threshold (the deposit-question failure mode). */}
-        {state.relevance && state.relevance.verdict !== "ok" && (
+        {canRevealPlannedAnswer(state.matterPlan, state.planContractError) && state.relevance && state.relevance.verdict !== "ok" && (
           <Notice
             tone={state.relevance.verdict === "off_topic" ? "red" : "amber"}
             title={
@@ -276,6 +306,35 @@ export function AnswerView() {
           const nonMeta = state.sentences.filter((s) => s.status !== "meta");
           const isStub = state.stop !== null && nonMeta.length < 3;
           if (isStub) return null;
+          if (state.sentences.length > 0) {
+            return (
+              <PlannedSentenceGate
+                plan={state.matterPlan}
+                planContractError={state.planContractError}
+                pending={state.pending}
+              >
+                <div className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-stone-200">
+                  {state.timeline.map((entry, i) =>
+                    entry.kind === "sentence" ? (
+                      <SentenceLine
+                        key={`s-${i}`}
+                        sentence={entry.sentence}
+                        passagesByIndex={passagesByIndex}
+                      />
+                    ) : (
+                      <p
+                        key={`g-${i}`}
+                        className="my-2 select-none text-stone-300"
+                        title="A sentence was removed here because it didn't cite a passage in the index."
+                      >
+                        ⋯
+                      </p>
+                    ),
+                  )}
+                </div>
+              </PlannedSentenceGate>
+            );
+          }
           return (
             <div className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-stone-200">
               {state.sentences.length === 0 && state.pending && (
@@ -287,28 +346,11 @@ export function AnswerView() {
                   cite the source of each claim.
                 </p>
               )}
-              {state.timeline.map((entry, i) =>
-                entry.kind === "sentence" ? (
-                  <SentenceLine
-                    key={`s-${i}`}
-                    sentence={entry.sentence}
-                    passagesByIndex={passagesByIndex}
-                  />
-                ) : (
-                  <p
-                    key={`g-${i}`}
-                    className="my-2 select-none text-stone-300"
-                    title="A sentence was removed here because it didn't cite a passage in the index."
-                  >
-                    ⋯
-                  </p>
-                ),
-              )}
             </div>
           );
         })()}
 
-        {state.stop && (() => {
+        {state.stop && canRevealPlannedAnswer(state.matterPlan, state.planContractError) && (() => {
           const nonMeta = state.sentences.filter((s) => s.status !== "meta");
           const isStub = nonMeta.length < 3;
           return (
@@ -330,6 +372,7 @@ export function AnswerView() {
         )}
 
         {(() => {
+          if (!canRevealPlannedAnswer(state.matterPlan, state.planContractError)) return null;
           // Prefer the server-authored authoritative source list. Fall
           // back to the early retrieval `passages` snapshot if the
           // sources event hasn't arrived yet (mid-stream or stream cut
@@ -412,46 +455,48 @@ export function AnswerView() {
   );
 }
 
-function ActionPlan({ route }: { route: MatterRouteEvent }) {
-  const pack = route.action_pack;
+function ActionPlan({ plan }: { plan: MatterPlanEvent }) {
+  const requiredSources = plan.authority_ledger
+    .filter((entry) => entry.must_cite)
+    .map((entry) => entry.source);
   const urgencyCls =
-    route.urgency === "emergency" || route.urgency === "high"
+    plan.urgency === "emergency" || plan.urgency === "high"
       ? "bg-red-50 text-red-800 ring-red-200"
-      : route.urgency === "medium"
+      : plan.urgency === "medium"
         ? "bg-amber-50 text-amber-800 ring-amber-200"
         : "bg-emerald-50 text-emerald-800 ring-emerald-200";
 
   return (
     <section className="mb-4 rounded-lg bg-white p-4 text-sm shadow-sm ring-1 ring-stone-200">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="font-medium text-stone-900">{route.label}</p>
+        <p className="font-medium text-stone-900">{plan.primary_label}</p>
         <span className={`rounded-full px-2 py-0.5 text-[11px] ring-1 ${urgencyCls}`}>
-          {route.urgency}
+          {plan.urgency}
         </span>
-        {route.legal_regime && (
+        {plan.legal_regime && (
           <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] text-stone-600 ring-1 ring-stone-200">
-            {route.legal_regime.replaceAll("_", " ")}
+            {plan.legal_regime.replaceAll("_", " ")}
           </span>
         )}
       </div>
 
-      {route.red_flags.length > 0 && (
+      {plan.safety_flags.length > 0 && (
         <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-900">
           <p className="font-medium">Urgent flags</p>
           <ul className="mt-1 list-disc space-y-1 pl-5">
-            {route.red_flags.map((flag) => (
+            {plan.safety_flags.map((flag) => (
               <li key={flag}>{flag}</li>
             ))}
           </ul>
         </div>
       )}
 
-      {pack && (
+      {plan.action_pack_id && (
         <div className="mt-3 grid gap-4 md:grid-cols-2">
           <div>
-            <p className="font-medium text-stone-800">{pack.title}</p>
+            <p className="font-medium text-stone-800">{plan.action_pack_title}</p>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-stone-700">
-              {pack.next_steps.map((step) => (
+              {plan.next_steps.map((step) => (
                 <li key={step}>{step}</li>
               ))}
             </ol>
@@ -459,7 +504,7 @@ function ActionPlan({ route }: { route: MatterRouteEvent }) {
           <div>
             <p className="font-medium text-stone-800">Keep ready</p>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-stone-700">
-              {pack.documents.slice(0, 5).map((doc) => (
+              {plan.documents.slice(0, 5).map((doc) => (
                 <li key={doc}>{doc}</li>
               ))}
             </ul>
@@ -467,43 +512,43 @@ function ActionPlan({ route }: { route: MatterRouteEvent }) {
         </div>
       )}
 
-      {route.required_sources.length > 0 && (
+      {requiredSources.length > 0 && (
         <div className="mt-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-700">
           <span className="font-medium text-stone-800">Sources to verify: </span>
-          {route.required_sources.slice(0, 4).join(", ")}
+          {requiredSources.slice(0, 4).join(", ")}
         </div>
       )}
 
       <div className="mt-3 grid gap-3 text-xs text-stone-600 md:grid-cols-2">
-        {route.forums.length > 0 && (
+        {plan.forums.length > 0 && (
           <p>
             <span className="font-medium text-stone-700">Forum: </span>
-            {route.forums.slice(0, 3).join(", ")}
+            {plan.forums.slice(0, 3).join(", ")}
           </p>
         )}
-        {route.missing_facts.length > 0 && (
+        {plan.required_facts.length > 0 && (
           <p>
             <span className="font-medium text-stone-700">Need: </span>
-            {route.missing_facts.slice(0, 4).join(", ")}
+            {plan.required_facts.slice(0, 4).join(", ")}
           </p>
         )}
-        {pack?.portals && pack.portals.length > 0 && (
+        {plan.portals.length > 0 && (
           <p>
             <span className="font-medium text-stone-700">Portal: </span>
-            {pack.portals.slice(0, 3).join(", ")}
+            {plan.portals.slice(0, 3).join(", ")}
           </p>
         )}
-        {pack?.escalation && pack.escalation.length > 0 && (
+        {plan.escalation.length > 0 && (
           <p>
             <span className="font-medium text-stone-700">Escalate to: </span>
-            {pack.escalation.slice(0, 3).join(", ")}
+            {plan.escalation.slice(0, 3).join(", ")}
           </p>
         )}
       </div>
 
-      {pack?.cautions && pack.cautions.length > 0 && (
+      {plan.cautions.length > 0 && (
         <p className="mt-3 text-xs text-stone-500">
-          {pack.cautions[0]}
+          {plan.cautions[0]}
         </p>
       )}
     </section>
@@ -537,8 +582,16 @@ function applyEvent(s: AnswerState, event: string, data: unknown): AnswerState {
       return { ...s, coverage: data as CoverageEvent };
     case "source_gap":
       return { ...s, sourceGap: data as SourceGapEvent };
-    case "matter_route":
-      return { ...s, matterRoute: data as MatterRouteEvent };
+    case "matter_plan": {
+      const plan = parseMatterPlan(data);
+      return plan
+        ? { ...s, matterPlan: plan, planContractError: null }
+        : {
+            ...s,
+            matterPlan: null,
+            planContractError: "The server sent an invalid MatterPlan payload.",
+          };
+    }
     case "passages":
       return { ...s, passages: data as PassageEvent[] };
     case "sentence": {

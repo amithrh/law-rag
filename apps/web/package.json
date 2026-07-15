@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --turbopack -p 3000",
     "build": "next build",
+    "test": "node --experimental-strip-types --test app/lib/matter-plan.test.mjs",
     "start": "next start -p 3000",
     "lint": "next lint",
     "type-check": "tsc --noEmit"

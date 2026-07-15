@@ -57,6 +57,21 @@ P0 ownership baseline, 2026-07-11:
   gate, two live-stack SSE checks, and frontend type-check green. This does not
   close P1: answer rendering, source-gap/eval authority-ID consumption, UI, and
   first-ten-route owner retirement remain open.
+- P1B now makes the authority ledger a fail-closed serving and evaluation
+  contract. Answer rendering and the browser require a valid MatterPlan before
+  showing streamed legal sentences; runtime source-gap checks recompute strict
+  authority IDs from title, anchor, source type, and retrieval pack; and the
+  evaluator gives citation credit only to the final `sources` event visible to
+  the user. Canonical and activated provisional obligations are measured by ID.
+- P1B adversarial review caught and closed authority-free placeholder plans,
+  old/new criminal-regime filtering errors, missing sections in composite
+  requirements, fuzzy provisional-source matches, factual records reported as
+  missing law, route-controlled benchmark denominators, and early-passage-only
+  citations. Final evidence: both backend and evaluator/UI reviewers PASS,
+  focused plan/source-gap/evaluator gate `195 passed`, frontend contract tests
+  `4 passed`, frontend type-check and production build pass, integrated SSE
+  contract passes, and the full API suite is `1,369 passed, 0 failed` with `15`
+  warnings in `384.12s` on 2026-07-15.
 - This is a regression result, not launch evidence. A fresh 500-prompt
   human-style evaluation, independent legal-quality review, and the operational
   release gates remain required before any production claim.
@@ -122,9 +137,11 @@ and a documented local startup path.
 - [x] Make retrieval consume MatterPlan's exact authority/retrieval policy rather
   than independently rerouting and inferring source packs from overlapping
   keyword logic.
-- [ ] Make answer rendering consume the same plan. Migrate high-volume routes
-  first and retire their legacy template branches.
-- [ ] Make source-gap checks and eval scoring consume plan authority IDs instead
+- [x] Make answer rendering and UI visibility consume the same plan; invalid,
+  missing, interrupted, or authority-free plans cannot reveal legal sentences.
+- [ ] Migrate the first ten high-volume/safety routes to the plan owner and
+  retire their legacy template branches.
+- [x] Make source-gap checks and eval scoring consume plan authority IDs instead
   of duplicated title/anchor alias heuristics.
 - [ ] Add an ownership test: each supported scenario has exactly one primary
   answer owner and an explicit fallback policy.

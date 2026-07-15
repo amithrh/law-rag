@@ -274,16 +274,16 @@ def _patch_high_score_retrieve(monkeypatch):
     def chunks():
         return [
             retrieval.RetrievedChunk(
-                chunk_id=1, document_id=1, anchor="cpa-2019#sec-2",
-                text="Section 12 of the Consumer Protection Act provides for District Forums.",
+                chunk_id=1, document_id=1, anchor="consumer-protection-2019/sec-35",
+                text="Section 35 of the Consumer Protection Act provides for filing a consumer complaint.",
                 title="Consumer Protection Act 2019", source_type="bare_act",
                 subject_area="consumer", as_at=None, paragraph_no=None,
                 citation=None, court=None, statute_short="CPA-2019",
                 dense_score=0.85, bm25_score=0.6, rerank_score=0.82,
             ),
             retrieval.RetrievedChunk(
-                chunk_id=2, document_id=1, anchor="cpa-2019#sec-34",
-                text="The District Forum has jurisdiction up to twenty lakh rupees in value.",
+                chunk_id=2, document_id=1, anchor="consumer-protection-2019/sec-39",
+                text="Section 39 permits orders including replacement, refund, and compensation.",
                 title="Consumer Protection Act 2019", source_type="bare_act",
                 subject_area="consumer", as_at=None, paragraph_no=None,
                 citation=None, court=None, statute_short="CPA-2019",
@@ -313,7 +313,7 @@ def test_answer_emits_coverage_passages_and_sentences(monkeypatch):
     fake = _FakeStream(
         "**Short answer**\n",
         "Filing a consumer complaint is the right next step [1]. ",
-        "The District Forum has jurisdiction up to twenty lakh rupees [2].",
+        "The Commission may order replacement, refund, or compensation [2].",
     )
     monkeypatch.setattr(api_main, "stream_chat", fake)
 
@@ -353,8 +353,32 @@ def test_answer_emits_coverage_passages_and_sentences(monkeypatch):
             assert plan["primary_issue"] == "consumer"
             assert plan["user_role"] == "consumer_or_customer"
             assert plan["authority_ledger"][0]["act"] == "Consumer Protection Act 2019"
+            assert plan["action_pack_id"] == "consumer"
+            controlling_authority_id = plan["authority_ledger"][0]["authority_id"]
+            assert controlling_authority_id
+            passage_payload = next(d for ev, d in events if ev == "passages")
+            assert passage_payload
+            assert all(
+                controlling_authority_id in passage["authority_ids"]
+                for passage in passage_payload
+            )
             # Each sentence verifier verdict streamed
             assert event_names.count("sentence") >= 1
+            source_payload = next(d for ev, d in events if ev == "sources")
+            assert source_payload
+            cited_indices = {
+                citation
+                for ev, payload in events
+                if ev == "sentence"
+                for citation in payload.get("citations", [])
+            }
+            assert cited_indices
+            sources_by_index = {source["index"]: source for source in source_payload}
+            assert cited_indices <= sources_by_index.keys()
+            assert all(
+                controlling_authority_id in sources_by_index[index]["authority_ids"]
+                for index in cited_indices
+            )
             assert "timing" in event_names
             assert event_names.index("timing") < event_names.index("disclaimer")
             timing = next(d for ev, d in events if ev == "timing")

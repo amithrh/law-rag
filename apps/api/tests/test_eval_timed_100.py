@@ -17,10 +17,79 @@ from scripts.eval_timed_100 import (
     flatten_row,
     jsonl_dumps,
     load_eval_rows,
+    matter_plan_authority_coverage,
+    matter_plan_contract_status,
+    matter_plan_required_for_eval,
     product_pass,
     required_source_coverage,
     stream_answer,
+    write_report,
 )
+
+
+def matter_plan_payload(*, authority_id: str = "authority_consumer_section_35") -> dict:
+    return {
+        "schema_version": 2,
+        "plan_id": "matter_plan_v2_consumer_test",
+        "primary_issue": "consumer",
+        "primary_label": "Consumer complaint / service deficiency",
+        "confidence": 0.91,
+        "user_role": "consumer",
+        "jurisdiction": {
+            "state": None,
+            "city": None,
+            "forum_mentioned": None,
+            "needs_state": False,
+        },
+        "incident_date_status": "not_required",
+        "legal_regime": None,
+        "case_stage": "pre_filing",
+        "desired_outcome": "refund",
+        "urgency": "medium",
+        "secondary_issues": [],
+        "required_facts": ["invoice/order ID"],
+        "authority_ledger": [{
+            "source": "Consumer Protection Act 2019 Section 35",
+            "authority_id": authority_id,
+            "identity_status": "canonical",
+            "canonical_name": "Consumer Protection Act 2019 Section 35",
+            "act": "Consumer Protection Act 2019",
+            "section": "35",
+            "source_pack_id": "consumer_protection_section_35",
+            "required_anchor_patterns": ["sec-35"],
+            "claim_type": "legal_basis",
+            "priority": "must_cite",
+            "must_cite": True,
+            "conditional": False,
+            "note": None,
+        }],
+        "retrieval_sources": [{
+            "source_pack_id": "consumer_protection_section_35",
+            "title_patterns": ["Consumer Protection Act 2019"],
+            "search_query": "consumer complaint section 35",
+            "doc_ids": [],
+            "anchor_patterns": ["sec-35"],
+            "source_types": ["bare_act"],
+            "priority": 1.0,
+        }],
+        "forums": ["District Consumer Commission"],
+        "remedies": ["refund"],
+        "deadlines": [],
+        "documents": ["invoice"],
+        "action_pack_id": "consumer_complaint",
+        "action_pack_title": "Consumer complaint",
+        "next_steps": ["Send a written complaint."],
+        "portals": [],
+        "escalation": [],
+        "cautions": [],
+        "safety_flags": [],
+        "answer_policy": {
+            "required_primary_owner": "server_template_or_verified_llm",
+            "fallback_owner": "source_gap_handoff",
+            "allow_freeform_llm": True,
+            "requires_reviewed_contract": False,
+        },
+    }
 
 
 @pytest.mark.needs_eval_data
@@ -217,6 +286,289 @@ def test_visible_source_gap_is_quality_flag_and_product_failure():
 
     assert "visible_source_gap" in answer_quality_flags(row)
     assert product_pass(row) is False
+
+
+def test_matter_plan_authority_coverage_uses_canonical_and_provisional_obligation_ids():
+    plan = {
+        "authority_ledger": [
+            {
+                "authority_id": "authority_constitution_342",
+                "identity_status": "canonical",
+                "must_cite": True,
+                "source": "Constitution of India Article 342",
+            },
+            {
+                "authority_id": "authority_provisional_state_rule",
+                "identity_status": "provisional",
+                "must_cite": True,
+                "source": "state caste certificate rules",
+            },
+            {
+                "authority_id": "authority_background",
+                "identity_status": "canonical",
+                "must_cite": False,
+                "source": "background authority",
+            },
+        ]
+    }
+
+    coverage = matter_plan_authority_coverage(
+        plan,
+        [{
+            "authority_ids": [
+                "authority_constitution_342",
+                "authority_provisional_state_rule",
+                "authority_background",
+            ],
+        }],
+    )
+
+    assert coverage == {
+        "required_ids": [
+            "authority_constitution_342",
+            "authority_provisional_state_rule",
+        ],
+        "found_ids": [
+            "authority_constitution_342",
+            "authority_provisional_state_rule",
+        ],
+        "missing_ids": [],
+        "missing_sources": [],
+        "coverage": 1.0,
+        "ok": True,
+        "applicable": True,
+    }
+
+
+def test_flatten_row_keeps_legacy_metrics_and_fails_when_plan_authority_is_uncited():
+    authority_id = "authority_consumer_section_35"
+    row = flatten_row(
+        {"query": "damaged phone return refused", "expected_act_hint": None},
+        {
+            "matter_route": {
+                "category": "general_legal",
+                "label": "Legacy fallback",
+                "required_sources": [],
+            },
+            "matter_plan": matter_plan_payload(authority_id=authority_id),
+            "workflow": {},
+            "sentences": [{"text": "Use the consumer route [2].", "status": "ok"}],
+            "sources": [
+                {
+                    "index": 1,
+                    "title": "Consumer Protection Act 2019",
+                    "anchor": "consumer-protection-2019/sec-35",
+                    "source_type": "bare_act",
+                    "authority_ids": [authority_id],
+                },
+                {
+                    "index": 2,
+                    "title": "Unrelated consumer judgment",
+                    "source_type": "sc_judgment",
+                    "authority_ids": [],
+                },
+            ],
+            "passages": [],
+            "relevance": {"verdict": "ok", "score": 0.9},
+            "timing": {"total_ms": 1000},
+            "wall_ms": 1000,
+            "events": {},
+        },
+    )
+
+    assert row["route_category"] == "general_legal"
+    assert row["route_label"] == "Legacy fallback"
+    assert row["action_pack_id"] is None
+    assert row["plan_primary_issue"] == "consumer"
+    assert row["plan_primary_label"] == "Consumer complaint / service deficiency"
+    assert row["plan_action_pack_id"] == "consumer_complaint"
+    assert row["matter_plan_contract"] == {"valid": True, "errors": []}
+    assert row["plan_authority_ids_missing"] == []
+    assert row["plan_authority_ids_uncited"] == [authority_id]
+    assert product_pass(row) is False
+
+
+def test_final_sources_event_is_required_for_cited_authority_credit():
+    authority_id = "authority_consumer_section_35"
+    row = flatten_row(
+        {
+            "query": "damaged phone return refused",
+            "expected_category": "consumer",
+            "expected_act_hint": "Consumer Protection Act",
+        },
+        {
+            "matter_route": {
+                "category": "consumer",
+                "label": "Consumer",
+                "required_sources": [],
+            },
+            "matter_plan": matter_plan_payload(authority_id=authority_id),
+            "workflow": {},
+            "sentences": [{"text": "File a consumer complaint [2].", "status": "ok"}],
+            "sources": [],
+            "passages": [{
+                "index": 2,
+                "title": "Consumer Protection Act 2019",
+                "anchor": "consumer-protection-2019/sec-35",
+                "source_type": "bare_act",
+                "authority_ids": [authority_id],
+            }],
+            "relevance": {"verdict": "ok", "score": 0.9},
+            "timing": {"total_ms": 1000},
+            "wall_ms": 1000,
+            "events": {},
+        },
+    )
+
+    assert row["plan_authority_ids_missing"] == []
+    assert row["plan_authority_ids_uncited"] == [authority_id]
+    assert row["expected_act_cited_hit"] is False
+    assert row["unknown_citation_indices"] == [2]
+    assert product_pass(row) is False
+
+
+def test_product_pass_fails_closed_when_required_matter_plan_is_missing():
+    row = {
+        "matter_plan_required": True,
+        "matter_plan_contract": {
+            "valid": False,
+            "errors": ["schema_version_not_2", "invalid_plan_id"],
+        },
+        "refused": False,
+        "error": None,
+        "relevance_verdict": "ok",
+        "legal_safety": {"hard_fail": False},
+        "expected_act_cited_hit": True,
+        "unknown_citation_count": 0,
+        "route_required_sources_missing": [],
+        "route_required_sources_cited_missing": [],
+        "plan_authority_ids_missing": [],
+        "plan_authority_ids_uncited": [],
+        "source_gap_visible": False,
+    }
+
+    assert "missing_or_invalid_matter_plan" in answer_quality_flags(row)
+    assert product_pass(row) is False
+
+
+def test_matter_plan_contract_rejects_shallow_placeholder_payload():
+    status = matter_plan_contract_status({
+        "schema_version": 2,
+        "plan_id": "matter_plan_v2_fake",
+        "primary_issue": "consumer",
+        "authority_ledger": [],
+        "answer_policy": {},
+    })
+
+    assert status["valid"] is False
+    assert "invalid_primary_label" in status["errors"]
+    assert "invalid_retrieval_sources" in status["errors"]
+    assert "invalid_answer_policy_required_primary_owner" in status["errors"]
+
+
+def test_matter_plan_contract_rejects_authority_free_or_contradictory_full_plan():
+    empty = matter_plan_payload()
+    empty["authority_ledger"] = []
+    empty["retrieval_sources"] = []
+    empty_status = matter_plan_contract_status(empty)
+
+    contradictory = matter_plan_payload()
+    contradictory["authority_ledger"][0]["must_cite"] = False
+    contradictory_status = matter_plan_contract_status(contradictory)
+
+    assert empty_status["valid"] is False
+    assert "empty_authority_ledger" in empty_status["errors"]
+    assert "missing_enforceable_authority_obligation" in empty_status["errors"]
+    assert "empty_retrieval_sources" in empty_status["errors"]
+    assert contradictory_status["valid"] is False
+    assert "invalid_authority_ledger_entry_0" in contradictory_status["errors"]
+
+
+def test_matter_plan_authority_coverage_measures_activated_provisional_obligation():
+    plan = matter_plan_payload(authority_id="authority_provisional_fir")
+    plan["authority_ledger"][0].update({
+        "source": "BNSS 2023 / CrPC 1973 FIR procedure based on incident date",
+        "identity_status": "provisional",
+        "canonical_name": None,
+        "priority": "conditional",
+        "must_cite": False,
+        "conditional": True,
+    })
+
+    coverage = matter_plan_authority_coverage(
+        plan,
+        [{"authority_ids": ["authority_provisional_fir"]}],
+        query="police refused to file FIR for my stolen bike",
+    )
+
+    assert coverage["applicable"] is True
+    assert coverage["ok"] is True
+    assert coverage["found_ids"] == ["authority_provisional_fir"]
+
+
+def test_write_report_uses_required_legal_denominator_and_keeps_all_plan_failures(tmp_path):
+    rows = []
+    for index in range(101):
+        row = flatten_row(
+            {"query": f"failure-{index}", "expected_act_hint": None},
+            {
+                "matter_route": {
+                    "category": "consumer",
+                    "label": "Consumer",
+                    "required_sources": [],
+                },
+                "workflow": {},
+                "sentences": [],
+                "sources": [],
+                "passages": [],
+                "relevance": {"verdict": "ok", "score": 0.9},
+                "timing": {"total_ms": 1000},
+                "wall_ms": 1000,
+                "events": {},
+            },
+        )
+        rows.append(row)
+
+    output_path = tmp_path / "rows.jsonl"
+    report_path = tmp_path / "report.md"
+    write_report(rows, output_path, report_path)
+    report = report_path.read_text(encoding="utf-8")
+
+    assert "MatterPlan contract valid: 0/101 required legal rows" in report
+    assert "failure-100" in report
+    assert "MatterPlan authority-obligation retrieval" in report
+    assert "MatterPlan canonical-authority" not in report
+
+
+def test_expected_legal_category_requires_plan_even_when_observed_route_is_off_topic(tmp_path):
+    eval_row = {
+        "query": "bank deducted money wrongly",
+        "expected_category": "banking_complaint",
+    }
+    route = {"category": "off_topic", "label": "Off topic", "required_sources": []}
+    assert matter_plan_required_for_eval(eval_row, route) is True
+
+    row = flatten_row(
+        eval_row,
+        {
+            "matter_route": route,
+            "workflow": {},
+            "sentences": [],
+            "sources": [],
+            "passages": [],
+            "relevance": {"verdict": "off_topic", "score": 0.1},
+            "timing": {"total_ms": 1000},
+            "wall_ms": 1000,
+            "events": {},
+        },
+    )
+    report_path = tmp_path / "report.md"
+    write_report([row], tmp_path / "rows.jsonl", report_path)
+    report = report_path.read_text(encoding="utf-8")
+
+    assert row["matter_plan_required"] is True
+    assert "MatterPlan contract valid: 0/1 required legal rows" in report
+    assert "bank deducted money wrongly" in report
 
 
 def test_required_source_coverage_separates_found_and_missing_route_sources():

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from apps.api.legal_issue_plan import build_matter_plan
-from apps.api.matter_router import route_matter
+from apps.api.matter_router import MatterRoute, route_matter
 
 
 def _plan(query: str):
@@ -222,6 +222,221 @@ def test_duplicate_source_packs_do_not_change_canonical_authority_identity():
     assert single.authority_id == ambiguous.authority_id
 
 
+def test_passage_authority_ids_require_act_and_section_alignment():
+    from apps.api.legal_issue_plan import authority_ids_for_passage
+
+    query = "office rejected my ST certificate saying not local resident what appeal"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    article_342 = next(
+        entry for entry in plan.authority_ledger
+        if entry.act == "Constitution of India" and entry.section == "Article 342"
+    )
+
+    matched = authority_ids_for_passage(
+        plan,
+        title="Constitution of India",
+        anchor="constitution-india/sec-342",
+        source_pack_id="constitution_article_341_342",
+        source_type="bare_act",
+    )
+    wrong_section = authority_ids_for_passage(
+        plan,
+        title="Constitution of India",
+        anchor="constitution-india/sec-341",
+        source_pack_id="constitution_article_341_342",
+        source_type="bare_act",
+    )
+    wrong_act = authority_ids_for_passage(
+        plan,
+        title="Consumer Protection Act 2019",
+        anchor="consumer-protection-2019/sec-342",
+        source_type="bare_act",
+    )
+
+    assert matched == [article_342.authority_id]
+    assert wrong_section == []
+    assert wrong_act == []
+
+
+def test_passage_authority_ids_reject_empty_titles_wrong_types_and_stale_packs():
+    from apps.api.legal_issue_plan import authority_ids_for_passage
+
+    query = "online order arrived broken what to do"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    controlling = next(entry for entry in plan.authority_ledger if entry.canonical_name)
+
+    assert authority_ids_for_passage(
+        plan,
+        title="",
+        anchor="consumer-protection-2019/sec-35",
+        source_pack_id="consumer_protection_2019",
+        source_type="bare_act",
+    ) == []
+    assert authority_ids_for_passage(
+        plan,
+        title="Consumer Protection Act 2019",
+        anchor="consumer-protection-2019/sec-35",
+        source_pack_id="consumer_protection_2019",
+        source_type="sc_judgment",
+    ) == []
+    assert authority_ids_for_passage(
+        plan,
+        title="Consumer Protection Act 2019",
+        anchor="consumer-protection-2019/sec-35",
+        source_pack_id="stale_or_forged_pack",
+        source_type="bare_act",
+    ) == []
+    assert authority_ids_for_passage(
+        plan,
+        title="Consumer Protection Act 2019",
+        anchor="consumer-protection-2019/sec-35",
+        source_pack_id="consumer_protection_2019",
+        source_type="bare_act",
+    ) == [controlling.authority_id]
+    assert authority_ids_for_passage(
+        plan,
+        title="Consumer Protection Act 2019",
+        anchor="consumer-protection-2019/sec-35",
+        source_pack_id="consumer_protection_2019",
+        source_type="",
+    ) == []
+
+
+def test_unsectioned_authority_uses_query_specific_pack_anchors():
+    from apps.api.legal_issue_plan import authority_ids_for_passage
+
+    query = "ICEGATE says imported goods were misdeclared and may be confiscated"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    customs = next(entry for entry in plan.authority_ledger if entry.act == "Customs Act 1962")
+
+    assert "/sec-75" not in customs.required_anchor_patterns
+    assert authority_ids_for_passage(
+        plan,
+        title="Customs Act 1962",
+        anchor="customs-1962/sec-75",
+        source_type="bare_act",
+    ) == []
+    assert authority_ids_for_passage(
+        plan,
+        title="Customs Act 1962",
+        anchor="customs-1962/sec-111",
+        source_type="bare_act",
+    ) == [customs.authority_id]
+
+
+def test_subsection_requirement_accepts_reviewed_parent_section_anchor():
+    from apps.api.legal_issue_plan import authority_ids_for_passage
+
+    query = "sand mining in scheduled area without gram sabha recommendation"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    pesa = next(entry for entry in plan.authority_ledger if entry.act == "PESA Act 1996")
+    assert pesa.section == "Section 4(c)"
+
+    assert authority_ids_for_passage(
+        plan,
+        title="Panchayats (Extension to the Scheduled Areas) Act 1996",
+        anchor="pesa-1996/sec-4",
+        source_pack_id="pesa_1996",
+        source_type="bare_act",
+    ) == [pesa.authority_id]
+
+
+def test_criminal_authority_identity_follows_incident_regime():
+    legacy_query = "in 2023 police arrested me for bike theft what bail can I get"
+    current_query = "in 2025 police arrested me for bike theft what bail can I get"
+    legacy = build_matter_plan(legacy_query, route_matter(legacy_query))
+    current = build_matter_plan(current_query, route_matter(current_query))
+    assert legacy is not None and current is not None
+
+    legacy_acts = {entry.act for entry in legacy.authority_ledger}
+    current_acts = {entry.act for entry in current.authority_ledger}
+    assert "Code of Criminal Procedure 1973" in legacy_acts
+    assert "Indian Penal Code 1860" in legacy_acts
+    assert "Bharatiya Nagarik Suraksha Sanhita 2023" not in legacy_acts
+    assert "Bharatiya Nyaya Sanhita 2023" not in legacy_acts
+    assert "Bharatiya Nagarik Suraksha Sanhita 2023" in current_acts
+    assert "Bharatiya Nyaya Sanhita 2023" in current_acts
+    assert "Code of Criminal Procedure 1973" not in current_acts
+    assert "Indian Penal Code 1860" not in current_acts
+
+
+def test_separate_criminal_procedure_requirements_follow_incident_regime():
+    legacy_query = "in 2023 police arrested my son at night what are his rights"
+    current_query = "in 2025 police arrested my son at night what are his rights"
+    legacy = build_matter_plan(legacy_query, route_matter(legacy_query))
+    current = build_matter_plan(current_query, route_matter(current_query))
+    assert legacy is not None and current is not None
+
+    legacy_acts = {entry.act for entry in legacy.authority_ledger}
+    current_acts = {entry.act for entry in current.authority_ledger}
+    assert "Code of Criminal Procedure 1973" in legacy_acts
+    assert "Bharatiya Nagarik Suraksha Sanhita 2023" not in legacy_acts
+    assert "Bharatiya Nagarik Suraksha Sanhita 2023" in current_acts
+    assert "Code of Criminal Procedure 1973" not in current_acts
+
+
+def test_filtered_legacy_route_reindexes_first_retained_authority_as_must_cite():
+    query = "in 2023 police called me for questioning as witness what are my rights"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    crpc_entries = [
+        entry for entry in plan.authority_ledger
+        if entry.act == "Code of Criminal Procedure 1973"
+    ]
+    assert crpc_entries[0].section == "Section 160"
+    assert crpc_entries[0].must_cite is True
+    assert crpc_entries[0].priority == "must_cite"
+
+
+def test_single_statute_composites_preserve_every_explicit_section():
+    route = MatterRoute(
+        category="cyber_fraud_or_harassment",
+        label="Electronic content allegation",
+        confidence=0.8,
+        urgency="high",
+        required_sources=[
+            "Information Technology Act 2000 sections 67 / 66E / 67A",
+            "Immoral Traffic Prevention Act 1956 sections 4, 5, 7, or 8",
+        ],
+        forums=[],
+        missing_facts=[],
+        red_flags=[],
+    )
+    plan = build_matter_plan("police case about electronic content", route)
+    assert plan is not None
+
+    it_sections = [
+        entry.section for entry in plan.authority_ledger
+        if entry.act == "Information Technology Act 2000"
+    ]
+    itpa_sections = [
+        entry.section for entry in plan.authority_ledger
+        if entry.act == "Immoral Traffic Prevention Act 1956"
+    ]
+    assert it_sections == ["Section 67", "Section 66E", "Section 67A"]
+    assert itpa_sections == ["Section 4", "Section 5", "Section 7", "Section 8"]
+
+
+def test_composite_criminal_source_preserves_every_explicit_section():
+    query = (
+        "in 2025 girl I was dating filed rape case after we broke up saying I promised "
+        "marriage we had relationship for 2 years"
+    )
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    bns_sections = [
+        entry.section for entry in plan.authority_ledger
+        if entry.act == "Bharatiya Nyaya Sanhita 2023"
+    ]
+    assert bns_sections == ["Section 63", "Section 69"]
+
+
 def test_matter_plan_answer_policy_matches_critical_route_guard():
     _, critical = _plan("police did not file my FIR what can I do")
     assert critical["answer_policy"] == {
@@ -259,8 +474,8 @@ def test_legal_issue_plan_accused_framing_guard_for_cyber_notice():
         if entry["act"] == "date-dependent criminal regime"
     ]
     assert regime_entries
-    assert regime_entries[0]["priority"] == "conditional"
-    assert regime_entries[0]["must_cite"] is False
+    assert regime_entries[0]["priority"] == "must_cite"
+    assert regime_entries[0]["must_cite"] is True
 
 
 def test_legal_issue_plan_jurisdiction_and_date_flags():

@@ -1282,6 +1282,12 @@ def answer_quality_flags(row: dict[str, Any]) -> list[str]:
         flags.append("expected_act_not_cited")
     if row.get("route_required_sources_cited_missing"):
         flags.append("route_required_source_not_cited")
+    if row.get("plan_authority_ids_missing"):
+        flags.append("matter_plan_authority_not_retrieved")
+    if row.get("plan_authority_ids_uncited"):
+        flags.append("matter_plan_authority_not_cited")
+    if row.get("matter_plan_required") and not (row.get("matter_plan_contract") or {}).get("valid"):
+        flags.append("missing_or_invalid_matter_plan")
     if row.get("judgment_before_actionable_source"):
         flags.append("judgment_before_actionable_source")
     if any(
@@ -1350,27 +1356,33 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
     cited_hit = expected_act_cited_hit(
         expected_keys,
         observed.get("sources") or [],
-        observed.get("passages") or [],
+        [],
         sentences,
     )
     procedure_anchor_coverage = expected_procedure_anchor_coverage(
         expected_keys,
         observed.get("sources") or [],
-        observed.get("passages") or [],
+        [],
         sentences,
     )
     source_order = cited_source_order_metrics(
         observed.get("sources") or [],
-        observed.get("passages") or [],
+        [],
         sentences,
     )
     citation_integrity = citation_integrity_metrics(
         observed.get("sources") or [],
-        observed.get("passages") or [],
+        [],
         sentences,
     )
+    plan_authority_sources = [
+        str(item.get("source"))
+        for item in (plan.get("authority_ledger") or [])
+        if isinstance(item, dict) and item.get("source")
+    ]
+    route_required_sources = route.get("required_sources") or []
     route_required_source_coverage = required_source_coverage(
-        route.get("required_sources") or [],
+        route_required_sources,
         observed.get("sources") or [],
         observed.get("passages") or [],
         query=str(eval_row.get("query") or ""),
@@ -1382,11 +1394,21 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
     ]
     cited_sources = cited_source_items(
         observed.get("sources") or [],
-        observed.get("passages") or [],
+        [],
         sentences,
     )
+    plan_authority_retrieval_coverage = matter_plan_authority_coverage(
+        plan,
+        retrieved_sources,
+        query=str(eval_row.get("query") or ""),
+    )
+    plan_authority_cited_coverage = matter_plan_authority_coverage(
+        plan,
+        cited_sources,
+        query=str(eval_row.get("query") or ""),
+    )
     route_required_source_cited_coverage = required_source_coverage(
-        route.get("required_sources") or [],
+        route_required_sources,
         cited_sources,
         [],
         query=str(eval_row.get("query") or ""),
@@ -1425,7 +1447,7 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
         "route_urgency": route.get("urgency"),
         "route_confidence": route.get("confidence"),
         "legal_regime": route.get("legal_regime"),
-        "route_required_sources": route.get("required_sources") or [],
+        "route_required_sources": route_required_sources,
         "route_forums": route.get("forums") or [],
         "route_missing_facts": route.get("missing_facts") or [],
         "action_pack_id": action_pack.get("id") if action_pack else None,
@@ -1433,11 +1455,23 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
         "action_pack_next_steps": action_pack.get("next_steps") or [],
         "red_flags": route.get("red_flags") or [],
         "matter_plan": plan,
+        "matter_plan_required": matter_plan_required_for_eval(eval_row, route),
+        "matter_plan_contract": matter_plan_contract_status(plan),
         "plan_primary_issue": plan.get("primary_issue"),
+        "plan_primary_label": plan.get("primary_label"),
+        "plan_confidence": plan.get("confidence"),
+        "plan_urgency": plan.get("urgency"),
+        "plan_legal_regime": plan.get("legal_regime"),
         "plan_secondary_issues": plan.get("secondary_issues") or [],
         "plan_user_role": plan.get("user_role"),
         "plan_desired_outcome": plan.get("desired_outcome"),
         "plan_safety_flags": plan.get("safety_flags") or [],
+        "plan_required_sources": plan_authority_sources,
+        "plan_forums": plan.get("forums") or [],
+        "plan_required_facts": plan.get("required_facts") or [],
+        "plan_action_pack_id": plan.get("action_pack_id"),
+        "plan_action_pack_cautions": plan.get("cautions") or [],
+        "plan_action_pack_next_steps": plan.get("next_steps") or [],
         "workflow": workflow,
         "workflow_id": workflow.get("id"),
         "workflow_source": workflow.get("source"),
@@ -1487,6 +1521,13 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
         ],
         "retrieved_sources": retrieved_sources,
         "cited_sources": cited_sources,
+        "plan_authority_retrieval_coverage": plan_authority_retrieval_coverage,
+        "plan_authority_ids_required": plan_authority_retrieval_coverage["required_ids"],
+        "plan_authority_ids_retrieved": plan_authority_retrieval_coverage["found_ids"],
+        "plan_authority_ids_missing": plan_authority_retrieval_coverage["missing_ids"],
+        "plan_authority_cited_coverage": plan_authority_cited_coverage,
+        "plan_authority_ids_cited": plan_authority_cited_coverage["found_ids"],
+        "plan_authority_ids_uncited": plan_authority_cited_coverage["missing_ids"],
         "route_required_source_coverage": route_required_source_coverage,
         "route_required_sources_found": [
             item["required_source"]
@@ -1542,6 +1583,209 @@ def compact_source_item(source: dict[str, Any]) -> dict[str, Any]:
         "source_type": source.get("source_type"),
         "document_id": source.get("document_id"),
         "statute_short": source.get("statute_short"),
+        "authority_ids": [
+            str(authority_id)
+            for authority_id in (source.get("authority_ids") or [])
+            if authority_id
+        ],
+    }
+
+
+def matter_plan_contract_status(plan: dict[str, Any]) -> dict[str, Any]:
+    errors: list[str] = []
+    if plan.get("schema_version") != 2:
+        errors.append("schema_version_not_2")
+    if not str(plan.get("plan_id") or "").startswith("matter_plan_v2_"):
+        errors.append("invalid_plan_id")
+    for field in (
+        "primary_issue",
+        "primary_label",
+        "user_role",
+        "incident_date_status",
+        "case_stage",
+        "desired_outcome",
+    ):
+        if not isinstance(plan.get(field), str) or not str(plan.get(field)).strip():
+            errors.append(f"invalid_{field}")
+    confidence = plan.get("confidence")
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        errors.append("invalid_confidence")
+    if plan.get("urgency") not in {"low", "medium", "high", "emergency"}:
+        errors.append("invalid_urgency")
+    for field in ("legal_regime", "action_pack_id", "action_pack_title"):
+        value = plan.get(field)
+        if value is not None and not isinstance(value, str):
+            errors.append(f"invalid_{field}")
+    for field in (
+        "secondary_issues",
+        "required_facts",
+        "forums",
+        "remedies",
+        "deadlines",
+        "documents",
+        "next_steps",
+        "portals",
+        "escalation",
+        "cautions",
+        "safety_flags",
+    ):
+        if not _is_string_list(plan.get(field)):
+            errors.append(f"invalid_{field}")
+
+    jurisdiction = plan.get("jurisdiction")
+    if not isinstance(jurisdiction, dict):
+        errors.append("invalid_jurisdiction")
+    else:
+        for field in ("state", "city", "forum_mentioned"):
+            value = jurisdiction.get(field)
+            if value is not None and not isinstance(value, str):
+                errors.append(f"invalid_jurisdiction_{field}")
+        if not isinstance(jurisdiction.get("needs_state"), bool):
+            errors.append("invalid_jurisdiction_needs_state")
+
+    answer_policy = plan.get("answer_policy")
+    if not isinstance(answer_policy, dict):
+        errors.append("invalid_answer_policy")
+    else:
+        for field in ("required_primary_owner", "fallback_owner"):
+            if not isinstance(answer_policy.get(field), str) or not str(answer_policy.get(field)).strip():
+                errors.append(f"invalid_answer_policy_{field}")
+        for field in ("allow_freeform_llm", "requires_reviewed_contract"):
+            if not isinstance(answer_policy.get(field), bool):
+                errors.append(f"invalid_answer_policy_{field}")
+
+    authority_ledger = plan.get("authority_ledger")
+    if not isinstance(authority_ledger, list):
+        errors.append("invalid_authority_ledger")
+    else:
+        if not authority_ledger:
+            errors.append("empty_authority_ledger")
+        for index, entry in enumerate(authority_ledger):
+            if not _valid_authority_ledger_entry(entry):
+                errors.append(f"invalid_authority_ledger_entry_{index}")
+        if not any(_is_enforceable_plan_obligation(entry) for entry in authority_ledger):
+            errors.append("missing_enforceable_authority_obligation")
+
+    retrieval_sources = plan.get("retrieval_sources")
+    if not isinstance(retrieval_sources, list):
+        errors.append("invalid_retrieval_sources")
+    else:
+        if not retrieval_sources:
+            errors.append("empty_retrieval_sources")
+        for index, source in enumerate(retrieval_sources):
+            if not _valid_retrieval_source(source):
+                errors.append(f"invalid_retrieval_source_{index}")
+    return {"valid": not errors, "errors": errors}
+
+
+def matter_plan_required_for_eval(
+    eval_row: dict[str, Any],
+    observed_route: dict[str, Any],
+) -> bool:
+    expected_category = str(eval_row.get("expected_category") or "").strip().lower()
+    if expected_category:
+        return expected_category not in {"off_topic", "non_legal"}
+    return observed_route.get("category") != "off_topic"
+
+
+def _is_string_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _valid_authority_ledger_entry(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    nullable_strings = ("canonical_name", "act", "section", "source_pack_id", "note")
+    if not isinstance(entry.get("source"), str) or not str(entry.get("source")).strip():
+        return False
+    if not isinstance(entry.get("authority_id"), str) or not str(entry.get("authority_id")).strip():
+        return False
+    if any(entry.get(field) is not None and not isinstance(entry.get(field), str) for field in nullable_strings):
+        return False
+    if entry.get("identity_status") not in {"canonical", "provisional"}:
+        return False
+    if not _is_string_list(entry.get("required_anchor_patterns")):
+        return False
+    if not isinstance(entry.get("claim_type"), str):
+        return False
+    if entry.get("priority") not in {"must_cite", "conditional", "background"}:
+        return False
+    if not isinstance(entry.get("must_cite"), bool) or not isinstance(entry.get("conditional"), bool):
+        return False
+    return (entry.get("priority") == "must_cite") == entry.get("must_cite")
+
+
+def _is_enforceable_plan_obligation(entry: Any) -> bool:
+    return (
+        _valid_authority_ledger_entry(entry)
+        and entry.get("priority") == "must_cite"
+        and entry.get("must_cite") is True
+        and bool(str(entry.get("authority_id") or "").strip())
+    )
+
+
+def _valid_retrieval_source(source: Any) -> bool:
+    if not isinstance(source, dict):
+        return False
+    if not isinstance(source.get("source_pack_id"), str) or not str(source.get("source_pack_id")).strip():
+        return False
+    if not isinstance(source.get("search_query"), str) or not str(source.get("search_query")).strip():
+        return False
+    if isinstance(source.get("priority"), bool) or not isinstance(source.get("priority"), (int, float)):
+        return False
+    return all(
+        _is_string_list(source.get(field))
+        for field in ("title_patterns", "doc_ids", "anchor_patterns", "source_types")
+    )
+
+
+def matter_plan_authority_coverage(
+    plan: dict[str, Any],
+    source_items: list[dict[str, Any]],
+    *,
+    query: str = "",
+) -> dict[str, Any]:
+    """Measure every activated MatterPlan authority obligation by stable ID."""
+    required_entries = [
+        item
+        for item in (plan.get("authority_ledger") or [])
+        if isinstance(item, dict)
+        and item.get("authority_id")
+        and item.get("priority") != "background"
+        and (
+            item.get("must_cite") is True
+            or (
+                item.get("conditional") is True
+                and runtime_should_enforce_requirement(
+                    str(item.get("source") or ""),
+                    "conditional_authority",
+                    query,
+                )
+            )
+        )
+    ]
+    required_ids = sorted({str(item["authority_id"]) for item in required_entries})
+    present_ids = {
+        str(authority_id)
+        for item in source_items
+        if isinstance(item, dict)
+        for authority_id in (item.get("authority_ids") or [])
+        if authority_id
+    }
+    found_ids = [authority_id for authority_id in required_ids if authority_id in present_ids]
+    missing_ids = [authority_id for authority_id in required_ids if authority_id not in present_ids]
+    sources_by_id = {
+        str(item["authority_id"]): str(item.get("source") or "")
+        for item in required_entries
+    }
+    return {
+        "required_ids": required_ids,
+        "found_ids": found_ids,
+        "missing_ids": missing_ids,
+        "missing_sources": [sources_by_id[authority_id] for authority_id in missing_ids],
+        "coverage": (len(found_ids) / len(required_ids)) if required_ids else None,
+        "ok": not missing_ids,
+        "applicable": bool(required_ids),
     }
 
 
@@ -3048,6 +3292,8 @@ def product_pass(row: dict[str, Any]) -> bool:
     """
     if row.get("refused") or row.get("error"):
         return False
+    if row.get("matter_plan_required") and not (row.get("matter_plan_contract") or {}).get("valid"):
+        return False
     if row.get("relevance_verdict") != "ok":
         return False
     if (row.get("legal_safety") or {}).get("hard_fail"):
@@ -3059,6 +3305,10 @@ def product_pass(row: dict[str, Any]) -> bool:
     if row.get("route_required_sources_missing"):
         return False
     if row.get("route_required_sources_cited_missing"):
+        return False
+    if row.get("plan_authority_ids_missing"):
+        return False
+    if row.get("plan_authority_ids_uncited"):
         return False
     if row.get("source_gap_visible"):
         return False
@@ -3076,6 +3326,10 @@ def _rows_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "act_cited_scored": 0,
             "route_source_gaps": 0,
             "route_source_citation_gaps": 0,
+            "plan_authority_rows": 0,
+            "plan_authority_retrieval_gaps": 0,
+            "plan_authority_citation_gaps": 0,
+            "matter_plan_contract_failures": 0,
             "visible_source_gaps": 0,
             "refused": 0,
             "errors": 0,
@@ -3096,6 +3350,17 @@ def _rows_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "act_cited_scored": len(scored_cited),
         "route_source_gaps": sum(1 for r in rows if r.get("route_required_sources_missing")),
         "route_source_citation_gaps": sum(1 for r in rows if r.get("route_required_sources_cited_missing")),
+        "plan_authority_rows": sum(
+            1 for r in rows
+            if (r.get("plan_authority_retrieval_coverage") or {}).get("applicable")
+        ),
+        "plan_authority_retrieval_gaps": sum(1 for r in rows if r.get("plan_authority_ids_missing")),
+        "plan_authority_citation_gaps": sum(1 for r in rows if r.get("plan_authority_ids_uncited")),
+        "matter_plan_contract_failures": sum(
+            1 for r in rows
+            if r.get("matter_plan_required")
+            and not (r.get("matter_plan_contract") or {}).get("valid")
+        ),
         "visible_source_gaps": sum(1 for r in rows if r.get("source_gap_visible")),
         "refused": sum(1 for r in rows if r.get("refused")),
         "errors": sum(1 for r in rows if r.get("error")),
@@ -3118,8 +3383,8 @@ def _append_slice_table(
         "",
         f"### {title}",
         "",
-        "| slice | rows | product pass | relevance ok | safety hard fails | expected Act cited | route retrieval gaps | route citation gaps | visible source gaps | refused | errors | p90 |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| slice | rows | product pass | relevance ok | safety hard fails | expected Act cited | route retrieval gaps | route citation gaps | plan retrieval gaps | plan citation gaps | plan contract fails | visible source gaps | refused | errors | p90 |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ])
     items = sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0]))
     if limit is not None:
@@ -3134,11 +3399,13 @@ def _append_slice_table(
         lines.append(
             f"| {_clip(name, 60)} | {summary['rows']} | {summary['product_pass']}/{summary['rows']} | "
             f"{summary['relevance_ok']}/{summary['rows']} | {summary['safety_hard_fails']} | "
-            f"{act_cited} | {summary['route_source_gaps']} | {summary['route_source_citation_gaps']} | {summary['visible_source_gaps']} | {summary['refused']} | "
+            f"{act_cited} | {summary['route_source_gaps']} | {summary['route_source_citation_gaps']} | "
+            f"{summary['plan_authority_retrieval_gaps']} | {summary['plan_authority_citation_gaps']} | "
+            f"{summary['matter_plan_contract_failures']} | {summary['visible_source_gaps']} | {summary['refused']} | "
             f"{summary['errors']} | {fmt_ms(summary['p90_total_ms'])} |"
         )
     if not items:
-        lines.append("| none | 0 | 0/0 | 0/0 | 0 | n/a | 0 | 0 | 0 | 0 | 0 | n/a |")
+        lines.append("| none | 0 | 0/0 | 0/0 | 0 | n/a | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | n/a |")
 
 
 def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
@@ -3166,6 +3433,31 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
     visible_source_gap_rows = [
         r for r in rows if r.get("source_gap_visible")
     ]
+    plan_authority_rows = [
+        r for r in rows
+        if (r.get("plan_authority_retrieval_coverage") or {}).get("applicable")
+    ]
+    plan_authority_retrieval_gaps = [
+        r for r in plan_authority_rows if r.get("plan_authority_ids_missing")
+    ]
+    plan_authority_citation_gaps = [
+        r for r in plan_authority_rows if r.get("plan_authority_ids_uncited")
+    ]
+    matter_plan_contract_failures = [
+        r for r in rows
+        if r.get("matter_plan_required")
+        and not (r.get("matter_plan_contract") or {}).get("valid")
+    ]
+    matter_plan_required_rows = [r for r in rows if r.get("matter_plan_required")]
+    plan_authority_required_count = sum(
+        len(r.get("plan_authority_ids_required") or []) for r in plan_authority_rows
+    )
+    plan_authority_retrieved_count = sum(
+        len(r.get("plan_authority_ids_retrieved") or []) for r in plan_authority_rows
+    )
+    plan_authority_cited_count = sum(
+        len(r.get("plan_authority_ids_cited") or []) for r in plan_authority_rows
+    )
     route_source_gap_kinds = Counter(
         str(item.get("kind") or "unknown")
         for r in route_source_gaps
@@ -3235,6 +3527,9 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
         f"- Unknown citation indices: {len(unknown_citation_rows)}/{len(rows)}",
         f"- Route required-source retrieval gaps: {len(route_source_gaps)}/{len(rows)}",
         f"- Route required-source citation gaps: {len(route_source_citation_gaps)}/{len(rows)}",
+        f"- MatterPlan contract valid: {len(matter_plan_required_rows) - len(matter_plan_contract_failures)}/{len(matter_plan_required_rows)} required legal rows",
+        f"- MatterPlan authority-obligation retrieval: {plan_authority_retrieved_count}/{plan_authority_required_count} authority obligations ({len(plan_authority_retrieval_gaps)} rows with gaps)",
+        f"- MatterPlan authority-obligation citation: {plan_authority_cited_count}/{plan_authority_required_count} authority obligations ({len(plan_authority_citation_gaps)} rows with gaps)",
         f"- Visible source-gap warnings: {len(visible_source_gap_rows)}/{len(rows)}",
         f"- Route source-gap kinds: {dict(route_source_gap_kinds)}",
         f"- Answer quality flags: {dict(quality_flags)}",
@@ -3290,11 +3585,36 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
         "",
         "## Product Gate Slices",
         "",
-        "Strict product pass requires: answered row, relevance ok, no legal-safety hard fail, expected Act cited when scored, no unknown citation index, no missing enforced route source, no uncited enforced route source, and no visible source-gap warning.",
+        "Strict product pass requires: answered row, relevance ok, no legal-safety hard fail, expected Act cited when scored, no unknown citation index, complete retrieved and cited MatterPlan authority obligations (canonical or activated provisional), no missing enforced route source, no uncited enforced route source, and no visible source-gap warning.",
     ])
     _append_slice_table(lines, "By Priority", rows, "product_priority")
     _append_slice_table(lines, "By Eval Family", rows, "eval_family", limit=30)
     _append_slice_table(lines, "By Expected Category", rows, "expected_category", limit=30)
+
+    lines.extend([
+        "",
+        "## MatterPlan Contract And Authority Failures",
+        "",
+        "| query | contract errors | missing retrieved authority IDs | uncited authority IDs |",
+        "| --- | --- | --- | --- |",
+    ])
+    plan_failure_rows = [
+        row for row in rows
+        if (
+            row in matter_plan_contract_failures
+            or row.get("plan_authority_ids_missing")
+            or row.get("plan_authority_ids_uncited")
+        )
+    ]
+    for row in plan_failure_rows:
+        lines.append(
+            f"| {_clip(row.get('query'), 90)} | "
+            f"{_clip(', '.join((row.get('matter_plan_contract') or {}).get('errors') or []), 80)} | "
+            f"{_clip(', '.join(row.get('plan_authority_ids_missing') or []), 100)} | "
+            f"{_clip(', '.join(row.get('plan_authority_ids_uncited') or []), 100)} |"
+        )
+    if not plan_failure_rows:
+        lines.append("| none |  |  |  |")
 
     lines.extend([
         "",

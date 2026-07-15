@@ -666,3 +666,42 @@ E9b proof:
   forest-produce dacoity, tweet charge-sheet, BOCW accident, BOCW card/no
   benefit, and Assam daayan/witch-branding violence -> `0` source gaps,
   `0` refusals.
+
+## 2026-07-15 P1B MatterPlan Authority Contract
+
+MatterPlan v2 now owns the user-visible answer gate, runtime authority-gap
+policy, and benchmark authority accounting. It is no longer sufficient for an
+event to have the right field names: a valid legal plan must contain a nonempty
+retrieval policy and a stable must-cite authority ID. The browser hides streamed
+sentences until this contract validates and hides them again on malformed or
+interrupted streams.
+
+Authority identity and satisfaction rules:
+
+- canonical IDs are stable Act-plus-section identities and do not depend on
+  query-specific retrieval anchors;
+- every explicitly listed section becomes a separate obligation, including
+  mixed BNS/IPC sources and single-statute lists such as IT Act sections;
+- known incident dates select the applicable current or legacy criminal law;
+  unknown dates require a source-backed mixed-regime obligation and caveat;
+- passage authority IDs are recomputed from exact reviewed title, anchor,
+  source type, and source-pack metadata; incoming IDs and fuzzy provisional
+  title matches are not trusted;
+- conditional authorities are enforced only when their query facts activate,
+  while records, documents, and intake facts never become missing-law gaps.
+
+Evaluation must mirror the UI, not internal retrieval state. Retrieval recall
+may inspect early passages, but citation credit, unknown-index checks, source
+ordering, procedural cited anchors, and MatterPlan cited coverage use only the
+final `sources` event shown to the user. Expected legal-query metadata controls
+the MatterPlan denominator so a legal prompt misrouted as off-topic remains a
+failure. Reports label the combined canonical and activated-provisional set as
+authority obligations.
+
+P1B proof: two final independent reviewer PASS verdicts, `195` focused tests,
+`4` rendered frontend contract tests, frontend type-check and production build,
+an integrated SSE contract, and `1,369` full API tests in `384.12s`. This closes
+plan consumption and authority-ID enforcement, not P1 as a whole. The next
+boundary is P1C: migrate the first ten high-volume/safety answer owners out of
+legacy `main.py` branches and prove exactly one primary owner plus fallback per
+supported scenario.

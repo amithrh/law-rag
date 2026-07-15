@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from apps.api.source_gap import build_source_gap_event, missing_required_authorities, should_enforce_required_source
+from dataclasses import replace
+
+from apps.api.legal_issue_plan import build_matter_plan
+from apps.api.source_gap import (
+    build_source_gap_event,
+    missing_plan_authorities,
+    missing_required_authorities,
+    should_enforce_required_source,
+)
 from apps.api.common_workflow_contracts import WorkflowTemplateResult
 from apps.api.main import _critical_route_needs_reviewed_contract, _source_gap_event_for_retrieved
 from apps.api.matter_router import MatterRoute, route_matter
@@ -43,6 +51,239 @@ def test_source_gap_does_not_fire_when_matching_source_present():
     )
 
     assert missing == []
+
+
+def test_plan_source_gap_uses_authority_ids_as_primary_key():
+    query = "online order arrived broken what to do"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    controlling = next(
+        entry for entry in plan.authority_ledger
+        if entry.act == "Consumer Protection Act 2019"
+    )
+    plan = replace(plan, authority_ledger=[controlling])
+
+    assert missing_plan_authorities(
+        plan=plan,
+        passages=[{
+            "index": 1,
+            "title": "Consumer Protection Act 2019",
+            "anchor": "consumer-protection-2019/sec-35",
+            "source_type": "bare_act",
+            "required_source_pack": "consumer_protection_2019",
+            "authority_ids": [controlling.authority_id],
+        }],
+        query=query,
+    ) == []
+
+    forged = missing_plan_authorities(
+        plan=plan,
+        passages=[{
+            "index": 1,
+            "title": "Unrelated consumer judgment",
+            "anchor": "judgment/para-10",
+            "source_type": "sc_judgment",
+            "required_source_pack": "consumer_protection_2019",
+            "authority_ids": [controlling.authority_id],
+        }],
+        query=query,
+    )
+    assert forged[0]["authority_id"] == controlling.authority_id
+
+    missing = missing_plan_authorities(
+        plan=plan,
+        passages=[{
+            "index": 1,
+            "title": "Consumer Protection Act 2019",
+            "anchor": "consumer-protection-2019/sec-34",
+            "authority_ids": [],
+        }],
+        query=query,
+    )
+    assert missing[0]["authority_id"] == controlling.authority_id
+    assert missing[0]["match_mode"] == "authority_id"
+
+
+def test_plan_source_gap_respects_plan_must_cite_policy_and_state_gap():
+    query = "office rejected my caste certificate what appeal"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    missing = missing_plan_authorities(plan=plan, passages=[], query=query)
+    missing_sources = {item["required_source"] for item in missing}
+
+    assert "Constitution Article 341 or 342 after the SC/ST category is confirmed" not in missing_sources
+    assert "state caste-certificate issuance and appeal rules" in missing_sources
+    state_gap = next(
+        item for item in missing
+        if item["required_source"] == "state caste-certificate issuance and appeal rules"
+    )
+    assert state_gap["kind"] == "state_or_local_authority_gap"
+
+    weak_metadata = missing_plan_authorities(
+        plan=plan,
+        passages=[{
+            "index": 1,
+            "title": "state caste-certificate issuance and appeal rules",
+            "anchor": "",
+            "source_type": "",
+            "text": "application record and rejection details",
+        }],
+        query=query,
+    )
+    assert any(
+        item["required_source"] == "state caste-certificate issuance and appeal rules"
+        for item in weak_metadata
+    )
+
+
+def test_plan_source_gap_recomputes_wrong_section_authority_tags():
+    query = "ICEGATE says imported goods were misdeclared and may be confiscated"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    customs = next(entry for entry in plan.authority_ledger if entry.act == "Customs Act 1962")
+    plan = replace(plan, authority_ledger=[customs])
+
+    missing = missing_plan_authorities(
+        plan=plan,
+        passages=[{
+            "index": 1,
+            "title": "Customs Act 1962",
+            "anchor": "customs-1962/sec-75",
+            "source_type": "bare_act",
+            "authority_ids": [customs.authority_id],
+        }],
+        query=query,
+    )
+
+    assert missing[0]["authority_id"] == customs.authority_id
+
+
+def test_plan_source_gap_uses_legacy_criminal_authority_for_2023_incident():
+    query = "in 2023 police arrested me for bike theft what bail can I get"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    crpc = next(
+        entry for entry in plan.authority_ledger
+        if entry.act == "Code of Criminal Procedure 1973" and entry.must_cite
+    )
+    plan = replace(plan, authority_ledger=[crpc])
+
+    valid_passage = {
+        "index": 1,
+        "title": "Code of Criminal Procedure 1973",
+        "anchor": "crpc-1973/sec-437",
+        "source_type": "bare_act",
+        "required_source_pack": "crpc_1973",
+        "authority_ids": [crpc.authority_id],
+    }
+    assert missing_plan_authorities(plan=plan, passages=[valid_passage], query=query) == []
+
+    wrong_regime = missing_plan_authorities(
+        plan=plan,
+        passages=[{
+            "index": 1,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-480",
+            "source_type": "bare_act",
+            "authority_ids": [crpc.authority_id],
+        }],
+        query=query,
+    )
+    assert wrong_regime[0]["authority_id"] == crpc.authority_id
+
+
+def test_plan_source_gap_requires_mixed_regime_authority_when_incident_date_is_unknown():
+    query = "police refused to register FIR for theft of my bike where do I go next"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    regime = next(
+        entry for entry in plan.authority_ledger
+        if entry.note == "date_dependent_regime_choose_by_incident_date"
+    )
+
+    assert regime.must_cite is True
+    missing = missing_plan_authorities(plan=plan, passages=[], query=query)
+    assert [item["authority_id"] for item in missing] == [regime.authority_id]
+
+    assert missing_plan_authorities(
+        plan=plan,
+        passages=[{
+            "index": 1,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-173",
+            "source_type": "bare_act",
+        }],
+        query=query,
+    ) == []
+
+
+def test_plan_source_gap_requires_every_explicit_composite_criminal_section():
+    query = (
+        "in 2025 girl I was dating filed rape case after we broke up saying I promised "
+        "marriage we had relationship for 2 years"
+    )
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    bns_entries = [
+        entry for entry in plan.authority_ledger
+        if entry.act == "Bharatiya Nyaya Sanhita 2023"
+    ]
+    assert [entry.section for entry in bns_entries] == ["Section 63", "Section 69"]
+    plan = replace(plan, authority_ledger=bns_entries)
+
+    missing = missing_plan_authorities(
+        plan=plan,
+        passages=[{
+            "index": 1,
+            "title": "Bharatiya Nyaya Sanhita 2023",
+            "anchor": "bns-2023/sec-63",
+            "source_type": "bare_act",
+        }],
+        query=query,
+    )
+
+    assert [item["authority_id"] for item in missing] == [bns_entries[1].authority_id]
+
+
+def test_plan_source_gap_does_not_turn_company_gst_records_into_missing_law():
+    query = "my company was struck off and GST refund is blocked how do I restore it"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    missing_sources = {
+        item["required_source"]
+        for item in missing_plan_authorities(plan=plan, passages=[], query=query)
+    }
+
+    assert "GST refund/bank operation records only after company status is addressed" not in missing_sources
+
+
+def test_plan_source_gap_enforces_activated_conditional_authority():
+    query = "sand mine in scheduled area on forest land without gram sabha recommendation"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    missing = missing_plan_authorities(plan=plan, passages=[], query=query)
+    missing_sources = {item["required_source"] for item in missing}
+
+    assert "Forest Conservation Act 1980 where forest land or forest clearance is involved" in missing_sources
+    assert not any("RFCTLARR" in source for source in missing_sources)
+
+
+def test_plan_source_gap_does_not_report_factual_intake_as_missing_law():
+    query = "my son is in jail and charge sheet not filed after 90 days what can we do"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    missing = missing_plan_authorities(plan=plan, passages=[], query=query)
+    missing_sources = {item["required_source"] for item in missing}
+
+    assert (
+        "charge-sheet filing status, extension application/order, and first remand date"
+        not in missing_sources
+    )
 
 
 def test_customs_source_gap_matching_is_query_aware():

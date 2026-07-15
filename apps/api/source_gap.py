@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from apps.api.legal_issue_plan import MatterPlan, authority_ids_for_passage
 from apps.api.customs_logic import (
     customs_assessment_issue,
     customs_classification_issue,
@@ -190,38 +191,47 @@ def build_source_gap_event(
     route_category: str,
     required_sources: list[str],
     passages: list[dict[str, Any]],
+    plan: MatterPlan | None = None,
 ) -> dict[str, Any] | None:
-    missing = missing_required_authorities(
-        required_sources=required_sources,
-        passages=passages,
-        query=query,
+    missing = (
+        missing_plan_authorities(plan=plan, passages=passages, query=query)
+        if plan is not None
+        else missing_required_authorities(
+            required_sources=required_sources,
+            passages=passages,
+            query=query,
+        )
     )
     if not missing:
         return None
 
     kinds = sorted({item["kind"] for item in missing})
     state_or_local = any(kind == "state_or_local_authority_gap" for kind in kinds)
-    high_risk = route_category in {
-        "arrest_custody_safeguard",
-        "business_contract_partnership",
-        "criminal_defence_bail",
-        "criminal_general",
-        "cyber_fraud_or_harassment",
-        "child_marriage_protection",
-        "child_custody_adoption",
-        "criminal_procedure_notice",
-        "custody_compensation",
-        "digital_platform_account",
-        "family_domestic",
-        "labour_exploitation_discrimination",
-        "manual_scavenging_safety",
-        "pmla_ed",
-        "police_fir",
-        "reproductive_rights_mtp",
-        "sexual_offence_survivor",
-        "tribal_caste_atrocity",
-        "workplace_sexual_harassment",
-    }
+    high_risk = (
+        plan.answer_policy.requires_reviewed_contract
+        if plan is not None
+        else route_category in {
+            "arrest_custody_safeguard",
+            "business_contract_partnership",
+            "criminal_defence_bail",
+            "criminal_general",
+            "cyber_fraud_or_harassment",
+            "child_marriage_protection",
+            "child_custody_adoption",
+            "criminal_procedure_notice",
+            "custody_compensation",
+            "digital_platform_account",
+            "family_domestic",
+            "labour_exploitation_discrimination",
+            "manual_scavenging_safety",
+            "pmla_ed",
+            "police_fir",
+            "reproductive_rights_mtp",
+            "sexual_offence_survivor",
+            "tribal_caste_atrocity",
+            "workplace_sexual_harassment",
+        }
+    )
     if state_or_local:
         message = (
             "I do not have every controlling state or local source needed for this route. "
@@ -252,6 +262,52 @@ def build_source_gap_event(
     }
 
 
+def missing_plan_authorities(
+    *,
+    plan: MatterPlan,
+    passages: list[dict[str, Any]],
+    query: str,
+) -> list[dict[str, Any]]:
+    """Find missing authorities using MatterPlan IDs as the primary key."""
+    present_ids = {
+        str(authority_id)
+        for passage in passages
+        if isinstance(passage, dict)
+        for authority_id in authority_ids_for_passage(
+            plan,
+            title=str(passage.get("title") or ""),
+            anchor=str(passage.get("anchor") or ""),
+            source_pack_id=passage.get("required_source_pack"),
+            source_type=passage.get("source_type"),
+        )
+        if authority_id
+    }
+    missing: list[dict[str, Any]] = []
+    for entry in plan.authority_ledger:
+        requirement_type = classify_required_source_requirement(entry.source)
+        if requirement_type == "fact_or_document_requirement":
+            continue
+        if entry.conditional:
+            if entry.note == "category_dependent_sc_article_341_vs_st_article_342":
+                continue
+            if not _should_enforce_requirement(entry.source, "conditional_authority", query):
+                continue
+        elif not entry.must_cite:
+            continue
+        if entry.authority_id and entry.authority_id in present_ids:
+            continue
+        match_mode = "authority_id"
+        missing.append({
+            "required_source": entry.source,
+            "authority_id": entry.authority_id,
+            "source_pack_id": entry.source_pack_id,
+            "identity_status": entry.identity_status,
+            "match_mode": match_mode,
+            "kind": source_gap_kind(entry.source, query=query),
+        })
+    return missing
+
+
 def missing_required_authorities(
     *,
     required_sources: list[str],
@@ -279,6 +335,13 @@ def missing_required_authorities(
 def classify_required_source_requirement(text: str) -> str:
     lower = str(text or "").strip().lower()
     if not lower:
+        return "fact_or_document_requirement"
+    if any(term in lower for term in (
+        "records only after",
+        "records only to identify",
+        "documents only after",
+        "documents only to identify",
+    )):
         return "fact_or_document_requirement"
     names_concrete_authority = (
         bool(re.search(r"\bact\b|\bcode\b|\bregulations?\b|\barticle\s+\d+", lower))
@@ -446,6 +509,11 @@ def _should_enforce_requirement(text: str, requirement_type: str, query: str) ->
         return _has_pesa_trigger_context(q) or _has_fra_trigger_context(q)
     if "pesa" in lower:
         return _has_pesa_trigger_context(q)
+    if "forest conservation act" in lower:
+        return _has(q, (
+            "forest land", "forest clearance", "forest diversion",
+            "reserved forest", "protected forest", "non-forest use",
+        ))
     if "forest rights" in lower:
         return _has_fra_trigger_context(q)
     if _has_statute_alias(lower, ("bns", "ipc")) and _has(lower, (

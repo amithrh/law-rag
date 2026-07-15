@@ -26,9 +26,11 @@ class AuthorityLedgerEntry:
     source: str
     authority_id: str | None = None
     identity_status: Literal["canonical", "provisional"] = "provisional"
+    canonical_name: str | None = None
     act: str | None = None
     section: str | None = None
     source_pack_id: str | None = None
+    required_anchor_patterns: list[str] = field(default_factory=list)
     claim_type: str = "legal_basis"
     priority: AuthorityPriority = "must_cite"
     must_cite: bool = True
@@ -77,6 +79,8 @@ class MatterPlan:
     remedies: list[str] = field(default_factory=list)
     deadlines: list[str] = field(default_factory=list)
     documents: list[str] = field(default_factory=list)
+    action_pack_id: str | None = None
+    action_pack_title: str | None = None
     next_steps: list[str] = field(default_factory=list)
     portals: list[str] = field(default_factory=list)
     escalation: list[str] = field(default_factory=list)
@@ -282,6 +286,8 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
             "retrieval_sources": [asdict(source) for source in retrieval_sources],
             "forums": forums,
             "documents": documents,
+            "action_pack_id": action_pack.id if action_pack else None,
+            "action_pack_title": action_pack.title if action_pack else None,
             "next_steps": next_steps,
             "portals": portals,
             "escalation": escalation,
@@ -312,6 +318,8 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
         remedies=[],
         deadlines=[],
         documents=documents,
+        action_pack_id=action_pack.id if action_pack else None,
+        action_pack_title=action_pack.title if action_pack else None,
         next_steps=next_steps,
         portals=portals,
         escalation=escalation,
@@ -410,14 +418,68 @@ def _bind_authority_policy(
     for entry in entries:
         source_pack_id = _matching_source_pack_id(entry, retrieval_sources)
         canonical_act = _canonical_act_from_sources(entry, retrieval_sources)
-        authority_id, identity_status = _authority_identity(entry, canonical_act)
+        matching_sources = _authority_retrieval_sources(
+            entry,
+            canonical_act=canonical_act,
+            source_pack_id=source_pack_id,
+            retrieval_sources=retrieval_sources,
+        )
+        if not matching_sources and entry.note == "date_dependent_regime_choose_by_incident_date":
+            matching_sources = _date_dependent_retrieval_sources(entry, retrieval_sources)
+        required_anchor_patterns = _dedupe([
+            anchor
+            for source in matching_sources
+            for anchor in source.anchor_patterns
+            if anchor
+        ])
+        authority_id, identity_status = _authority_identity(
+            entry,
+            canonical_act,
+        )
         bound.append(replace(
             entry,
             authority_id=authority_id,
             identity_status=identity_status,
+            canonical_name=canonical_act,
             source_pack_id=source_pack_id,
+            required_anchor_patterns=required_anchor_patterns,
         ))
     return bound
+
+
+def _authority_retrieval_sources(
+    entry: AuthorityLedgerEntry,
+    *,
+    canonical_act: str | None,
+    source_pack_id: str | None,
+    retrieval_sources: list[RetrievalSourcePlan],
+) -> list[RetrievalSourcePlan]:
+    if source_pack_id:
+        return [source for source in retrieval_sources if source.source_pack_id == source_pack_id]
+    if not canonical_act:
+        return []
+    return [
+        source
+        for source in retrieval_sources
+        if any(_legal_name(title) == canonical_act for title in source.title_patterns)
+    ]
+
+
+def _date_dependent_retrieval_sources(
+    entry: AuthorityLedgerEntry,
+    retrieval_sources: list[RetrievalSourcePlan],
+) -> list[RetrievalSourcePlan]:
+    lower_source = entry.source.lower()
+    allowed_acts = {
+        _legal_name(act)
+        for token, act, _ in _CRIMINAL_REGIME_ACTS
+        if re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", lower_source)
+    }
+    return [
+        source
+        for source in retrieval_sources
+        if any(_legal_name(title) in allowed_acts for title in source.title_patterns)
+    ]
 
 
 def _matching_source_pack_id(
@@ -465,6 +527,94 @@ def _matching_source_pack_id(
     if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
         return None
     return candidates[0][1]
+
+
+def authority_ids_for_passage(
+    plan: MatterPlan,
+    *,
+    title: str,
+    anchor: str,
+    source_pack_id: str | None = None,
+    source_type: str | None = None,
+) -> list[str]:
+    """Return plan authority IDs exactly represented by one passage."""
+    title_name = _legal_name(title)
+    anchor_lower = (anchor or "").lower()
+    matched: list[str] = []
+    for entry in plan.authority_ledger:
+        if not entry.authority_id:
+            continue
+        matching_sources = _authority_retrieval_sources(
+            entry,
+            canonical_act=entry.canonical_name,
+            source_pack_id=entry.source_pack_id,
+            retrieval_sources=plan.retrieval_sources,
+        )
+        if not matching_sources and entry.note == "date_dependent_regime_choose_by_incident_date":
+            matching_sources = _date_dependent_retrieval_sources(entry, plan.retrieval_sources)
+        allowed_titles = {
+            _legal_name(title_pattern)
+            for source in matching_sources
+            for title_pattern in source.title_patterns
+            if title_pattern
+        }
+        if entry.canonical_name:
+            allowed_titles.add(entry.canonical_name)
+        if not title_name or title_name not in allowed_titles:
+            continue
+        if source_pack_id and matching_sources and all(
+            source.source_pack_id != source_pack_id for source in matching_sources
+        ):
+            continue
+        if matching_sources and (
+            not source_type
+            or all(source_type not in source.source_types for source in matching_sources)
+        ):
+            continue
+        if entry.section and not _passage_anchor_matches_section(anchor_lower, entry.section):
+            continue
+        if (
+            not entry.section
+            and entry.required_anchor_patterns
+            and not _passage_anchor_matches_patterns(anchor_lower, entry.required_anchor_patterns)
+        ):
+            continue
+        matched.append(entry.authority_id)
+    return _dedupe(matched)
+
+
+def _passage_anchor_matches_section(anchor: str, section: str) -> bool:
+    match = re.search(
+        r"\b(?:section|sec\.?|article|order)\s+([0-9][0-9a-z()./-]*)",
+        section,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return True
+    token = match.group(1).lower().replace("(", "-").replace(")", "")
+    token = re.sub(r"[^0-9a-z-]+", "-", token).strip("-")
+    anchor_match = re.search(r"(?:sec|article|order)[-_/]?([0-9][0-9a-z-]*)", anchor)
+    if not anchor_match:
+        return False
+    anchor_token = anchor_match.group(1).lower().strip("-")
+    return anchor_token == token or anchor_token.replace("-", "") == token.replace("-", "") or (
+        "-" in token and anchor_token == token.split("-", 1)[0]
+    )
+
+
+def _passage_anchor_matches_patterns(anchor: str, patterns: list[str]) -> bool:
+    for pattern in patterns:
+        needle = pattern.lower().lstrip("/")
+        if not needle:
+            continue
+        if needle.startswith(("sec-", "article-", "order-", "rule-")):
+            if needle.endswith("-"):
+                needle = needle.rstrip("-")
+            if re.search(rf"(?:^|[/#]){re.escape(needle)}(?=@|-|__|$)", anchor):
+                return True
+        elif needle in anchor:
+            return True
+    return False
 
 
 def _normalize(text: str) -> str:
@@ -804,17 +954,25 @@ def _secondary_issues(q: str, primary: str) -> list[str]:
     return [issue for issue in _dedupe(issues) if issue != primary]
 
 
-def _authority_entry(source: str, position: int) -> AuthorityLedgerEntry:
+def _authority_entry(
+    source: str,
+    position: int,
+    *,
+    act_override: str | None = None,
+    section_override: str | None = None,
+) -> AuthorityLedgerEntry:
     lower = source.lower()
     conditional = "where" in lower or "if " in lower or "based on" in lower or "depending" in lower
-    date_dependent_regime = _is_date_dependent_regime_source(lower)
+    date_dependent_regime = not act_override and _is_date_dependent_regime_source(lower)
     return AuthorityLedgerEntry(
         source=source,
-        act=_extract_act_name(source),
-        section=_extract_section(source),
+        act=act_override or _extract_act_name(source),
+        section=section_override if act_override else _extract_section(source),
         claim_type=_claim_type(source),
-        priority="conditional" if date_dependent_regime or (conditional and position > 0) else "must_cite",
-        must_cite=False if date_dependent_regime else (not conditional or position == 0),
+        priority="must_cite" if date_dependent_regime else (
+            "conditional" if conditional and position > 0 else "must_cite"
+        ),
+        must_cite=True if date_dependent_regime else (not conditional or position == 0),
         conditional=conditional,
         note="date_dependent_regime_choose_by_incident_date" if date_dependent_regime else "derived_from_route_required_sources",
     )
@@ -822,7 +980,22 @@ def _authority_entry(source: str, position: int) -> AuthorityLedgerEntry:
 
 def _authority_entries(q: str, route: MatterRoute) -> list[AuthorityLedgerEntry]:
     entries: list[AuthorityLedgerEntry] = []
-    for position, source in enumerate(route.required_sources or []):
+    retained_position = 0
+    source_families = {
+        family
+        for source in (route.required_sources or [])
+        if (family := _criminal_source_regime_family(source)) is not None
+    }
+    has_separate_regime_requirements = {"current", "legacy"} <= source_families
+    for source in route.required_sources or []:
+        source_family = _criminal_source_regime_family(source)
+        if has_separate_regime_requirements and not _source_family_matches_regime(
+            source_family,
+            route.legal_regime,
+        ):
+            continue
+        position = retained_position
+        retained_position += 1
         normalized_source = source
         lower = source.lower()
         if route.label == "Caste certificate rejection / appeal":
@@ -847,15 +1020,132 @@ def _authority_entries(q: str, route: MatterRoute) -> list[AuthorityLedgerEntry]
                     continue
             elif lower.startswith("right to information act 2005"):
                 normalized_source = "Right to Information Act 2005 Section 6 for the application record and written reasons"
-        entries.append(_authority_entry(normalized_source, position))
+        selected_acts = _selected_criminal_regime_acts(
+            normalized_source,
+            route.legal_regime,
+        )
+        if selected_acts:
+            entries.extend(
+                _authority_entry(
+                    normalized_source,
+                    position,
+                    act_override=act,
+                    section_override=section,
+                )
+                for act in selected_acts
+                for section in _selected_criminal_sections(normalized_source, act)
+            )
+        else:
+            if _is_date_dependent_regime_source(normalized_source.lower()):
+                entries.append(_authority_entry(normalized_source, position))
+                continue
+            act = _extract_act_name(normalized_source)
+            sections = _extract_sections(normalized_source)
+            entries.extend(
+                _authority_entry(
+                    normalized_source,
+                    position,
+                    act_override=act,
+                    section_override=section,
+                )
+                for section in sections
+            )
     return entries
+
+
+def _criminal_source_regime_family(source: str) -> str | None:
+    lower = source.lower()
+    has_current = any(
+        re.search(rf"(?<![a-z0-9]){token}(?![a-z0-9])", lower)
+        for token in ("bns", "bnss", "bsa")
+    )
+    has_legacy = any(
+        re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", lower)
+        for token in ("ipc", "crpc", "evidence act")
+    )
+    if has_current and has_legacy:
+        return "mixed"
+    if has_current:
+        return "current"
+    if has_legacy:
+        return "legacy"
+    return None
+
+
+def _source_family_matches_regime(source_family: str | None, legal_regime: str | None) -> bool:
+    if source_family in {None, "mixed"}:
+        return True
+    if legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident":
+        return source_family == "legacy"
+    if legal_regime == "current_bns_bnss_bsa_for_post_2024_incident":
+        return source_family == "current"
+    return True
+
+
+_CRIMINAL_REGIME_ACTS = (
+    ("bns", "Bharatiya Nyaya Sanhita 2023", "current"),
+    ("bnss", "Bharatiya Nagarik Suraksha Sanhita 2023", "current"),
+    ("bsa", "Bharatiya Sakshya Adhiniyam 2023", "current"),
+    ("ipc", "Indian Penal Code 1860", "legacy"),
+    ("crpc", "Code of Criminal Procedure 1973", "legacy"),
+    ("evidence act", "Indian Evidence Act 1872", "legacy"),
+)
+
+
+def _selected_criminal_regime_acts(source: str, legal_regime: str | None) -> list[str]:
+    if legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident":
+        selected_regime = "legacy"
+    elif legal_regime == "current_bns_bnss_bsa_for_post_2024_incident":
+        selected_regime = "current"
+    else:
+        return []
+    lower = source.lower()
+    present_regimes = {
+        regime
+        for token, _, regime in _CRIMINAL_REGIME_ACTS
+        if re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", lower)
+    }
+    if present_regimes != {"current", "legacy"}:
+        return []
+    return _dedupe([
+        act
+        for token, act, regime in _CRIMINAL_REGIME_ACTS
+        if regime == selected_regime
+        and re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", lower)
+    ])
+
+
+def _selected_criminal_sections(source: str, act: str) -> list[str | None]:
+    token = {
+        "Bharatiya Nyaya Sanhita 2023": "bns",
+        "Bharatiya Nagarik Suraksha Sanhita 2023": "bnss",
+        "Bharatiya Sakshya Adhiniyam 2023": "bsa",
+        "Indian Penal Code 1860": "ipc",
+        "Code of Criminal Procedure 1973": "crpc",
+        "Indian Evidence Act 1872": "evidence act",
+    }.get(act)
+    if not token:
+        return [None]
+    match = re.search(
+        rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])(?:\s+(?:18|19|20)\d{{2}})?\s+(?:sections?|sec\.?)\s+"
+        r"([0-9][0-9a-z()./-]*(?:(?:\s*[,/&]\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)[0-9][0-9a-z()./-]*)*)",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return [None]
+    section_tokens = re.findall(
+        r"[0-9][0-9a-z]*(?:\([0-9a-z]+\))*",
+        match.group(1),
+        flags=re.IGNORECASE,
+    )
+    return [f"Section {token}" for token in section_tokens if token]
 
 
 def _is_date_dependent_regime_source(lower_source: str) -> bool:
     has_new_code = any(term in lower_source for term in ("bnss", "bns", "bsa"))
     has_old_code = any(term in lower_source for term in ("crpc", "ipc", "evidence act"))
-    has_date_language = "incident date" in lower_source or "based on" in lower_source or "depending" in lower_source
-    return has_new_code and has_old_code and has_date_language
+    return has_new_code and has_old_code
 
 
 def _extract_act_name(source: str) -> str | None:
@@ -863,6 +1153,11 @@ def _extract_act_name(source: str) -> str | None:
     if _is_date_dependent_regime_source(lower):
         return "date-dependent criminal regime"
     acronym_acts = (
+        ("bnss", "Bharatiya Nagarik Suraksha Sanhita 2023"),
+        ("bns", "Bharatiya Nyaya Sanhita 2023"),
+        ("bsa", "Bharatiya Sakshya Adhiniyam 2023"),
+        ("crpc", "Code of Criminal Procedure 1973"),
+        ("ipc", "Indian Penal Code 1860"),
         ("pwdva", "Protection of Women from Domestic Violence Act 2005"),
         ("pesa", "PESA Act 1996"),
         ("rfctlarr", "RFCTLARR Act 2013"),
@@ -886,14 +1181,26 @@ def _extract_act_name(source: str) -> str | None:
 
 
 def _extract_section(source: str) -> str | None:
-    match = re.search(
-        r"\b(?:section|sec\.?|article|order)\s+([0-9][0-9A-Za-z()./-]*)",
+    return _extract_sections(source)[0]
+
+
+def _extract_sections(source: str) -> list[str | None]:
+    sections: list[str] = []
+    for match in re.finditer(
+        r"\b(section|sec\.?|article|order)s?\s+"
+        r"([0-9][0-9a-z()./-]*(?:(?:\s*[,/&]\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)[0-9][0-9a-z()./-]*)*)",
         source,
         flags=re.IGNORECASE,
-    )
-    if not match:
-        return None
-    return match.group(0).strip()
+    ):
+        kind = match.group(1).lower().rstrip(".")
+        label = "Article" if kind == "article" else "Order" if kind == "order" else "Section"
+        tokens = re.findall(
+            r"[0-9][0-9a-z]*(?:\([0-9a-z]+\))*",
+            match.group(2),
+            flags=re.IGNORECASE,
+        )
+        sections.extend(f"{label} {token}" for token in tokens if token)
+    return _dedupe(sections) or [None]
 
 
 def _claim_type(source: str) -> str:
@@ -935,5 +1242,6 @@ __all__ = [
     "MatterPlan",
     "REVIEWED_CONTRACT_REQUIRED_CATEGORIES",
     "RetrievalSourcePlan",
+    "authority_ids_for_passage",
     "build_matter_plan",
 ]

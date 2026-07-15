@@ -49,6 +49,7 @@ from apps.api.llm import (
 from apps.api.legal_issue_plan import (
     REVIEWED_CONTRACT_REQUIRED_CATEGORIES,
     MatterPlan,
+    authority_ids_for_passage,
     build_matter_plan,
 )
 from apps.api.matter_router import MatterRoute, route_matter, route_matter_trace
@@ -213,11 +214,24 @@ class AnswerRequest(BaseModel):
     skip_nli: bool = False
 
 
-def _make_passages(retrieved: list[RetrievedChunk], n: int) -> tuple[list[dict], dict[int, str]]:
+def _make_passages(
+    retrieved: list[RetrievedChunk],
+    n: int,
+    *,
+    plan: MatterPlan | None = None,
+) -> tuple[list[dict], dict[int, str]]:
     """Return (passages-for-prompt, idx-to-passage-text-map)."""
     passages: list[dict] = []
     idx_map: dict[int, str] = {}
     for i, h in enumerate(retrieved[:n], start=1):
+        required_source_pack = h.metadata.get("_required_source_pack")
+        authority_ids = authority_ids_for_passage(
+            plan,
+            title=h.title,
+            anchor=h.anchor,
+            source_pack_id=required_source_pack,
+            source_type=h.source_type,
+        ) if plan else []
         passages.append({
             "index": i,
             "text": h.text,
@@ -229,8 +243,9 @@ def _make_passages(retrieved: list[RetrievedChunk], n: int) -> tuple[list[dict],
             "court": h.court,
             "citation": h.citation,
             "statute_short": h.statute_short,
-            "required_source_pack": h.metadata.get("_required_source_pack"),
+            "required_source_pack": required_source_pack,
             "required_source_priority": h.metadata.get("_required_source_priority"),
+            "authority_ids": authority_ids,
         })
         idx_map[i] = h.text
     return passages, idx_map
@@ -564,6 +579,8 @@ def _initial_route_events(route: MatterRoute, plan: MatterPlan | None, query: st
 def _critical_route_needs_reviewed_contract(
     route: MatterRoute,
     workflow_result: WorkflowTemplateResult | None,
+    *,
+    plan: MatterPlan | None = None,
 ) -> bool:
     """Launch guard: critical routes cannot be owned by freeform LLM fallback.
 
@@ -572,7 +589,12 @@ def _critical_route_needs_reviewed_contract(
     intake and legal-aid handoff instead of letting legacy templates or the LLM
     own the legal path.
     """
-    if str(route.category or "").lower() not in _LAUNCH_CRITICAL_LLM_GUARD_ROUTES:
+    requires_reviewed_contract = (
+        plan.answer_policy.requires_reviewed_contract
+        if plan is not None
+        else str(route.category or "").lower() in _LAUNCH_CRITICAL_LLM_GUARD_ROUTES
+    )
+    if not requires_reviewed_contract:
         return False
     return not workflow_contract_preempts_legacy(workflow_result)
 
@@ -601,14 +623,16 @@ def _source_gap_event_for_retrieved(
     route: MatterRoute,
     retrieved: list[RetrievedChunk],
     top_k: int,
+    plan: MatterPlan | None = None,
 ) -> dict | None:
     filtered = _filter_state_specific_source_mismatches(query, retrieved) if retrieved else []
-    passages, _ = _make_passages(filtered, top_k)
+    passages, _ = _make_passages(filtered, top_k, plan=plan)
     return build_source_gap_event(
         query=query,
         route_category=route.category,
         required_sources=route.required_sources or [],
         passages=passages,
+        plan=plan,
     )
 
 
@@ -25226,6 +25250,7 @@ async def answer(req: AnswerRequest):
             route=route,
             retrieved=[],
             top_k=req.top_k,
+            plan=issue_plan,
         )
         async def empty():
             for ev in _initial_route_events(route, issue_plan, req.q):
@@ -25274,6 +25299,7 @@ async def answer(req: AnswerRequest):
             route=route,
             retrieved=retrieved,
             top_k=req.top_k,
+            plan=issue_plan,
         )
         async def degraded():
             for ev in _initial_route_events(route, issue_plan, req.q):
@@ -25308,6 +25334,7 @@ async def answer(req: AnswerRequest):
             route=route,
             retrieved=retrieved,
             top_k=req.top_k,
+            plan=issue_plan,
         )
         async def low_coverage():
             for ev in _initial_route_events(route, issue_plan, req.q):
@@ -25353,6 +25380,7 @@ async def answer(req: AnswerRequest):
                 route=route,
                 retrieved=retrieved,
                 top_k=req.top_k,
+                plan=issue_plan,
             )
             async def low_dense():
                 for ev in _initial_route_events(route, issue_plan, req.q):
@@ -25391,7 +25419,7 @@ async def answer(req: AnswerRequest):
         limit=req.top_k,
         preferred_top_n=settings.required_source_pack_preferred_top_n,
     )
-    passages, idx_map = _make_passages(prompt_retrieved, req.top_k)
+    passages, idx_map = _make_passages(prompt_retrieved, req.top_k, plan=issue_plan)
 
     # Build prompt
     system = load_answer_prompt()
@@ -25410,8 +25438,13 @@ async def answer(req: AnswerRequest):
         route_category=route.category,
         required_sources=route.required_sources or [],
         passages=passages,
+        plan=issue_plan,
     )
-    critical_contract_gap = _critical_route_needs_reviewed_contract(route, workflow_result_for_template)
+    critical_contract_gap = _critical_route_needs_reviewed_contract(
+        route,
+        workflow_result_for_template,
+        plan=issue_plan,
+    )
 
     # Coverage chip — sent up front so the UI can render bounds immediately
     seen_sources = set()
@@ -25435,7 +25468,8 @@ async def answer(req: AnswerRequest):
             {"index": p["index"], "anchor": p["anchor"], "title": p["title"],
              "as_at": p["as_at"], "court": p["court"], "citation": p["citation"],
              "source_type": p.get("source_type"), "document_id": p.get("document_id"),
-             "statute_short": p.get("statute_short")}
+             "statute_short": p.get("statute_short"),
+             "authority_ids": p.get("authority_ids") or []}
             for p in passages
         ])}
         yield workflow_event
@@ -25875,6 +25909,7 @@ async def answer(req: AnswerRequest):
                     "source_type": p.get("source_type"),
                     "document_id": p.get("document_id"),
                     "statute_short": p.get("statute_short"),
+                    "authority_ids": p.get("authority_ids") or [],
                 }
                 for p in passages
             ])}
@@ -26027,6 +26062,7 @@ async def answer(req: AnswerRequest):
                     "source_type": p.get("source_type"),
                     "document_id": p.get("document_id"),
                     "statute_short": p.get("statute_short"),
+                    "authority_ids": p.get("authority_ids") or [],
                 }
                 for p in passages
             ])}
