@@ -26,6 +26,55 @@ jobs:
         run: PYTHONPATH=. uv run python -m compileall -q apps/api scripts
       - name: Deterministic API regression suite
         run: PYTHONPATH=. uv run pytest apps/api/tests -m "not needs_stack" -q
+      - name: Start Docker-backed Postgres schema
+        run: >-
+          docker compose --env-file .env.example
+          -f infra/docker-compose.yml
+          up -d --wait postgres
+      - name: Seed deterministic smoke corpus
+        run: >-
+          docker compose --env-file .env.example
+          -f infra/docker-compose.yml
+          exec -T postgres psql -U lawrag -d lawrag
+          -f /dev/stdin < infra/postgres/ci-seed.sql
+      - name: Smoke test API startup and database health
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_HOST_PORT: "5433"
+          POSTGRES_DB: lawrag
+          POSTGRES_USER: lawrag
+          POSTGRES_PASSWORD: change-me-locally
+          PREWARM_MODELS_ON_STARTUP: "false"
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. uv run uvicorn apps.api.main:app \
+            --host 127.0.0.1 --port 8056 >/tmp/law-rag-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:8056/healthz >/tmp/law-rag-health.json; then
+              python - <<'PY'
+          import json
+
+          with open("/tmp/law-rag-health.json", encoding="utf-8") as handle:
+              health = json.load(handle)
+          assert health["status"] == "ok", health
+          assert health["chunks"] == 1, health
+          assert health["documents"] == 1, health
+          PY
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/law-rag-api.log
+          exit 1
+      - name: Show Docker logs on failure
+        if: failure()
+        run: >-
+          docker compose --env-file .env.example
+          -f infra/docker-compose.yml
+          logs postgres
 
   compose:
     name: Production compose contract

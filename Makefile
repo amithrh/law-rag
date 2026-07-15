@@ -8,8 +8,8 @@ ENVFILE    := $(ROOT)/.env
 UV         ?= uv
 
 .PHONY: help env up down restart logs ps doctor psql redis-cli pull-models \
-        bench-day0 ingest-slice eval clean nuke sync test-api test-workflows \
-        typecheck-web verify api-dev web-dev corpus-manifest
+        bench-day0 clean nuke sync test-api test-workflows test-eval-gates \
+        typecheck-web verify api-dev web-dev corpus-manifest seed-ci-corpus
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -18,11 +18,11 @@ env: ## Copy .env.example -> .env if missing.
 	@test -f $(ENVFILE) || (cp $(ROOT)/.env.example $(ENVFILE) && echo "Created .env from .env.example — edit secrets before running stack.")
 	@test -f $(ENVFILE) && echo ".env present."
 
-up: env ## Start the data plane (postgres, redis, ollama, tei, minio).
+up: env ## Start the Mac-dev data plane (postgres, redis, ollama, minio).
 	$(COMPOSE) up -d
 	@echo ""
-	@echo "Stack started. First run downloads TEI model (~2 GB) — watch: docker logs -f lawrag-tei"
-	@echo "Then run: make pull-models  (Ollama LLM pulls)"
+	@echo "Stack started. Mac dev uses the Ollama container for LLMs and embeddings."
+	@echo "Then run: make pull-models  (Ollama model pulls)"
 	@echo "Then run: make doctor       (health check)"
 
 down: ## Stop services (keeps volumes).
@@ -47,7 +47,7 @@ psql: ## Open a psql shell against the law-rag db.
 redis-cli: ## Open a redis-cli shell.
 	docker exec -it lawrag-redis redis-cli
 
-pull-models: ## Pull Ollama LLMs (TEI auto-pulls on container start).
+pull-models: ## Pull LLM and embedding models into the Mac-dev Ollama container.
 	@bash $(ROOT)/scripts/pull-models.sh
 
 sync: ## Install Python development dependencies from uv.lock.
@@ -58,6 +58,12 @@ test-api: ## Run the FastAPI/API regression suite.
 
 test-workflows: ## Run deterministic answer-owner and authority-contract checks.
 	PYTHONPATH=. $(UV) run pytest apps/api/tests/test_common_workflow_contracts.py -q
+
+test-eval-gates: ## Test eval scoring, holdout guards, and substance-oracle contracts.
+	PYTHONPATH=. $(UV) run pytest \
+		apps/api/tests/test_eval_common_user_gate.py \
+		apps/api/tests/test_launch_holdout_gate.py \
+		apps/api/tests/test_substance_oracle_eval.py -q
 
 typecheck-web: ## Type-check the Next.js frontend.
 	cd $(ROOT)/apps/web && npm ci && npm run type-check
@@ -75,14 +81,13 @@ web-dev: ## Run the web app locally on http://127.0.0.1:3000.
 corpus-manifest: ## Write a DB-backed corpus/runtime snapshot to reports/.
 	PYTHONPATH=. $(UV) run python scripts/corpus_manifest.py --output reports/corpus-manifest.json
 
+seed-ci-corpus: env ## Load one synthetic row for clean-clone/API smoke tests only.
+	$(COMPOSE) up -d --wait postgres
+	$(COMPOSE) exec -T postgres psql -U lawrag -d lawrag \
+		-f /dev/stdin < $(ROOT)/infra/postgres/ci-seed.sql
+
 bench-day0: ## Run Day-0 model-dependent benches (Q1 verifier, Q3 embedding, Q4 reranker, Q2 HNSW). Requires stack up + models pulled.
 	@bash $(ROOT)/scripts/bench-day0.sh
-
-ingest-slice: ## Ingest the slice corpus (SC + selected common-public acts + Tier-A HCs). Days 3-7 work.
-	@echo "Not yet implemented — placeholder for Days 3-7."
-
-eval: ## Run golden-set eval and dump JSON to eval/results/.
-	@echo "Not yet implemented — placeholder for Days 14-15."
 
 clean: ## Stop services and remove volumes (DANGEROUS — wipes data).
 	@echo "This will delete all postgres data, model caches, and MinIO contents."

@@ -4,11 +4,11 @@
 
 Status: not production ready.
 
-The current worktree is dirty. The deterministic API gates are green, but the
-product is still not launch-ready: it needs a fresh independent holdout run,
-manual legal-quality review, and the operational/privacy gates below. Its
-architecture still contains interim workflow ownership and source-pack
-arbitration that must move into declarative MatterPlans.
+The recovery baseline is committed locally. The deterministic API gates are
+green, but the product is still not launch-ready: remote CI, a fresh independent
+holdout run, manual legal-quality review, and the operational/privacy gates
+below remain open. Its architecture still contains interim workflow ownership
+and source-pack arbitration that must move into declarative MatterPlans.
 
 P0 ownership baseline, 2026-07-11:
 
@@ -30,6 +30,11 @@ P0 ownership baseline, 2026-07-11:
   and an aggregate corpus manifest all pass. The manifest records `747,574`
   active chunks and `26,270` documents; only `5,779` documents are currently
   provenance-verified, so P2 provenance remains open.
+- The P0 independent review found the clean-clone corpus/CI smoke and startup
+  documentation were incomplete. The follow-up adds an idempotent synthetic
+  one-document seed and verifies a disposable pgvector schema plus FastAPI
+  `/healthz` returns exactly `1` document and `1` chunk. The fixture is marked
+  non-authoritative and is not legal corpus data.
 - This is a regression result, not launch evidence. A fresh 500-prompt
   human-style evaluation, independent legal-quality review, and the operational
   release gates remain required before any production claim.
@@ -72,9 +77,9 @@ because a focused prompt slice passes.
   critical LLM-owned rows now fail `scripts/audit_answer_ownership.py` unless
   an explicit review run uses `--allow-fail`.
 - [x] Add non-interactive CI for API tests, frontend type-check, and syntax
-  checks. The deterministic API suite is green locally as of 2026-07-11; CI
-  still needs a clean committed baseline and a Docker-backed API smoke test
-  before it can count as release evidence.
+  checks, plus a Docker-backed pgvector schema, synthetic seed, and `/healthz`
+  API startup smoke. A remote green workflow run is still required before P0
+  exit.
 - [x] Update README and Makefile to match the real implementation; remove stale
   "pre-implementation" claims and placeholder eval commands.
 - [x] Create `scripts/corpus_manifest.py`, an aggregate-only corpus/runtime

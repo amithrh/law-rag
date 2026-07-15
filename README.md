@@ -21,14 +21,18 @@ cd apps/web && npm ci && cd ../..
 cp .env.example .env
 $EDITOR .env  # set POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD, etc.
 
-# 3. Start Postgres, Redis, Ollama, and MinIO
+# 3. Start Postgres, Redis, the Ollama container, and MinIO
 make up
-# Mac development uses host-side Ollama embeddings; Linux production uses TEI.
+# Mac development uses the Ollama container; Linux production uses TEI.
 
-# 4. Pull the configured local Ollama models
+# 4. Pull the configured Ollama models into that container
 make pull-models
 
-# 5. Verify data-plane dependencies, then run the API and web app in separate terminals
+# 5. For a clean-clone startup smoke only, load the synthetic one-row fixture.
+#    It is not legal content and cannot be used to evaluate answer quality.
+make seed-ci-corpus
+
+# 6. Verify data-plane dependencies, then run the API and web app in separate terminals
 make doctor
 make api-dev
 make web-dev
@@ -38,11 +42,17 @@ The API listens on `http://127.0.0.1:8000`; the web app listens on
 `http://127.0.0.1:3000`. Set `NEXT_PUBLIC_API_BASE` when the web app should use
 another API origin.
 
+The real legal corpus is deliberately not stored in Git. `make seed-ci-corpus`
+only proves schema and API startup from a clean clone. Reconstructing a reviewed,
+provenance-verified legal corpus from authority records remains a P2 production
+gate; do not treat the synthetic fixture as a usable product corpus.
+
 ## Verification
 
 ```bash
 make test-workflows    # deterministic owner/source-contract suite
 make test-api          # full FastAPI regression suite
+make test-eval-gates   # eval scoring and holdout guard tests
 make typecheck-web     # TypeScript check
 make corpus-manifest   # aggregate DB/runtime/provenance snapshot
 ```
