@@ -349,18 +349,29 @@ async def _insert_act(conn: asyncpg.Connection, meta: dict, chunks: list) -> int
 async def _upsert_extra_section_chunk(conn: asyncpg.Connection, spec: dict) -> int:
     embedding, embedding_sparse = _embed_extra_section_text(spec["text"])
     source_hash = hashlib.sha256(spec["source_url"].encode()).hexdigest()
+    source_type = spec.get("source_type", "bare_act")
+    origin = spec.get("origin", "indiacode")
+    manual_backfill = spec.get("manual_section_backfill", True)
+    text_is_verbatim = spec.get("text_is_verbatim", source_type == "bare_act")
     source_id = await conn.fetchval(
         """
         INSERT INTO sources (source_type, origin, url, canonical_url_hash, metadata)
-        VALUES ('bare_act', 'indiacode', $1, $2, $3)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (canonical_url_hash) DO UPDATE
           SET source_type = EXCLUDED.source_type,
+              origin = EXCLUDED.origin,
               metadata = EXCLUDED.metadata
         RETURNING id
         """,
+        source_type,
+        origin,
         spec["source_url"],
         source_hash,
-        json.dumps({"slug": spec["slug"], "manual_section_backfill": True}),
+        json.dumps({
+            "slug": spec["slug"],
+            "manual_section_backfill": manual_backfill,
+            "text_is_verbatim": text_is_verbatim,
+        }),
     )
     doc_id = await conn.fetchval("SELECT id FROM documents WHERE doc_id = $1", spec["slug"])
     if doc_id is None:
@@ -376,14 +387,19 @@ async def _upsert_extra_section_chunk(conn: asyncpg.Connection, spec: dict) -> i
             spec["title"],
             int(spec["slug"].split("-")[-1]),
             spec["subject_area"],
-            json.dumps({"source_url": spec["source_url"], "manual_section_backfill": True}),
+            json.dumps({
+                "source_url": spec["source_url"],
+                "manual_section_backfill": manual_backfill,
+                "text_is_verbatim": text_is_verbatim,
+            }),
         )
 
     metadata = {
         "section_no": spec["section_no"],
         "section_title": spec["section_title"],
         "duplicate_index": 0,
-        "manual_section_backfill": True,
+        "manual_section_backfill": manual_backfill,
+        "text_is_verbatim": text_is_verbatim,
     }
     existing_chunk_id = await conn.fetchval(
         """
@@ -403,16 +419,18 @@ async def _upsert_extra_section_chunk(conn: asyncpg.Connection, spec: dict) -> i
             """
             UPDATE chunks
             SET subject_area = $1,
+                source_type = $2,
                 paragraph_no = NULL,
-                token_count = $2,
-                text = $3,
+                token_count = $3,
+                text = $4,
                 chunk_strategy = 'section',
-                embedding = $4::halfvec,
-                embedding_sparse = $5::jsonb,
-                metadata = $6
-            WHERE id = $7
+                embedding = $5::halfvec,
+                embedding_sparse = $6::jsonb,
+                metadata = $7
+            WHERE id = $8
             """,
             spec["subject_area"],
+            source_type,
             len(spec["text"].split()),
             spec["text"],
             embedding,
@@ -429,10 +447,11 @@ async def _upsert_extra_section_chunk(conn: asyncpg.Connection, spec: dict) -> i
             token_count, text, embedding, embedding_sparse, chunk_strategy,
             as_at, metadata
         )
-        VALUES ($1, 'bare_act', $2, $3, NULL, $4, $5, $6::halfvec, $7::jsonb,
-                'section', NULL, $8)
+        VALUES ($1, $2, $3, $4, NULL, $5, $6, $7::halfvec, $8::jsonb,
+                'section', NULL, $9)
         """,
         doc_id,
+        source_type,
         spec["subject_area"],
         spec["anchor"],
         len(spec["text"].split()),

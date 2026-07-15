@@ -32,6 +32,11 @@ MAHARASHTRA_SHOPS_URL = (
 )
 CONSTITUTION_URL = "https://www.legislative.gov.in/static/uploads/2025/07/359f70a69695affb9d72f8393102bd2e.pdf"
 PROTECTION_CIVIL_RIGHTS_URL = "https://www.indiacode.nic.in/bitstream/123456789/1544/1/A1955-22Eng.pdf"
+CONSUMER_JURISDICTION_RULES_URL = (
+    "https://consumeraffairs.nic.in/sites/default/files/"
+    "jurisdicton%20of%20Consumer%20Commissions.pdf"
+)
+SCST_POA_RULES_URL = "https://socialjustice.gov.in/writereaddata/UploadFile/POA%20Act.pdf"
 
 
 CHUNKS = [
@@ -113,6 +118,29 @@ CHUNKS = [
         ),
     },
     {
+        "slug": "sc-st-poa-rules-1995",
+        "title": "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Rules 1995",
+        "year": 1995,
+        "subject_area": "criminal",
+        "source_url": SCST_POA_RULES_URL,
+        "origin": "socialjustice.gov.in",
+        "anchor": "sc-st-poa-rules-1995/rule-7",
+        "section_no": "7",
+        "section_title": "Investigating Officer",
+        "text": (
+            "Scheduled Castes and Scheduled Tribes (Prevention of Atrocities) Rules 1995, Rule 7\n\n"
+            "Rule 7 is the investigating-officer rule for offences under the SC/ST (Prevention of "
+            "Atrocities) Act. It requires investigation by a police officer not below the rank of "
+            "Deputy Superintendent of Police. The investigating officer is appointed by the State "
+            "Government, Director General of Police, or Superintendent of Police after considering "
+            "experience, ability, and capacity to investigate the case properly and quickly. The rule "
+            "also directs completion of investigation on top priority and submission of the report to "
+            "the Superintendent of Police for forwarding to the Director General of Police. Use Rule 7 "
+            "when a user says an atrocity case has not been transferred to a DSP-rank officer or asks "
+            "about the required rank of the investigating officer."
+        ),
+    },
+    {
         "slug": "trade-marks-1999",
         "title": "Trade Marks Act 1999",
         "year": 1999,
@@ -168,6 +196,120 @@ CHUNKS = [
             "person in a way covered by the Act. It is relevant when the dispute is about market "
             "use of a mark, copying, confusing use, or enforcement after registration. Opposition "
             "to a pending application should still be separated from an infringement suit."
+        ),
+    },
+    {
+        "slug": "trade-marks-1999",
+        "title": "Trade Marks Act 1999",
+        "year": 1999,
+        "subject_area": "intellectual_property",
+        "source_url": TRADE_MARKS_URL,
+        "origin": "indiacode",
+        "anchor": "trade-marks-1999/sec-34",
+        "section_no": "34",
+        "section_title": "Saving for vested rights",
+        "text": (
+            "Trade Marks Act 1999, Section 34\n\n"
+            "Section 34 is the prior-user source. It preserves the rights of a person who "
+            "continuously used a trade mark from a date earlier than the registered proprietor's "
+            "use or registration, and prevents the proprietor or registered user from interfering "
+            "with that earlier use merely because the later registration exists. Use this section "
+            "when a user says a competitor registered the brand first but they have already been "
+            "using the brand for years."
+        ),
+    },
+    {
+        "slug": "trade-marks-1999",
+        "title": "Trade Marks Act 1999",
+        "year": 1999,
+        "subject_area": "intellectual_property",
+        "source_url": TRADE_MARKS_URL,
+        "origin": "indiacode",
+        "anchor": "trade-marks-1999/sec-57",
+        "section_no": "57",
+        "section_title": "Power to cancel or vary registration and to rectify the register",
+        "text": (
+            "Trade Marks Act 1999, Section 57\n\n"
+            "Section 57 is the rectification source. It supports an application by a person "
+            "aggrieved to cancel, vary, or rectify an entry on the trade marks register when a "
+            "registration wrongly remains, is made without sufficient cause, or otherwise needs "
+            "correction under the Act. Use this section when the remedy being checked is "
+            "cancellation, rectification, or correction of a competitor's registered mark."
+        ),
+    },
+    {
+        "slug": "trade-marks-1999",
+        "title": "Trade Marks Act 1999",
+        "year": 1999,
+        "subject_area": "intellectual_property",
+        "source_url": TRADE_MARKS_URL,
+        "origin": "indiacode",
+        "anchor": "trade-marks-1999/sec-134",
+        "section_no": "134",
+        "section_title": "Suit for infringement, etc., to be instituted before District Court",
+        "text": (
+            "Trade Marks Act 1999, Section 134\n\n"
+            "Section 134 is the forum source for suits for infringement of a registered trade "
+            "mark, passing off, or related trade mark relief. It points the dispute to the "
+            "District Court or competent civil/commercial court route for injunction, damages, "
+            "or other court relief after the mark, use, marketplace listing, and confusion facts "
+            "are organised."
+        ),
+    },
+    {
+        "slug": "consumer-jurisdiction-rules-2021",
+        "title": "Consumer Protection (Jurisdiction of the District Commission, the State Commission and the National Commission) Rules 2021",
+        "year": 2021,
+        "subject_area": "consumer",
+        "source_url": CONSUMER_JURISDICTION_RULES_URL,
+        "origin": "department_of_consumer_affairs",
+        "anchor": "consumer-jurisdiction-rules-2021/rule-2",
+        "section_no": "2",
+        "section_title": "Jurisdiction of District Commission",
+        "text": (
+            "Consumer Protection (Jurisdiction of the District Commission, the State Commission "
+            "and the National Commission) Rules 2021, Rule 2\n\n"
+            "Rule 2 gives District Commissions jurisdiction to entertain complaints where the "
+            "value of the goods or services paid as consideration does not exceed fifty lakh "
+            "rupees. Use Rule 2 for consumer complaints at or below Rs 50 lakh after checking "
+            "the amount paid as consideration and the relief claimed."
+        ),
+    },
+    {
+        "slug": "consumer-jurisdiction-rules-2021",
+        "title": "Consumer Protection (Jurisdiction of the District Commission, the State Commission and the National Commission) Rules 2021",
+        "year": 2021,
+        "subject_area": "consumer",
+        "source_url": CONSUMER_JURISDICTION_RULES_URL,
+        "origin": "department_of_consumer_affairs",
+        "anchor": "consumer-jurisdiction-rules-2021/rule-3",
+        "section_no": "3",
+        "section_title": "Jurisdiction of State Commission",
+        "text": (
+            "Consumer Protection (Jurisdiction of the District Commission, the State Commission "
+            "and the National Commission) Rules 2021, Rule 3\n\n"
+            "Rule 3 gives State Commissions jurisdiction to entertain complaints where the "
+            "value of the goods or services paid as consideration exceeds fifty lakh rupees "
+            "but does not exceed two crore rupees. Use Rule 3 when the complaint value is above "
+            "Rs 50 lakh and up to Rs 2 crore."
+        ),
+    },
+    {
+        "slug": "consumer-jurisdiction-rules-2021",
+        "title": "Consumer Protection (Jurisdiction of the District Commission, the State Commission and the National Commission) Rules 2021",
+        "year": 2021,
+        "subject_area": "consumer",
+        "source_url": CONSUMER_JURISDICTION_RULES_URL,
+        "origin": "department_of_consumer_affairs",
+        "anchor": "consumer-jurisdiction-rules-2021/rule-4",
+        "section_no": "4",
+        "section_title": "Jurisdiction of National Commission",
+        "text": (
+            "Consumer Protection (Jurisdiction of the District Commission, the State Commission "
+            "and the National Commission) Rules 2021, Rule 4\n\n"
+            "Rule 4 gives the National Commission jurisdiction to entertain complaints where "
+            "the value of the goods or services paid as consideration exceeds two crore rupees. "
+            "Use Rule 4 when the complaint value is above Rs 2 crore."
         ),
     },
     {
