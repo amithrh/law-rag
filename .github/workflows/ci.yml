@@ -12,6 +12,7 @@ jobs:
   api:
     name: API checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -25,7 +26,9 @@ jobs:
       - name: Compile serving code
         run: PYTHONPATH=. uv run python -m compileall -q apps/api scripts
       - name: Deterministic API regression suite
-        run: PYTHONPATH=. uv run pytest apps/api/tests -m "not needs_stack" -q
+        run: >-
+          PYTHONPATH=. uv run pytest apps/api/tests
+          -m "not needs_stack and not needs_models and not needs_eval_data" -q
       - name: Start Docker-backed Postgres schema
         run: >-
           docker compose --env-file .env.example

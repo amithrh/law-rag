@@ -847,6 +847,7 @@ def test_answer_off_topic_short_circuits_before_model_or_retrieval(monkeypatch, 
     assert "retrieval_ms" not in timing
 
 
+@pytest.mark.needs_stack
 def test_matter_route_event_includes_collision_trace_for_debugging(monkeypatch):
     from apps.api import main as api_main
 
@@ -2013,6 +2014,7 @@ def _collect_events(response) -> list[tuple[str, Any]]:
     return events
 
 
+@pytest.mark.needs_stack
 def test_primary_workflow_template_does_not_append_unrelated_contract_floor(monkeypatch):
     """Reviewed primary workflows own the answer; generic source floors must
     not append nearby-but-wrong sources after the workflow has already emitted
@@ -2109,6 +2111,7 @@ def test_primary_workflow_template_does_not_append_unrelated_contract_floor(monk
     assert "Right of Children to Free and Compulsory Education Act" not in joined
 
 
+@pytest.mark.needs_stack
 def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypatch):
     """Primary workflow answers must still cite retrieved route-required law.
 

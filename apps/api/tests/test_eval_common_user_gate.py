@@ -4,6 +4,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import pytest
+
 from scripts.build_common_user_200 import (
     EXTRA_FOURTH_VARIANT_SCENARIOS,
     SCENARIOS,
@@ -313,6 +315,7 @@ def test_product_gate_rejects_forbidden_route_and_workflow_negative_control():
     assert "forbidden_answer_term" in failures
 
 
+@pytest.mark.needs_eval_data
 def test_locked_real_user_canary_has_independent_labels():
     fixture = (
         Path(__file__).resolve().parents[3]

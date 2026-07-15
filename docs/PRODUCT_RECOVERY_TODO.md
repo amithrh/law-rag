@@ -35,6 +35,13 @@ P0 ownership baseline, 2026-07-11:
   one-document seed and verifies a disposable pgvector schema plus FastAPI
   `/healthz` returns exactly `1` document and `1` chunk. The fixture is marked
   non-authoritative and is not legal corpus data.
+- Remote CI run `29389877668` then exposed six hidden clean-clone dependencies:
+  three endpoint tests needed the populated stack, two tests needed ignored
+  eval datasets, and one reranker integration needed local model/runtime
+  support. These are now explicit pytest markers; standard CI runs the
+  deterministic clean-clone selection (`1,283 passed`, `50 deselected` with a
+  deliberately unreachable database), while the full `1,333`-test local gate
+  continues to cover all three environment-backed slices.
 - This is a regression result, not launch evidence. A fresh 500-prompt
   human-style evaluation, independent legal-quality review, and the operational
   release gates remain required before any production claim.

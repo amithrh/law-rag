@@ -51,14 +51,19 @@ gate; do not treat the synthetic fixture as a usable product corpus.
 
 ```bash
 make test-workflows    # deterministic owner/source-contract suite
-make test-api          # full FastAPI regression suite
+make test-api-ci       # clean-clone deterministic API suite
+make test-api          # full local suite; needs corpus, models, and eval data
+make test-models       # local model-backed integration slice
+make test-eval-data    # validate ignored local evaluation datasets
 make test-eval-gates   # eval scoring and holdout guard tests
 make typecheck-web     # TypeScript check
 make corpus-manifest   # aggregate DB/runtime/provenance snapshot
 ```
 
-`make test-api` is a release gate, not a smoke test. A passing focused test or
-a generated evaluation set is not production evidence. See
+`make test-api-ci` is the reproducible clean-clone gate. `make test-api` is the
+larger local regression gate and intentionally exercises the populated legal
+corpus, installed models, and ignored evaluation datasets. Neither a passing
+focused test nor a generated evaluation set is production evidence. See
 [docs/PRODUCT_RECOVERY_TODO.md](docs/PRODUCT_RECOVERY_TODO.md) for the current
 measured blockers and release criteria.
 

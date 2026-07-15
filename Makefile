@@ -8,8 +8,9 @@ ENVFILE    := $(ROOT)/.env
 UV         ?= uv
 
 .PHONY: help env up down restart logs ps doctor psql redis-cli pull-models \
-        bench-day0 clean nuke sync test-api test-workflows test-eval-gates \
-        typecheck-web verify api-dev web-dev corpus-manifest seed-ci-corpus
+        bench-day0 clean nuke sync test-api test-api-ci test-models \
+        test-eval-data test-workflows test-eval-gates typecheck-web verify \
+        api-dev web-dev corpus-manifest seed-ci-corpus
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -56,6 +57,16 @@ sync: ## Install Python development dependencies from uv.lock.
 test-api: ## Run the FastAPI/API regression suite.
 	PYTHONPATH=. $(UV) run pytest apps/api/tests -q
 
+test-api-ci: ## Run clean-clone deterministic tests without corpus, models, or private eval data.
+	PYTHONPATH=. $(UV) run pytest apps/api/tests \
+		-m "not needs_stack and not needs_models and not needs_eval_data" -q
+
+test-models: ## Run model-backed integration tests using local weights/runtime.
+	PYTHONPATH=. $(UV) run pytest apps/api/tests -m needs_models -q
+
+test-eval-data: ## Run tests that validate ignored local eval datasets.
+	PYTHONPATH=. $(UV) run pytest apps/api/tests -m needs_eval_data -q
+
 test-workflows: ## Run deterministic answer-owner and authority-contract checks.
 	PYTHONPATH=. $(UV) run pytest apps/api/tests/test_common_workflow_contracts.py -q
 
@@ -63,7 +74,8 @@ test-eval-gates: ## Test eval scoring, holdout guards, and substance-oracle cont
 	PYTHONPATH=. $(UV) run pytest \
 		apps/api/tests/test_eval_common_user_gate.py \
 		apps/api/tests/test_launch_holdout_gate.py \
-		apps/api/tests/test_substance_oracle_eval.py -q
+		apps/api/tests/test_substance_oracle_eval.py \
+		-m "not needs_eval_data" -q
 
 typecheck-web: ## Type-check the Next.js frontend.
 	cd $(ROOT)/apps/web && npm ci && npm run type-check

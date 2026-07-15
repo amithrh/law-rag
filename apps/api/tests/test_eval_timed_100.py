@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.eval_timed_100 import (
     answer_quality_flags,
     classify_required_source_requirement,
@@ -20,6 +22,7 @@ from scripts.eval_timed_100 import (
 )
 
 
+@pytest.mark.needs_eval_data
 def test_expected_act_aliases_cover_eval_corpus_annotations():
     rows = []
     for path in sorted(Path("data/eval_500").glob("*.jsonl")):
