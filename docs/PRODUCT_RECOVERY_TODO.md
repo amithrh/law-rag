@@ -96,6 +96,26 @@ P0 ownership baseline, 2026-07-11:
   type-check, and production build also pass. This proves ownership and
   fail-closed behavior for this release slice, not overall legal coverage or
   production readiness.
+- P2A establishes the first immutable authority-registry migration for CrPC
+  1973 Section 436A. The packaged JSON manifest pins canonical identity,
+  provision anchors, jurisdiction, temporal applicability and BNSS savings,
+  official India Code URL, PDF byte hash, verbatim text hash, and retrieval
+  declaration. The old one-off Section 436A backfill script is retired.
+- P2A is upgrade-safe and chunk-scoped: migration 005 upgrades legacy source,
+  document, chunk, audit, and registry schema; existing whole-document
+  verification is preserved; changed provisions reset only their exact chunk;
+  superseded projections are quarantined; and one authority ID can have only
+  one active corpus projection. Required-source retrieval consumes the same
+  provenance gate as normal retrieval.
+- P2A acceptance evidence: legal and architecture reviews PASS; wheel import
+  and migration dry-run pass; an isolated legacy-schema PostgreSQL test proves
+  upgrade, idempotence, rollback, source-origin correction, per-chunk
+  verification, and corrected-anchor retirement; and the broad
+  route/retrieval/API gate is `1,291 passed, 41 deselected` in `400.62s`. A
+  live official-source audit matched the pinned PDF SHA-256 and Section 436A
+  text (`0.984375` similarity), promoted only the mapped chunk, and the live
+  `/answer` replay returned the canonical authority/source without refusal.
+  This completes the registry pilot, not P2 coverage.
 - This is a regression result, not launch evidence. A fresh 500-prompt
   human-style evaluation, independent legal-quality review, and the operational
   release gates remain required before any production claim.
@@ -178,10 +198,15 @@ policy, one answer owner, and no `main.py` special-case fallback.
 - [ ] Create declarative authority records for Act, section, jurisdiction,
   effective date, canonical URL, publisher, provenance status, and verbatim
   status.
+  Pilot complete for CrPC 1973 Section 436A; remaining released authorities
+  still need migration into the registry.
 - [ ] Add relationships: issue -> conditions -> authority -> remedy -> forum ->
   deadline -> documents -> escalation.
 - [ ] Replace one-off `add_*` scripts with repeatable ingestion migrations tied
   to authority-record IDs.
+  The Section 436A one-off script is replaced by migration
+  `0001_crpc_436a`; other one-off corpus patches remain to be inventoried and
+  migrated.
 - [ ] Define supported geography: national law plus a verified set of states.
   Unsupported state-law matters must use a source-gap/handoff policy.
 - [ ] Enable provenance verification in production configuration and add a

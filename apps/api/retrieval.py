@@ -990,12 +990,16 @@ async def _fetch_source_pack_candidates(
     if not packs or limit_per_pack <= 0:
         return []
 
+    provenance_clause = ""
+    if get_settings().require_provenance_verified:
+        provenance_clause = f"AND {_provenance_filter_sql()}"
+
     out: list[RetrievedChunk] = []
     async with pool.acquire() as conn:
         for pack in packs:
             if pack.id == "jj_2015_age_documents":
                 rows = await conn.fetch(
-                    """
+                    f"""
                     SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                            c.subject_area, c.as_at, c.paragraph_no, c.metadata,
                            d.title, d.citation, d.court, d.statute_short,
@@ -1013,6 +1017,7 @@ async def _fetch_source_pack_candidates(
                         c.text ILIKE '%Where, it is obvious to the Committee or the Board%'
                         OR c.text ILIKE '%date of birth certificate from the school%'
                       )
+                      {provenance_clause}
                     ORDER BY
                       CASE
                         WHEN c.text ILIKE '%date of birth certificate from the school%' THEN 0
@@ -1039,7 +1044,7 @@ async def _fetch_source_pack_candidates(
             anchor_regexes = _anchor_regexes_from_patterns(pack.anchor_patterns)
             fetch_limit = max(limit_per_pack, limit_per_pack * max(1, len(pack.anchor_patterns)) * 4)
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                        c.subject_area, c.as_at, c.paragraph_no, c.metadata,
                        d.title, d.citation, d.court, d.statute_short,
@@ -1066,6 +1071,7 @@ async def _fetch_source_pack_candidates(
                     OR c.metadata->>'section_no' = ANY($4::text[])
                     OR c.anchor ~* ANY($5::text[])
                   )
+                  {provenance_clause}
                 ORDER BY anchor_priority DESC, anchor_order ASC, bm25_score DESC,
                          c.paragraph_no NULLS LAST, c.id
                 LIMIT $7
@@ -1295,6 +1301,15 @@ def _rerank_candidate_union(
 # ---------------------------------------------------------------------------
 
 
+def _provenance_filter_sql() -> str:
+    return (
+        "(c.provenance_verified = true OR ("
+        "NOT EXISTS (SELECT 1 FROM document_authorities da WHERE da.chunk_id = c.id) "
+        "AND EXISTS (SELECT 1 FROM documents d2 WHERE d2.id = c.document_id "
+        "AND d2.provenance_verified = true)))"
+    )
+
+
 async def hybrid_retrieve(
     pool: asyncpg.Pool,
     query: str,
@@ -1379,13 +1394,11 @@ async def hybrid_retrieve(
         params.append(as_of)
         where.append(f"(c.as_at IS NULL OR c.as_at <= ${len(params)})")
 
-    # Provenance gate: in production mode, only return chunks from documents
-    # whose source has been verified against the canonical Govt source.
+    # Provenance gate: legacy documents may be verified as a whole. Registry
+    # authorities are verified at exact chunk scope so one reviewed section
+    # cannot accidentally bless every neighboring section in the document.
     if s.require_provenance_verified:
-        where.append(
-            "EXISTS (SELECT 1 FROM documents d2 "
-            "WHERE d2.id = c.document_id AND d2.provenance_verified = true)"
-        )
+        where.append(_provenance_filter_sql())
 
     where_clause = " AND ".join(where)
 

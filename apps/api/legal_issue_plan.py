@@ -7,6 +7,8 @@ import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Literal
 
+from authority_registry import AuthorityRecord, load_authority_registry
+
 from .matter_router import MatterRoute
 
 
@@ -25,6 +27,7 @@ class JurisdictionPlan:
 class AuthorityLedgerEntry:
     source: str
     authority_id: str | None = None
+    registry_key: str | None = None
     identity_status: Literal["canonical", "provisional"] = "provisional"
     canonical_name: str | None = None
     act: str | None = None
@@ -655,6 +658,10 @@ def _bind_authority_policy(
             retrieval_sources,
         )
         canonical_act = _canonical_act_from_sources(entry, retrieval_sources)
+        registry_record = _registry_record_for_entry(entry, canonical_act)
+        if registry_record is not None:
+            canonical_act = registry_record.canonical_name
+            source_pack_id = registry_record.retrieval.source_pack_id
         matching_sources = _authority_retrieval_sources(
             entry,
             canonical_act=canonical_act,
@@ -677,20 +684,46 @@ def _bind_authority_policy(
             # has section anchors. A single shared anchor list must not make
             # the title-level regime impossible to satisfy.
             required_anchor_patterns = []
-        authority_id, identity_status = _authority_identity(
-            entry,
-            canonical_act,
-            required_anchor_patterns=required_anchor_patterns,
-        )
+        if registry_record is not None:
+            required_anchor_patterns = list(registry_record.provision.all_anchors)
+            authority_id = registry_record.authority_id_expected
+            identity_status: Literal["canonical", "provisional"] = "canonical"
+        else:
+            authority_id, identity_status = _authority_identity(
+                entry,
+                canonical_act,
+                required_anchor_patterns=required_anchor_patterns,
+            )
         bound.append(replace(
             entry,
             authority_id=authority_id,
+            registry_key=registry_record.canonical_key if registry_record else None,
             identity_status=identity_status,
             canonical_name=canonical_act,
             source_pack_id=source_pack_id,
             required_anchor_patterns=required_anchor_patterns,
         ))
     return bound
+
+
+def _registry_record_for_entry(
+    entry: AuthorityLedgerEntry,
+    canonical_act: str | None,
+) -> AuthorityRecord | None:
+    if not canonical_act or not entry.section:
+        return None
+    match = re.search(
+        r"\b(section|article|rule|order|paragraph)\s+([0-9][0-9a-z()./-]*)",
+        entry.section,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return load_authority_registry().resolve(
+        canonical_name=canonical_act,
+        provision_kind=match.group(1),
+        provision_number=match.group(2),
+    )
 
 
 def _authority_retrieval_sources(

@@ -1,0 +1,79 @@
+{
+  "migration_id": "0001_crpc_436a",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "expected_previous_record_sha256": null,
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "crpc_1973_section_436a",
+        "authority_id_expected": "authority_348b7d2511bb3e5a2618",
+        "canonical_name": "code of criminal procedure 1973",
+        "aliases": [
+          "Code of Criminal Procedure, 1973",
+          "CrPC 1973"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "436A",
+          "heading": "Maximum period for which an undertrial prisoner can be detained",
+          "canonical_anchor": "/sec-436-a",
+          "anchor_aliases": [
+            "/sec-436A",
+            "/sec-436a"
+          ]
+        },
+        "effective_from": "2006-06-23",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/21920/1/the_bharatiya_nagarik_suraksha_sanhita%2C_2023.pdf",
+          "effect": "CrPC is repealed from 1 July 2024, subject to BNSS Section 531 savings for appeals, applications, trials, inquiries, or investigations pending immediately before commencement."
+        },
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/13624/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2f28d487c18d33f65195d7ab99cb5dc8fd4dcf232c7deb18dee7f8fa289891b9",
+          "raw_bytes_size": 1660268
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973",
+          "title_patterns": [
+            "Code of Criminal Procedure 1973",
+            "Code of Criminal Procedure, 1973"
+          ],
+          "doc_ids": [
+            "crpc-1973"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Code of Criminal Procedure 1973 section 436A maximum period undertrial prisoner detention release bail legacy procedure"
+        },
+        "verbatim_status": "declared",
+        "text": "436A. Maximum period for which an undertrial prisoner can be detained.—Where a person has, during the period of investigation, inquiry or trial under this Code of an offence under any law (not being an offence for which the punishment of death has been specified as one of the punishments under that law) undergone detention for a period extending up to one-half of the maximum period of imprisonment specified for that offence under that law, he shall be released by the Court on his personal bond with or without sureties:\n\nProvided that the Court may, after hearing the Public Prosecutor and for reasons to be recorded by it in writing, order the continued detention of such person for a period longer than one-half of the said period or release him on bail instead of the personal bond with or without sureties:\n\nProvided further that no such person shall in any case be detained during the period of investigation, inquiry or trial for more than the maximum period of imprisonment provided for the said offence under that law.\n\nExplanation.—In computing the period of detention under this section for granting bail, the period of detention passed due to delay in proceeding caused by the accused shall be excluded.",
+        "text_sha256": "af5b7c0357534a32522f3249c0d4f8185d5d612318259a8e931348ae8e6c98bb"
+      }
+    }
+  ]
+}

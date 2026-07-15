@@ -23,6 +23,10 @@ jobs:
         run: uv sync --extra dev --frozen
       - name: Check lockfile
         run: uv lock --check
+      - name: Verify packaged authority manifests
+        run: |
+          uv build --wheel --offline --out-dir /tmp/law-rag-wheel
+          PYTHONPATH= uv run python scripts/check_authority_registry_wheel.py /tmp/law-rag-wheel/*.whl
       - name: Compile serving code
         run: PYTHONPATH=. uv run python -m compileall -q apps/api scripts
       - name: Deterministic API regression suite
@@ -40,6 +44,16 @@ jobs:
           -f infra/docker-compose.yml
           exec -T postgres psql -U lawrag -d lawrag
           -f /dev/stdin < infra/postgres/ci-seed.sql
+      - name: Verify authority migration against real Postgres
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_HOST_PORT: "5433"
+          POSTGRES_DB: lawrag
+          POSTGRES_USER: lawrag
+          POSTGRES_PASSWORD: change-me-locally
+        run: >-
+          PYTHONPATH=. uv run pytest
+          apps/api/tests/test_authority_migration_stack.py -q
       - name: Smoke test API startup and database health
         env:
           POSTGRES_HOST: 127.0.0.1
@@ -94,6 +108,17 @@ jobs:
           -f infra/docker-compose.yml
           -f infra/docker-compose.prod.yml
           config --quiet
+      - name: Assert production provenance gate
+        env:
+          API_IMAGE: law-rag-api:ci
+          WEB_IMAGE: law-rag-web:ci
+          GRAFANA_ADMIN_PASSWORD: ci-only
+        run: |
+          docker compose --env-file .env.example \
+            -f infra/docker-compose.yml \
+            -f infra/docker-compose.prod.yml \
+            config --format json > /tmp/law-rag-prod-compose.json
+          python -c 'import json; c=json.load(open("/tmp/law-rag-prod-compose.json")); assert str(c["services"]["api"]["environment"]["REQUIRE_PROVENANCE_VERIFIED"]).lower() == "true"'
 
   web:
     name: Web type check

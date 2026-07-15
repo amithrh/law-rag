@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from authority_registry import get_authority_record
+
 from .customs_logic import (
     customs_drawback_issue,
     customs_misdeclaration_issue,
@@ -49,6 +51,9 @@ class SourcePack:
     anchor_patterns: tuple[str, ...] = ()
     source_types: tuple[str, ...] = ("bare_act",)
     priority: float = 1.0
+
+
+CRPC_436A_AUTHORITY = get_authority_record("crpc_1973_section_436a")
 
 
 def _dedupe_source_packs(packs: list[SourcePack]) -> list[SourcePack]:
@@ -662,11 +667,12 @@ def source_packs_for_route(route: MatterRoute, query: str) -> list[SourcePack]:
             anchor_patterns=("/sec-479",),
         ))
         packs.append(SourcePack(
-            id="crpc_1973",
-            title_patterns=("Code of Criminal Procedure 1973", "Code of Criminal Procedure, 1973"),
-            search_query="Code of Criminal Procedure 1973 section 436A 436-A maximum period undertrial prisoner detention release bail legacy procedure",
-            doc_ids=("crpc-1973",),
-            anchor_patterns=("/sec-436A", "/sec-436-a", "/sec-436a"),
+            id=CRPC_436A_AUTHORITY.retrieval.source_pack_id,
+            title_patterns=CRPC_436A_AUTHORITY.retrieval.title_patterns,
+            search_query=CRPC_436A_AUTHORITY.retrieval.search_query,
+            doc_ids=CRPC_436A_AUTHORITY.retrieval.doc_ids,
+            anchor_patterns=CRPC_436A_AUTHORITY.provision.all_anchors,
+            source_types=CRPC_436A_AUTHORITY.retrieval.source_types,
             priority=1.28,
         ))
         packs.append(SourcePack(

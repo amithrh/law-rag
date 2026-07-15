@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS sources (
     url                 TEXT NOT NULL,
     canonical_url_hash  TEXT NOT NULL UNIQUE,                       -- sha256 of canonical url
     raw_storage_uri     TEXT,                                       -- s3://raw/... in MinIO
+    raw_sha256          TEXT,
+    raw_bytes_size      BIGINT,
+    provenance_tier     TEXT NOT NULL DEFAULT 'unverified',
     fetched_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     metadata            JSONB NOT NULL DEFAULT '{}'::jsonb
 );
@@ -46,6 +49,10 @@ CREATE TABLE IF NOT EXISTS documents (
     statutes_referred   TEXT[],
     cases_cited         TEXT[],
     metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    extracted_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    extractor_version   TEXT NOT NULL DEFAULT 'pymupdf-unknown',
+    provenance_verified BOOLEAN NOT NULL DEFAULT false,
+    provenance_verified_at TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -55,6 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_documents_statute_short ON documents(statute_shor
 CREATE INDEX IF NOT EXISTS idx_documents_subject_area  ON documents(subject_area);
 CREATE INDEX IF NOT EXISTS idx_documents_as_at         ON documents(as_at);
 CREATE INDEX IF NOT EXISTS idx_documents_date_decided  ON documents(date_decided);
+CREATE INDEX IF NOT EXISTS idx_documents_provenance_verified
+    ON documents(provenance_verified);
+CREATE INDEX IF NOT EXISTS idx_sources_provenance_tier
+    ON sources(provenance_tier);
 
 -- Fielded full-text expression indexes for legal retrieval. Title/statute/
 -- doc-id hits should carry more signal than a random paragraph body hit when
@@ -92,6 +103,8 @@ CREATE TABLE IF NOT EXISTS chunks (
     -- PII redaction (§10.2)
     pii_redacted        BOOLEAN NOT NULL DEFAULT false,
     pii_confidence      FLOAT,
+    provenance_verified BOOLEAN NOT NULL DEFAULT false,
+    provenance_verified_at TIMESTAMPTZ,
     quarantined         BOOLEAN NOT NULL DEFAULT false,             -- excluded from retrieval if true
     quarantine_reason   TEXT,
     -- OCR quality (§8 risk 2)
@@ -109,6 +122,8 @@ CREATE INDEX IF NOT EXISTS idx_chunks_document_id  ON chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_as_at        ON chunks(as_at);
 -- Partial index: most queries care about non-quarantined chunks only
 CREATE INDEX IF NOT EXISTS idx_chunks_live         ON chunks(id) WHERE NOT quarantined;
+CREATE INDEX IF NOT EXISTS idx_chunks_provenance_verified
+    ON chunks(provenance_verified) WHERE provenance_verified;
 
 -- HNSW on the dense embedding. Params per §5.2: m=16, ef_construction=64.
 -- Partial-index: quarantined chunks are NOT in the HNSW (saves index size + ensures
@@ -185,6 +200,28 @@ CREATE TABLE IF NOT EXISTS pii_eval (
     evaluated_at    TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS provenance_audit (
+    id              BIGSERIAL PRIMARY KEY,
+    audited_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    chunk_id        BIGINT REFERENCES chunks(id) ON DELETE CASCADE,
+    document_id     BIGINT REFERENCES documents(id) ON DELETE CASCADE,
+    source_id       BIGINT REFERENCES sources(id) ON DELETE CASCADE,
+    source_url      TEXT,
+    sha_match       BOOLEAN,
+    text_match      BOOLEAN,
+    text_similarity FLOAT,
+    refetch_status  TEXT,
+    refetch_size    BIGINT,
+    refetch_pages   INT,
+    refetch_hash    TEXT,
+    notes           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_provenance_audit_audited_at
+    ON provenance_audit(audited_at DESC);
+CREATE INDEX IF NOT EXISTS idx_provenance_audit_text_match
+    ON provenance_audit(text_match) WHERE text_match = false;
+
 -- Migration version tracking -------------------------------------------------
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version     TEXT PRIMARY KEY,
@@ -193,3 +230,31 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 INSERT INTO schema_migrations (version) VALUES ('001_initial')
     ON CONFLICT (version) DO NOTHING;
+
+-- Authority migrations are canonical JSON manifests. These rows are only the
+-- idempotence and document/chunk projection ledger for a fresh database.
+CREATE TABLE IF NOT EXISTS authority_ingest_migrations (
+    migration_id       TEXT PRIMARY KEY,
+    manifest_sha256    TEXT NOT NULL,
+    applied_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS document_authorities (
+    source_id          BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    document_id        BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_id           BIGINT NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+    authority_id       TEXT NOT NULL,
+    canonical_key      TEXT NOT NULL,
+    migration_id       TEXT NOT NULL REFERENCES authority_ingest_migrations(migration_id),
+    record_sha256      TEXT NOT NULL,
+    canonical_anchor   TEXT NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (document_id, authority_id),
+    UNIQUE (chunk_id, authority_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_authorities_authority_id
+    ON document_authorities(authority_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_authorities_one_active_authority
+    ON document_authorities(authority_id);

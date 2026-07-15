@@ -28,6 +28,7 @@ from apps.api.retrieval import (
     _filter_query_ineligible_sources,
     _focus_required_source_pack_text,
     _preserve_required_source_packs,
+    _provenance_filter_sql,
     _rerank_candidate_union,
     _retrieval_policy,
     _section_numbers_from_anchor_patterns,
@@ -37,6 +38,14 @@ from apps.api.retrieval import (
     sparse_retrieve,
 )
 from apps.api.source_packs import SourcePack
+
+
+def test_production_provenance_gate_accepts_exact_chunk_or_verified_document():
+    sql = _provenance_filter_sql()
+    assert "c.provenance_verified = true" in sql
+    assert "NOT EXISTS (SELECT 1 FROM document_authorities" in sql
+    assert "d2.provenance_verified = true" in sql
+    assert "c.document_id" in sql
 
 
 def test_public_retrieval_consumes_matter_plan_without_rerouting(monkeypatch):
@@ -655,6 +664,39 @@ def test_required_source_pack_with_anchor_patterns_filters_to_anchors():
         r"(^|/)sec-62(@|-|__|$)",
         r"(^|[#/])sec\-62($|@|__)",
     ]
+
+
+def test_required_source_pack_uses_the_provenance_gate(monkeypatch):
+    from apps.api import retrieval
+
+    conn = _StubConn(fetch_return=[])
+    pack = SourcePack(
+        id="crpc_1973",
+        title_patterns=("Code of Criminal Procedure 1973",),
+        doc_ids=("crpc-1973",),
+        anchor_patterns=("/sec-436-a",),
+        search_query="Code of Criminal Procedure 1973 section 436A undertrial detention",
+    )
+    settings = Settings(
+        database_url="postgresql://x",
+        require_provenance_verified=True,
+    )
+    monkeypatch.setattr(retrieval, "get_settings", lambda: settings)
+
+    asyncio.run(
+        _fetch_source_pack_candidates(
+            _StubPool(conn),
+            "undertrial detained for half the maximum sentence",
+            packs=[pack],
+            limit_per_pack=4,
+        )
+    )
+
+    assert conn.fetch_calls
+    sql, _ = conn.fetch_calls[0]
+    assert "c.provenance_verified = true" in sql
+    assert "NOT EXISTS (SELECT 1 FROM document_authorities" in sql
+    assert "d2.provenance_verified = true" in sql
 
 
 def test_required_source_pack_literal_anchor_patterns_are_exactly_bounded():

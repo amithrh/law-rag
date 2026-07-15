@@ -12,6 +12,9 @@ fails, we record an audit row in `provenance_audit` with the diagnostic
 verdict, and the source is left unverified (and quarantined from
 production queries).
 
+Verification state is document-scoped. A source may back multiple documents,
+so an audit can only change the documents whose chunks were actually compared.
+
 Two modes:
   --full        verify every source (slow; can take an hour)
   --sample N    sample N sources per tier (default 20 per tier)
@@ -58,6 +61,66 @@ def load_env(p: str = ".env") -> dict:
 
 def log(msg: str) -> None:
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def audit_persistence_rows(audit_rows: list[dict]) -> list[tuple]:
+    rows: list[tuple] = []
+    for row in audit_rows:
+        target_verdicts = row.get("target_verdicts") or [
+            {
+                "document_id": document_id,
+                "chunk_id": chunk_id,
+                "text_match": row["text_match"],
+                "text_similarity": row["text_similarity"],
+                "verification_pass": row.get("verification_pass"),
+            }
+            for document_id, chunk_id in (
+                row.get("audit_targets") or [(None, None)]
+            )
+        ]
+        for verdict in target_verdicts:
+            rows.append((
+                row["source_id"], row["source_url"], verdict["document_id"],
+                verdict["chunk_id"], row["sha_match"], verdict["text_match"],
+                verdict["text_similarity"], row["refetch_status"],
+                row["refetch_size"], row["refetch_pages"], row["refetch_hash"],
+                row["notes"],
+            ))
+    return rows
+
+
+def verification_scope_updates(
+    audit_rows: list[dict],
+) -> tuple[list[int], list[int], list[int], list[int]]:
+    def ids(scope: str, passed: bool, position: int) -> list[int]:
+        matched: set[int] = set()
+        for row in audit_rows:
+            if row.get("scope", "document") != scope:
+                continue
+            target_verdicts = row.get("target_verdicts")
+            if target_verdicts:
+                key = "document_id" if position == 0 else "chunk_id"
+                matched.update(
+                    verdict[key]
+                    for verdict in target_verdicts
+                    if verdict.get("verification_pass") is passed
+                    and verdict.get(key) is not None
+                )
+                continue
+            if row.get("verification_pass") is passed:
+                matched.update(
+                    target[position]
+                    for target in row.get("audit_targets", [])
+                    if target[position] is not None
+                )
+        return sorted(matched)
+
+    return (
+        ids("document", True, 0),
+        ids("document", False, 0),
+        ids("chunk", True, 1),
+        ids("chunk", False, 1),
+    )
 
 
 # --- Re-fetch helpers ------------------------------------------------------
@@ -193,22 +256,47 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
         "refetch_pages": None,
         "refetch_hash": None,
         "notes": "",
+        "audit_targets": [],
+        "scope": "document",
+        "verification_pass": None,
+        "target_verdicts": [],
     }
     tier = source_row["provenance_tier"]
     origin = source_row["origin"]
 
-    # Pull a sample of stored chunks for similarity check
-    chunks = await conn.fetch("""
-        SELECT c.id AS chunk_id, c.text, c.document_id
-        FROM chunks c
-        JOIN documents d ON d.id = c.document_id
-        WHERE d.source_id = $1 AND NOT c.quarantined
-        ORDER BY c.id
-        LIMIT 500
+    # Registry-mapped authorities are audited at the exact document/chunk
+    # projection. Legacy sources retain a bounded sample, but verification is
+    # still granted only to the documents actually compared below.
+    mapped_targets = await conn.fetch("""
+        SELECT da.document_id, da.chunk_id
+        FROM document_authorities da
+        WHERE da.source_id = $1
+        ORDER BY da.document_id, da.chunk_id
     """, source_row["id"])
+    if mapped_targets:
+        out["scope"] = "chunk"
+        chunks = await conn.fetch("""
+            SELECT c.id AS chunk_id, c.text, c.document_id
+            FROM chunks c
+            WHERE c.id = ANY($1::bigint[]) AND NOT c.quarantined
+            ORDER BY c.id
+        """, [target["chunk_id"] for target in mapped_targets])
+    else:
+        chunks = await conn.fetch("""
+            SELECT c.id AS chunk_id, c.text, c.document_id
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE d.source_id = $1 AND NOT c.quarantined
+            ORDER BY c.id
+            LIMIT 500
+        """, source_row["id"])
     if not chunks:
         out["refetch_status"] = "no_chunks_stored"
         return out
+    out["audit_targets"] = [
+        (chunk["document_id"], chunk["chunk_id"])
+        for chunk in chunks
+    ]
     stored_text = " ".join(c["text"] for c in chunks)
 
     # Re-fetch
@@ -227,10 +315,45 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
         if text is None:
             out["refetch_status"] = "parse_failed"
             return out
-        sim = text_similarity(stored_text, text)
-        out["text_similarity"] = sim
-        out["text_match"] = (sim >= 0.90)  # threshold for "same content"
-        out["notes"] = f"sim={sim:.3f} stored_chunks={len(chunks)}"
+        hash_pass = (
+            not source_row.get("raw_sha256")
+            or out["sha_match"] is True
+        )
+        if mapped_targets:
+            out["target_verdicts"] = []
+            for chunk in chunks:
+                sim = text_similarity(chunk["text"], text)
+                text_match = sim >= 0.90
+                out["target_verdicts"].append({
+                    "document_id": chunk["document_id"],
+                    "chunk_id": chunk["chunk_id"],
+                    "text_similarity": sim,
+                    "text_match": text_match,
+                    "verification_pass": bool(text_match and hash_pass),
+                })
+            similarities = [
+                verdict["text_similarity"]
+                for verdict in out["target_verdicts"]
+            ]
+            out["text_similarity"] = min(similarities)
+            out["text_match"] = all(
+                verdict["text_match"]
+                for verdict in out["target_verdicts"]
+            )
+            out["verification_pass"] = all(
+                verdict["verification_pass"]
+                for verdict in out["target_verdicts"]
+            )
+            out["notes"] = (
+                f"per_chunk_similarities={similarities}; "
+                f"stored_chunks={len(chunks)}"
+            )
+        else:
+            sim = text_similarity(stored_text, text)
+            out["text_similarity"] = sim
+            out["text_match"] = sim >= 0.90
+            out["verification_pass"] = bool(out["text_match"] and hash_pass)
+            out["notes"] = f"sim={sim:.3f} stored_chunks={len(chunks)}"
     elif origin.startswith("hf:") and "Rahul1872" in origin:
         # SC via HF Rahul1872. Extraction-consistency check: re-extract the
         # original PDF from the local HF tar cache and compare against the
@@ -284,6 +407,8 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
             ORDER BY random()
             LIMIT 5
         """, source_row["id"])
+        out["audit_targets"] = [(doc["id"], None) for doc in sample_docs]
+        out["scope"] = "document"
         per_doc_results = []
         for doc in sample_docs:
             meta = doc["metadata"] if isinstance(doc["metadata"], dict) else (
@@ -323,6 +448,7 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
             # hit 1.0 on n-gram recall. 0.85 ≈ 85% of stored 4-grams must
             # exist in source PDF — comfortable margin above noise.
             out["text_match"] = median_sim >= 0.85
+            out["verification_pass"] = out["text_match"]
             out["refetch_status"] = "ok"
             out["notes"] = (
                 f"extraction-consistency over {len(scored)} samples: "
@@ -346,6 +472,8 @@ async def main():
                         help="audit every source (overrides --sample)")
     parser.add_argument("--no-refetch-acts", action="store_true",
                         help="skip the act re-download (useful for offline runs)")
+    parser.add_argument("--source-id", type=int,
+                        help="audit one exact source id")
     args = parser.parse_args()
 
     env = load_env()
@@ -358,7 +486,14 @@ async def main():
     log("=== verify_provenance starting ===")
 
     # Pick sources to audit
-    if args.full:
+    if args.source_id is not None:
+        sources = await conn.fetch("""
+            SELECT id, source_type, origin, url, raw_sha256, provenance_tier
+            FROM sources WHERE id = $1
+        """, args.source_id)
+        if not sources:
+            raise SystemExit(f"unknown source id: {args.source_id}")
+    elif args.full:
         sources = await conn.fetch("""
             SELECT id, source_type, origin, url, raw_sha256, provenance_tier
             FROM sources ORDER BY id
@@ -395,27 +530,52 @@ async def main():
 
     # Persist audit rows
     if audit_rows:
+        persistence_rows = audit_persistence_rows(audit_rows)
         await conn.executemany("""
             INSERT INTO provenance_audit (
-                source_id, source_url,
+                source_id, source_url, document_id, chunk_id,
                 sha_match, text_match, text_similarity,
                 refetch_status, refetch_size, refetch_pages, refetch_hash, notes
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        """, [(r["source_id"], r["source_url"], r["sha_match"], r["text_match"],
-               r["text_similarity"], r["refetch_status"], r["refetch_size"],
-               r["refetch_pages"], r["refetch_hash"], r["notes"])
-              for r in audit_rows])
-        log(f"persisted {len(audit_rows)} audit rows")
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        """, persistence_rows)
+        log(f"persisted {len(persistence_rows)} document-scoped audit rows")
 
-    # Flip provenance_verified on documents whose source passed
-    passed_source_ids = [r["source_id"] for r in audit_rows if r["text_match"] is True]
-    if passed_source_ids:
+    # Verification is document-scoped. A source-level verdict must never mark
+    # every document attached to a shared source as verified.
+    (
+        passed_document_ids,
+        failed_document_ids,
+        passed_chunk_ids,
+        failed_chunk_ids,
+    ) = verification_scope_updates(audit_rows)
+    if passed_document_ids:
         await conn.execute("""
             UPDATE documents
             SET provenance_verified = true, provenance_verified_at = now()
-            WHERE source_id = ANY($1::bigint[])
-        """, passed_source_ids)
-        log(f"marked {len(passed_source_ids)} sources' documents as verified")
+            WHERE id = ANY($1::bigint[])
+        """, passed_document_ids)
+        log(f"marked {len(passed_document_ids)} audited documents as verified")
+    if failed_document_ids:
+        await conn.execute("""
+            UPDATE documents
+            SET provenance_verified = false, provenance_verified_at = NULL
+            WHERE id = ANY($1::bigint[])
+        """, failed_document_ids)
+        log(f"cleared verification on {len(failed_document_ids)} drifted documents")
+    if passed_chunk_ids:
+        await conn.execute("""
+            UPDATE chunks
+            SET provenance_verified = true, provenance_verified_at = now()
+            WHERE id = ANY($1::bigint[])
+        """, passed_chunk_ids)
+        log(f"marked {len(passed_chunk_ids)} audited authority chunks as verified")
+    if failed_chunk_ids:
+        await conn.execute("""
+            UPDATE chunks
+            SET provenance_verified = false, provenance_verified_at = NULL
+            WHERE id = ANY($1::bigint[])
+        """, failed_chunk_ids)
+        log(f"cleared verification on {len(failed_chunk_ids)} drifted authority chunks")
 
     log(f"\n=== Summary ===")
     log(f"  pass:     {pass_count}")

@@ -774,3 +774,51 @@ ownership/API gate is `1,236 passed, 41 deselected` in `397.78s`. Some rows
 correctly use source-gap handoff because the indexed title lacks the mandatory
 section. P2 must repair those authority records and corpus anchors rather than
 weakening this gate.
+
+## 2026-07-15 P2A Immutable Authority Registry Pilot
+
+CrPC 1973 Section 436A is the first authority moved from an imperative
+one-off corpus patch into a packaged, immutable migration chain. The manifest
+is the legal declaration; PostgreSQL is only its runtime projection and
+idempotence ledger.
+
+The authority record pins stable canonical identity, provision anchors,
+jurisdiction, effective period and BNSS Section 531 savings, official publisher
+and India Code URL, official PDF SHA-256 and byte size, exact statutory-text
+SHA-256, and its retrieval contract.
+
+Registry invariants established by this pilot:
+
+1. Manifests are data-only, strictly validated, hash-addressed, ordered,
+   predecessor-aware, included in the built wheel, and applied as an exact
+   prefix. Reusing a migration ID with another hash fails closed.
+2. Migration 005 upgrades a legacy database; it cannot rely on current
+   `init.sql`. It owns all provenance fields, audit tables/indexes, and registry
+   ledgers required before projection.
+3. Ingestion never self-verifies legal text. It preserves an existing
+   whole-document verdict, resets the changed provision chunk, and requires a
+   later official-source hash-and-text audit for promotion.
+4. Verification is per mapped chunk. A shared PDF hash may be reused, but text
+   similarity and pass/fail cannot be aggregated across provisions in one Act.
+5. Provision identity belongs in `document_authorities` and chunk metadata.
+   Shared source/document metadata cannot use last-writer provision fields.
+6. An authority ID has exactly one active corpus projection. A correction
+   atomically moves the mapping and quarantines/de-verifies the retired chunk.
+7. Required-source and ordinary retrieval use the same mapped-chunk provenance
+   predicate. No fallback may reintroduce an unverified registry section.
+8. Old-law applicability is explicit. Section 436A ends at the criminal-code
+   cutover and carries a savings reference; it is not silently treated as
+   current BNSS law.
+
+P2A proof: both independent reviews PASS; wheel import and dry-run pass; a real
+PostgreSQL test upgrades an isolated legacy schema and proves first apply,
+no-op, rollback, source-origin repair, document-verdict preservation,
+per-chunk gating, and corrected-anchor retirement. The broad stage gate is
+`1,291 passed, 41 deselected`. A live India Code audit matched the pinned PDF
+hash and Section 436A text (`0.984375` similarity), marked only the mapped
+chunk verified, and a live `/answer` replay exposed the same canonical
+authority with no source gap or refusal.
+
+This is a vertical pilot, not registry completeness. P2 remains open for the
+rest of the released authority catalog, authority relationships, geography,
+freshness operations, and an uninjected retrieval benchmark.
