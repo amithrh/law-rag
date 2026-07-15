@@ -164,11 +164,19 @@ FORUM_EXPECTATIONS: dict[str, tuple[str, ...]] = {
     "disability_access": ("disability", "udid", "social welfare", "dlsa"),
     "election_candidate_dispute": ("returning officer", "election commission", "high court", "dlsa"),
     "election_voter_rights": ("electoral", "booth level", "election", "voters.eci"),
-    "employment_wages": ("labour", "wage", "epfo", "dlsa"),
+    "employment_wages": (
+        "labour", "wage", "epfo", "dlsa", "legal services",
+        "mgnrega", "nrega", "programme officer", "program officer",
+        "bdo", "gram sabha", "gram panchayat", "ombudsman",
+    ),
     "environment_compensation": ("pollution control", "ngt", "collector", "dlsa", "gram sabha"),
     "family_domestic": ("protection officer", "magistrate", "family court", "dlsa"),
     "labour_compliance": ("esi", "employees", "insurance court", "labour", "dlsa"),
-    "labour_exploitation_discrimination": ("labour", "mgnrega", "bocw", "dlsa", "police"),
+    "labour_exploitation_discrimination": (
+        "labour", "mgnrega", "bocw", "dlsa", "police",
+        "asha", "phc", "health", "nhm", "cdpo", "child development",
+        "district programme", "women and child", "wcd", "public grievance",
+    ),
     "manual_scavenging_safety": ("district magistrate", "local authority", "police", "labour", "dlsa"),
     "reproductive_rights_mtp": ("medical", "hospital", "court", "dlsa"),
     "police_fir": ("police", "superintendent", "magistrate", "dlsa"),
@@ -296,7 +304,7 @@ EXPECTED_CATEGORY_ROUTES: dict[str, set[str]] = {
     "migrant_displacement": {"labour_exploitation_discrimination", "labour_compliance", "bonded_labour_rescue"},
     "mining_displacement": {"environment_compensation", "tribal_caste_atrocity"},
     "msme_payment": {"business_contract_partnership"},
-    "nrega_wage": {"labour_exploitation_discrimination"},
+    "nrega_wage": {"labour_exploitation_discrimination", "employment_wages"},
     "ndps_bail": {"criminal_defence_bail"},
     "labour_compliance": {"labour_compliance", "employment_wages"},
     "manual_scavenging": {"manual_scavenging_safety", "workplace_injury_compensation", "police_fir"},
@@ -402,6 +410,18 @@ def analyze_safety_row(row: dict[str, Any]) -> dict[str, Any]:
         expected_category == "elder_fraud"
         and route == "social_welfare_identity"
         and _looks_like_elder_welfare_record_issue(q, expected_hint.lower())
+    ):
+        expected_routes = {*(expected_routes or set()), "social_welfare_identity"}
+    if (
+        expected_category == "elder_fraud"
+        and route == "family_domestic"
+        and _looks_like_inlaw_jewellery_entrustment_issue(q, expected_hint.lower())
+    ):
+        expected_routes = {*(expected_routes or set()), "family_domestic"}
+    if (
+        expected_category == "family"
+        and route == "social_welfare_identity"
+        and _looks_like_marriage_name_change_identity_issue(q, expected_hint.lower())
     ):
         expected_routes = {*(expected_routes or set()), "social_welfare_identity"}
     if (
@@ -732,6 +752,8 @@ def _is_criminal_context(q: str, route: str, expected_hint: str, legal_regime: s
     hint = expected_hint.lower()
     if route == "cyber_fraud_or_harassment" and _is_plain_data_protection_context(q, hint):
         return False
+    if route == "cyber_fraud_or_harassment" and _is_identity_record_misuse_without_liberty_risk(q, hint):
+        return False
     return (
         route in _criminal_routes()
         or bool(legal_regime)
@@ -754,12 +776,30 @@ def _is_plain_data_protection_context(q: str, expected_hint: str) -> bool:
     if not (_has_any(q, data_terms) or _has_any(expected_hint, ("dpdp", "digital personal data protection"))):
         return False
     criminal_cyber_terms = (
-        "fir", "police", "arrest", "cheating", "fraud", "identity theft",
+        "police", "arrest", "cheating", "fraud", "identity theft",
         "identity misuse", "fake loan", "blackmail", "sextortion", "threat",
         "stalking", "morphed", "deepfake", "nude", "private photo", "otp",
         "upi", "phishing", "stole", "stolen", "scam",
     )
-    return not (_has_any(q, criminal_cyber_terms) or _has_any(expected_hint, ("bns", "bnss", "ipc", "crpc")))
+    has_fir_word = re.search(r"\bfir\b", q) is not None
+    return not (has_fir_word or _has_any(q, criminal_cyber_terms) or _has_any(expected_hint, ("bns", "bnss", "ipc", "crpc")))
+
+
+def _is_identity_record_misuse_without_liberty_risk(q: str, expected_hint: str) -> bool:
+    identity_record_context = _has_any(q, (
+        "pan", "pan card", "pan copy", "aadhaar", "aadhar", "kyc",
+        "fake bank account", "bank account opened", "opened bank account",
+        "opened in my name", "account opened in my name",
+    )) or _has_any(expected_hint, ("dpdp", "digital personal data protection"))
+    if not identity_record_context:
+        return False
+    liberty_or_active_crime_context = _has_any(q, (
+        "arrest", "arrested", "custody", "jail", "police took",
+        "police calling", "police notice", "fir against me", "case against me",
+        "blackmail", "morphed", "nude", "deepfake", "otp", "upi",
+        "money transferred", "money gone", "threat", "threatening",
+    ))
+    return not liberty_or_active_crime_context
 
 
 def has_criminal_regime_caveat(text: str) -> bool:
@@ -826,6 +866,12 @@ def _canonical_route(route: str) -> str:
 
 
 def _expected_regime(q: str) -> str:
+    if _has_any(q, (
+        "old ipc case", "old ipc", "old crpc", "ipc case",
+        "fir from 2023", "incident 2023", "case from 2023",
+        "before july 2024", "before 1 july 2024",
+    )):
+        return "unknown"
     years = _extract_years(q)
     incident_regime = _incident_year_regime(q)
     if incident_regime != "unknown":
@@ -1014,6 +1060,42 @@ def _looks_like_elder_welfare_record_issue(q: str, expected_hint: str) -> bool:
         "jewelry", "safe keeping", "not returning",
     ))
     return welfare_context and elder_context and not fraud_context
+
+
+def _looks_like_inlaw_jewellery_entrustment_issue(q: str, expected_hint: str) -> bool:
+    inlaw_context = _has_any(q, (
+        "daughter in law", "daughter-in-law", "son's wife", "bahu",
+        "mother in law", "mother-in-law", "father in law", "father-in-law",
+        "in laws", "in-laws", "sasural",
+    ))
+    jewellery_context = _has_any(q, (
+        "jewellery", "jewelry", "gold", "ornaments", "streedhan", "stridhan",
+    ))
+    entrustment_context = _has_any(q, (
+        "safe keeping", "safekeeping", "not returning", "refusing to return",
+        "refuse to return", "kept", "has my", "took my", "withholding",
+    ))
+    expected_context = _has_any(expected_hint, (
+        "domestic violence", "pwdva", "streedhan", "stridhan",
+        "breach of trust", "bns", "jewellery", "jewelry",
+    ))
+    return inlaw_context and jewellery_context and entrustment_context and expected_context
+
+
+def _looks_like_marriage_name_change_identity_issue(q: str, expected_hint: str) -> bool:
+    name_context = _has_any(q, (
+        "surname", "last name", "name change", "change name", "changed name",
+        "maiden name", "married name", "gazette", "gazzette",
+    ))
+    marriage_context = _has_any(q, (
+        "after marriage", "post marriage", "married", "wedding", "husband",
+        "wife",
+    )) or _has_any(expected_hint, ("marriage", "gazette", "name change"))
+    identity_context = _has_any(q, (
+        "gazette", "publish", "publication", "aadhaar", "aadhar", "pan",
+        "passport", "certificate", "documents", "record",
+    )) or _has_any(expected_hint, ("gazette", "identity", "publication"))
+    return name_context and marriage_context and identity_context
 
 
 def _has_scst_protected_context(q: str) -> bool:

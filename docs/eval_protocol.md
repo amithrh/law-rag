@@ -2,6 +2,12 @@
 
 This repo is not considered ready after route/unit tests alone.
 
+For architecture invariants and the RCA behind the current production
+blocker process, read:
+
+- `docs/ARCHITECTURE_KNOWLEDGE_BASE.md`
+- `docs/PRODUCTION_BLOCKER_RCA_20260604.md`
+
 Before reporting a pipeline as improved or product-ready, run these gates in order:
 
 1. Exact UI smoke prompts from `data/eval_common_smoke/`.
@@ -9,15 +15,58 @@ Before reporting a pipeline as improved or product-ready, run these gates in ord
 3. Old benchmark set, usually `data/eval_200/` or the requested old100/old200 pack.
 4. Focused API regression tests.
 
-Default pass targets:
+Default production pass targets:
 
-- Expected Act hit: at least 85% on scored rows.
-- Expected Act cited hit: at least 85% on scored rows.
-- Relevance `ok`: at least 85%.
-- Refusals: below 2%, unless the query is genuinely outside legal scope.
+- Product pass: at least 95% overall.
+- High-priority product pass: at least 95%.
+- Critical-priority product pass: 100% on at least 30 critical rows.
+- Route match: at least 95%.
+- Expected Act cited hit: at least 93.5% on scored rows.
+- First cited source actionable: at least 95%.
+- Scenario-specific must terms: at least 95%.
+- Refusals: 0 on in-scope legal prompts.
+- `general_legal` / off-topic fallback: 0 on in-scope legal prompts.
 - Legal-safety hard fails: 0.
 - Dangerous framing: 0.
-- Median latency: below 20 seconds.
+- Wall-latency coverage: 100%.
+- Timing telemetry coverage: at least 95%.
+- p50 latency: below 10 seconds.
+- p90 latency: below 20 seconds.
 - No answer-quality flags on the exact UI smoke pack.
 
+The older 85% Act-hit / relevance milestone is only a diagnostic milestone for
+early retrieval work. It is not enough for product-ready signoff.
+
 The generated 200-prompt pack is human-like, not real production user logs. If real user logs are available, use those instead and keep the same scoring/report format.
+
+## Legal-HyDE Experiment Gate
+
+Legal-HyDE-lite is retrieval-only and defaults to `LEGAL_HYDE_MODE=fallback`
+after the seed-matched 500-prompt gate passed. Use `LEGAL_HYDE_MODE=off` for
+rollback and A/B baselines; because API settings are cached, rollback needs a
+process restart or redeploy after changing the environment variable. Do not
+promote `LEGAL_HYDE_MODE=always` for normal serving until the exact same frozen
+prompt set passes an off-vs-experiment gate.
+
+Recommended sequence:
+
+1. Run the baseline eval with `LEGAL_HYDE_MODE=off`.
+2. Run the experiment eval with `LEGAL_HYDE_MODE=fallback` first. Use
+   `LEGAL_HYDE_MODE=always` only for offline recall sweeps.
+3. Compare the two JSONL files with `scripts/compare_timed_evals.py`.
+4. Fail closed with `scripts/legal_hyde_regression_gate.py`.
+
+Example:
+
+```bash
+PYTHONPATH=. uv run python scripts/legal_hyde_regression_gate.py \
+  --baseline data/processed/eval_off.jsonl \
+  --experiment data/processed/eval_hyde_fallback.jsonl \
+  --out reports/legal_hyde_gate.md
+```
+
+The gate fails if prompt order/content changes, latency telemetry is missing,
+the experiment has more errors, more legal-safety hard fails, lower expected-Act
+hit, lower expected-Act cited hit, fewer relevance-ok answers, more refusals,
+or any p50/p90 latency regression. Keep new HyDE serving modes off until they
+pass on the product eval set.
