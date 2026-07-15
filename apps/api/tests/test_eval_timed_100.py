@@ -19,6 +19,7 @@ from scripts.eval_timed_100 import (
     load_eval_rows,
     product_pass,
     required_source_coverage,
+    stream_answer,
 )
 
 
@@ -72,6 +73,35 @@ def test_jsonl_dumps_escapes_unicode_line_separators():
     assert "\\u0085" in dumped
     assert "\\u2028" in dumped
     assert "\\u2029" in dumped
+
+
+def test_stream_answer_records_canonical_matter_plan_event(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            return iter([
+                b"event: matter_plan\n",
+                b'data: {"schema_version": 2, "plan_id": "matter_plan_v2_test"}\n',
+                b"\n",
+            ])
+
+    monkeypatch.setattr(
+        "scripts.eval_timed_100.urllib.request.urlopen",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+
+    observed = stream_answer("http://127.0.0.1:1", "test legal query", timeout_s=1)
+
+    assert observed["events"]["matter_plan"] == 1
+    assert observed["matter_plan"] == {
+        "schema_version": 2,
+        "plan_id": "matter_plan_v2_test",
+    }
 
 
 def test_expected_act_aliases_cover_human_like_mixed_hints():

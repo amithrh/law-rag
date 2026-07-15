@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -28,6 +29,7 @@ from apps.api.retrieval import (
     _focus_required_source_pack_text,
     _preserve_required_source_packs,
     _rerank_candidate_union,
+    _retrieval_policy,
     _section_numbers_from_anchor_patterns,
     _source_cluster_scores,
     _source_quality_score,
@@ -35,6 +37,62 @@ from apps.api.retrieval import (
     sparse_retrieve,
 )
 from apps.api.source_packs import SourcePack
+
+
+def test_public_retrieval_consumes_matter_plan_without_rerouting(monkeypatch):
+    from apps.api import retrieval
+    from apps.api.legal_issue_plan import build_matter_plan
+    from apps.api.matter_router import route_matter
+
+    query = "online order arrived broken what to do"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    def fail_reroute(_query: str):
+        raise AssertionError("retrieval must not independently reroute a planned matter")
+
+    async def empty_retrieve(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(retrieval, "route_matter", fail_reroute)
+    monkeypatch.setattr(retrieval, "hybrid_retrieve", empty_retrieve)
+    monkeypatch.setattr(retrieval.get_settings(), "query_expansion_enabled", False)
+    chunks, variants = asyncio.run(
+        retrieval.multi_query_hybrid_retrieve(
+            object(),
+            query,
+            route=route,
+            plan=plan,
+        )
+    )
+    category, packs = _retrieval_policy(query, route=route, plan=plan)
+
+    assert chunks == []
+    assert variants == []
+    assert category == route.category
+    assert [pack.id for pack in packs] == [
+        source.source_pack_id for source in plan.retrieval_sources
+    ]
+
+
+def test_matter_plan_retrieval_source_keeps_bare_act_default():
+    from apps.api.legal_issue_plan import RetrievalSourcePlan, build_matter_plan
+    from apps.api.matter_router import route_matter
+
+    query = "online order arrived broken what to do"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    source = RetrievalSourcePlan(
+        source_pack_id="test_pack",
+        title_patterns=["Consumer Protection Act 2019"],
+        search_query="consumer protection act",
+    )
+    plan = replace(plan, retrieval_sources=[source])
+
+    _, packs = _retrieval_policy(query, route=route, plan=plan)
+    assert packs[0].source_types == ("bare_act",)
 
 
 # ---------------------------------------------------------------------------

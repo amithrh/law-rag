@@ -48,7 +48,8 @@ import asyncpg
 
 from apps.api.config import get_settings
 from apps.api.embeddings import embedding_to_halfvec_literal, get_embedder
-from apps.api.matter_router import route_matter
+from apps.api.legal_issue_plan import MatterPlan
+from apps.api.matter_router import MatterRoute, route_matter
 from apps.api.source_packs import SourcePack, source_packs_for_route
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,36 @@ class RetrievedChunk:
         sparse dot-product depends on token frequency).
         """
         return 0.7 * self.dense_score + 0.3 * self.bm25_score
+
+
+def _retrieval_policy(
+    query: str,
+    *,
+    route: MatterRoute | None,
+    plan: MatterPlan | None,
+) -> tuple[str, list[SourcePack]]:
+    """Resolve source policy once, preferring the canonical MatterPlan."""
+    if plan is not None:
+        if route is not None and route.category != plan.primary_issue:
+            raise ValueError(
+                "MatterPlan primary issue does not match the supplied MatterRoute"
+            )
+        packs = [
+            SourcePack(
+                id=source.source_pack_id,
+                title_patterns=tuple(source.title_patterns),
+                search_query=source.search_query,
+                doc_ids=tuple(source.doc_ids),
+                anchor_patterns=tuple(source.anchor_patterns),
+                source_types=tuple(source.source_types),
+                priority=source.priority,
+            )
+            for source in plan.retrieval_sources
+        ]
+        return plan.primary_issue, packs
+
+    resolved_route = route or route_matter(query)
+    return resolved_route.category, source_packs_for_route(resolved_route, query)
 
 
 # ---------------------------------------------------------------------------
@@ -1505,6 +1536,8 @@ async def multi_query_hybrid_retrieve(
     pool: asyncpg.Pool,
     query: str,
     *,
+    route: MatterRoute | None = None,
+    plan: MatterPlan | None = None,
     source_types: list[str] | None = None,
     subject_areas: list[str] | None = None,
     top_k: int | None = None,
@@ -1540,6 +1573,11 @@ async def multi_query_hybrid_retrieve(
     import asyncio
 
     s = get_settings()
+    route_category, packs = _retrieval_policy(
+        query,
+        route=route,
+        plan=plan,
+    )
     if not getattr(s, "query_expansion_enabled", True):
         t_plain = time.perf_counter()
         chunks = await hybrid_retrieve(
@@ -1584,8 +1622,6 @@ async def multi_query_hybrid_retrieve(
                 return [], []
 
             union = {c.chunk_id: c for c in chunks}
-            route = route_matter(query)
-            packs = source_packs_for_route(route, query)
             await _merge_required_source_packs(
                 pool,
                 query,
@@ -1597,7 +1633,7 @@ async def multi_query_hybrid_retrieve(
                 query,
                 list(union.values()),
                 variants=variants,
-                route_category=route.category,
+                route_category=route_category,
                 packs=packs,
                 top_k=top_k,
                 timings=timings,
@@ -1640,8 +1676,6 @@ async def multi_query_hybrid_retrieve(
             return [], variants[1:]
 
         union = {c.chunk_id: c for c in chunks}
-        route = route_matter(query)
-        packs = source_packs_for_route(route, query)
         await _merge_required_source_packs(
             pool,
             query,
@@ -1653,7 +1687,7 @@ async def multi_query_hybrid_retrieve(
             query,
             list(union.values()),
             variants=variants,
-            route_category=route.category,
+            route_category=route_category,
             packs=packs,
             top_k=top_k,
             timings=timings,
@@ -1716,8 +1750,6 @@ async def multi_query_hybrid_retrieve(
     if not union:
         return [], variants[1:]
 
-    route = route_matter(query)
-    packs = source_packs_for_route(route, query)
     await _merge_required_source_packs(
         pool,
         query,
@@ -1729,7 +1761,7 @@ async def multi_query_hybrid_retrieve(
         query,
         list(union.values()),
         variants=variants,
-        route_category=route.category,
+        route_category=route_category,
         packs=packs,
         top_k=top_k,
         timings=timings,

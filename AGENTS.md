@@ -40,8 +40,9 @@ because it has a citation.
 ## Before Making a Change
 
 1. Identify the actual matter type, user role, jurisdiction, incident date,
-   desired outcome, and safety level. Use `LegalIssuePlan` as the target
-   contract, even where current serving code does not yet consume it fully.
+   desired outcome, and safety level. Use canonical `MatterPlan v2` as the
+   target contract. Retrieval already consumes its source policy; migrate
+   remaining answer, source-gap, evaluation, and UI owners into the same plan.
 2. Determine whether the failure is caused by intake, routing, source coverage,
    retrieval, answer ownership, citation matching, evaluation metadata, or UI.
    Do not patch the first visible symptom.

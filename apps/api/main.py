@@ -46,7 +46,11 @@ from apps.api.llm import (
     load_answer_prompt,
     stream_chat,
 )
-from apps.api.legal_issue_plan import LegalIssuePlan, build_legal_issue_plan
+from apps.api.legal_issue_plan import (
+    REVIEWED_CONTRACT_REQUIRED_CATEGORIES,
+    MatterPlan,
+    build_matter_plan,
+)
 from apps.api.matter_router import MatterRoute, route_matter, route_matter_trace
 from apps.api.model_warmup import get_model_warmup_state, prewarm_models
 from apps.api.relevance import RelevanceResult, RelevanceVerdict, compute_relevance
@@ -130,28 +134,7 @@ _CRIMINAL_REGIME_SOURCE_TERMS = (
     "indian penal",
     "criminal procedure",
 )
-_LAUNCH_CRITICAL_LLM_GUARD_ROUTES = {
-    "arrest_custody_safeguard",
-    "bonded_labour_rescue",
-    "business_contract_partnership",
-    "child_marriage_protection",
-    "child_custody_adoption",
-    "criminal_procedure_notice",
-    "criminal_defence_bail",
-    "criminal_general",
-    "custody_compensation",
-    "cyber_fraud_or_harassment",
-    "digital_platform_account",
-    "family_domestic",
-    "labour_exploitation_discrimination",
-    "manual_scavenging_safety",
-    "pmla_ed",
-    "police_fir",
-    "reproductive_rights_mtp",
-    "sexual_offence_survivor",
-    "tribal_caste_atrocity",
-    "workplace_sexual_harassment",
-}
+_LAUNCH_CRITICAL_LLM_GUARD_ROUTES = REVIEWED_CONTRACT_REQUIRED_CATEGORIES
 
 # ----- /search ---------------------------------------------------------------
 
@@ -467,8 +450,8 @@ def _matter_route_event(route: MatterRoute, query: str | None = None) -> dict:
     return {"event": "matter_route", "data": json.dumps(payload)}
 
 
-def _legal_issue_plan_event(plan: LegalIssuePlan) -> dict:
-    return {"event": "legal_issue_plan", "data": json.dumps(plan.to_event())}
+def _matter_plan_event(plan: MatterPlan) -> dict:
+    return {"event": "matter_plan", "data": json.dumps(plan.to_event())}
 
 
 def _workflow_diagnostics_event(
@@ -571,10 +554,10 @@ def _reviewed_workflow_relevance_result(
     )
 
 
-def _initial_route_events(route: MatterRoute, plan: LegalIssuePlan | None, query: str | None = None) -> list[dict]:
+def _initial_route_events(route: MatterRoute, plan: MatterPlan | None, query: str | None = None) -> list[dict]:
     events = [_matter_route_event(route, query)]
     if plan is not None:
-        events.append(_legal_issue_plan_event(plan))
+        events.append(_matter_plan_event(plan))
     return events
 
 
@@ -23192,7 +23175,7 @@ def _answer_contract_lines(
     route: MatterRoute,
     passages: list[dict],
     state: dict,
-    plan: LegalIssuePlan | None = None,
+    plan: MatterPlan | None = None,
     query: str = "",
     source_floor_only: bool = False,
 ) -> list[str]:
@@ -23523,7 +23506,7 @@ def _route_required_source_floor_passages(
     cited_source_keys: set[str],
     *,
     query: str = "",
-    plan: LegalIssuePlan | None = None,
+    plan: MatterPlan | None = None,
 ) -> list[dict]:
     """Prioritize retrieved sources the selected route itself says are required.
 
@@ -23780,7 +23763,7 @@ def _looks_like_anganwadi_source_blob(blob: str) -> bool:
 
 def _plan_must_cite_passages(
     route: MatterRoute,
-    plan: LegalIssuePlan | None,
+    plan: MatterPlan | None,
     official: list[dict],
     cited: set[int],
     *,
@@ -24998,7 +24981,7 @@ def _route_action_line(route: MatterRoute, passages: list[dict], *, query: str =
     return f"- {step} using the cited source [{idx}]."
 
 
-def _plan_action_line(plan: LegalIssuePlan | None, passages: list[dict]) -> str | None:
+def _plan_action_line(plan: MatterPlan | None, passages: list[dict]) -> str | None:
     if plan is None or not plan.next_steps or not passages:
         return None
     passage = passages[0]
@@ -25161,9 +25144,9 @@ async def answer(req: AnswerRequest):
     t_route = time.perf_counter()
     route = route_matter(req.q)
     _record_stage(timings, "matter_route", t_route)
-    issue_plan = build_legal_issue_plan(req.q, route)
+    issue_plan = build_matter_plan(req.q, route)
     if issue_plan is not None:
-        logger.debug("legal_issue_plan: %s", issue_plan.to_event())
+        logger.debug("matter_plan: %s", issue_plan.to_event())
 
     if route.category == "off_topic":
         metrics.refused_total.inc()
@@ -25229,7 +25212,8 @@ async def answer(req: AnswerRequest):
     subj = req.subjects
     t_retr = time.perf_counter()
     retrieved, expansion_variants = await multi_query_hybrid_retrieve(
-        pool, req.q, source_types=src_types, subject_areas=subj,
+        pool, req.q, route=route, plan=issue_plan,
+        source_types=src_types, subject_areas=subj,
         top_k=max(req.top_k, settings.rerank_top_k),
         timings=timings,
     )

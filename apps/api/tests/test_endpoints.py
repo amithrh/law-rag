@@ -342,12 +342,14 @@ def test_answer_emits_coverage_passages_and_sentences(monkeypatch):
             event_names = [e[0] for e in events]
             assert event_names[0] == "matter_route"
             # Matter route, issue plan, coverage chip, and passages arrive before prose.
-            assert "legal_issue_plan" in event_names
+            assert "matter_plan" in event_names
             assert "coverage" in event_names
             assert "passages" in event_names
-            assert event_names.index("matter_route") < event_names.index("legal_issue_plan")
-            assert event_names.index("legal_issue_plan") < event_names.index("coverage")
-            plan = next(d for ev, d in events if ev == "legal_issue_plan")
+            assert event_names.index("matter_route") < event_names.index("matter_plan")
+            assert event_names.index("matter_plan") < event_names.index("coverage")
+            plan = next(d for ev, d in events if ev == "matter_plan")
+            assert plan["schema_version"] == 2
+            assert plan["plan_id"].startswith("matter_plan_v2_")
             assert plan["primary_issue"] == "consumer"
             assert plan["user_role"] == "consumer_or_customer"
             assert plan["authority_ledger"][0]["act"] == "Consumer Protection Act 2019"
@@ -1074,12 +1076,12 @@ def test_private_assault_fir_delay_uses_ordinary_fir_template():
 
 def test_contract_floor_adds_bns_for_private_assault_after_generic_sources():
     from apps.api.main import _answer_contract_lines
-    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.legal_issue_plan import build_matter_plan
     from apps.api.matter_router import route_matter
 
     q = "neighbour assaulted me and local police delayed FIR, no police custody involved, which complaint route"
     route = route_matter(q)
-    plan = build_legal_issue_plan(q, route)
+    plan = build_matter_plan(q, route)
     passages = [
         {
             "index": 1,
@@ -3675,13 +3677,13 @@ def test_answer_contract_composite_expansion_uses_aggregate_anchor_not_first_sta
 
 
 def test_answer_contract_plan_must_cite_overrides_generic_source_budget():
-    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.legal_issue_plan import build_matter_plan
     from apps.api.main import _answer_contract_lines
     from apps.api.matter_router import route_matter
 
     q = "online order arrived broken what to do"
     route = route_matter(q)
-    plan = build_legal_issue_plan(q, route)
+    plan = build_matter_plan(q, route)
     passages = [
         {
             "index": 1,
@@ -3731,13 +3733,13 @@ def test_answer_contract_plan_must_cite_overrides_generic_source_budget():
 
 
 def test_answer_contract_plan_must_cite_matches_pesa_and_rfctlarr_aliases():
-    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.legal_issue_plan import build_matter_plan
     from apps.api.main import _answer_contract_lines
     from apps.api.matter_router import route_matter
 
     q = "land acquired for coal block without consulting palli sabha angul odisha what can i do"
     route = route_matter(q)
-    plan = build_legal_issue_plan(q, route)
+    plan = build_matter_plan(q, route)
     passages = [
         {
             "index": 16,
@@ -3774,13 +3776,13 @@ def test_answer_contract_plan_must_cite_matches_pesa_and_rfctlarr_aliases():
 
 
 def test_answer_contract_plan_must_cite_matches_sarfaesi_full_title():
-    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.legal_issue_plan import build_matter_plan
     from apps.api.main import _answer_contract_lines
     from apps.api.matter_router import route_matter
 
     q = "bank sent me sarfaesi notice under 13(2) what to do"
     route = route_matter(q)
-    plan = build_legal_issue_plan(q, route)
+    plan = build_matter_plan(q, route)
     passages = [
         {
             "index": 7,
@@ -3808,13 +3810,13 @@ def test_answer_contract_plan_must_cite_matches_sarfaesi_full_title():
 
 
 def test_answer_contract_plan_must_cite_matches_aadhaar_full_title():
-    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.legal_issue_plan import build_matter_plan
     from apps.api.main import _answer_contract_lines
     from apps.api.matter_router import route_matter
 
     q = "aadhaar number showing someone else photo cannot get pension help"
     route = route_matter(q)
-    plan = build_legal_issue_plan(q, route)
+    plan = build_matter_plan(q, route)
     passages = [
         {
             "index": 2,
@@ -3856,13 +3858,13 @@ def test_answer_contract_plan_must_cite_matches_aadhaar_full_title():
 
 
 def test_answer_contract_aadhaar_pension_floor_does_not_hallucinate_photo():
-    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.legal_issue_plan import build_matter_plan
     from apps.api.main import _answer_contract_lines
     from apps.api.matter_router import route_matter
 
     q = "old age pension stopped suddenly bank says aadhaar not linked"
     route = route_matter(q)
-    plan = build_legal_issue_plan(q, route)
+    plan = build_matter_plan(q, route)
     passages = [
         {
             "index": 2,
@@ -3897,13 +3899,13 @@ def test_answer_contract_aadhaar_pension_floor_does_not_hallucinate_photo():
 
 
 def test_answer_contract_plan_floor_does_not_add_rfctlarr_to_minor_mineral_pesa():
-    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.legal_issue_plan import build_matter_plan
     from apps.api.main import _answer_contract_lines
     from apps.api.matter_router import route_matter
 
     q = "sand mining lease given without gram sabha consent in scheduled area"
     route = route_matter(q)
-    plan = build_legal_issue_plan(q, route)
+    plan = build_matter_plan(q, route)
     passages = [
         {
             "index": 20,
@@ -3948,13 +3950,13 @@ def test_answer_contract_plan_floor_does_not_add_rfctlarr_to_minor_mineral_pesa(
 
 
 def test_answer_contract_next_step_uses_route_action_not_generic_source_phrase():
-    from apps.api.legal_issue_plan import build_legal_issue_plan
+    from apps.api.legal_issue_plan import build_matter_plan
     from apps.api.main import _answer_contract_lines
     from apps.api.matter_router import route_matter
 
     q = "sand mining lease given without gram sabha consent in scheduled area"
     route = route_matter(q)
-    plan = build_legal_issue_plan(q, route)
+    plan = build_matter_plan(q, route)
     passages = [
         {
             "index": 20,
@@ -8222,10 +8224,10 @@ def test_answer_errors_before_retrieval_when_llm_model_missing(monkeypatch):
             events = _collect_events(r)
 
     names = [e[0] for e in events]
-    assert names == ["matter_route", "legal_issue_plan", "error", "timing"]
+    assert names == ["matter_route", "matter_plan", "error", "timing"]
     route_payload = next(d for ev, d in events if ev == "matter_route")
     assert route_payload["category"] == "police_fir"
-    plan_payload = next(d for ev, d in events if ev == "legal_issue_plan")
+    plan_payload = next(d for ev, d in events if ev == "matter_plan")
     assert plan_payload["primary_issue"] == "police_fir"
     assert "incident_date_needed" in plan_payload["safety_flags"]
     error_payload = next(d for ev, d in events if ev == "error")

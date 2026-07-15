@@ -1,14 +1,10 @@
-"""Structured legal issue planning scaffold.
-
-This module is Milestone A of the plan-first answer architecture. It does not
-change answer generation yet; it creates a typed, serializable plan from the
-current matter route so evals and logs can expose what the system thinks the
-legal task is before retrieval/generation repair work begins.
-"""
+"""Canonical legal matter plan shared by retrieval and answer policy."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Literal
 
 from .matter_router import MatterRoute
@@ -28,6 +24,8 @@ class JurisdictionPlan:
 @dataclass(frozen=True)
 class AuthorityLedgerEntry:
     source: str
+    authority_id: str | None = None
+    identity_status: Literal["canonical", "provisional"] = "provisional"
     act: str | None = None
     section: str | None = None
     source_pack_id: str | None = None
@@ -39,26 +37,88 @@ class AuthorityLedgerEntry:
 
 
 @dataclass(frozen=True)
-class LegalIssuePlan:
+class RetrievalSourcePlan:
+    source_pack_id: str
+    title_patterns: list[str]
+    search_query: str
+    doc_ids: list[str] = field(default_factory=list)
+    anchor_patterns: list[str] = field(default_factory=list)
+    source_types: list[str] = field(default_factory=lambda: ["bare_act"])
+    priority: float = 1.0
+
+
+@dataclass(frozen=True)
+class AnswerPolicy:
+    required_primary_owner: str
+    fallback_owner: str = "source_gap_handoff"
+    allow_freeform_llm: bool = True
+    requires_reviewed_contract: bool = False
+
+
+@dataclass(frozen=True)
+class MatterPlan:
     schema_version: int
+    plan_id: str
     primary_issue: str
     primary_label: str
     confidence: float
     user_role: str
     jurisdiction: JurisdictionPlan
     incident_date_status: str
+    legal_regime: str | None
     case_stage: str
     desired_outcome: str
     urgency: str
     secondary_issues: list[str] = field(default_factory=list)
     required_facts: list[str] = field(default_factory=list)
     authority_ledger: list[AuthorityLedgerEntry] = field(default_factory=list)
+    retrieval_sources: list[RetrievalSourcePlan] = field(default_factory=list)
     forums: list[str] = field(default_factory=list)
+    remedies: list[str] = field(default_factory=list)
+    deadlines: list[str] = field(default_factory=list)
+    documents: list[str] = field(default_factory=list)
     next_steps: list[str] = field(default_factory=list)
+    portals: list[str] = field(default_factory=list)
+    escalation: list[str] = field(default_factory=list)
+    cautions: list[str] = field(default_factory=list)
     safety_flags: list[str] = field(default_factory=list)
+    answer_policy: AnswerPolicy = field(
+        default_factory=lambda: AnswerPolicy(
+            required_primary_owner="server_template_or_verified_llm"
+        )
+    )
 
     def to_event(self) -> dict:
         return asdict(self)
+
+
+REVIEWED_CONTRACT_REQUIRED_CATEGORIES = frozenset({
+    "arrest_custody_safeguard",
+    "bonded_labour_rescue",
+    "business_contract_partnership",
+    "child_marriage_protection",
+    "child_custody_adoption",
+    "criminal_procedure_notice",
+    "criminal_defence_bail",
+    "criminal_general",
+    "custody_compensation",
+    "cyber_fraud_or_harassment",
+    "digital_platform_account",
+    "family_domestic",
+    "labour_exploitation_discrimination",
+    "manual_scavenging_safety",
+    "pmla_ed",
+    "police_fir",
+    "reproductive_rights_mtp",
+    "sexual_offence_survivor",
+    "tribal_caste_atrocity",
+    "workplace_sexual_harassment",
+})
+
+_SOURCE_PACK_ACRONYMS = frozenset({
+    "bns", "bnss", "bsa", "crpc", "dpdp", "gst", "ibc", "ipc", "mmdr",
+    "ndps", "pesa", "pmla", "posh", "pwdva", "rfctlarr", "rte", "rti",
+})
 
 
 _STATE_TERMS = (
@@ -148,22 +208,35 @@ _CATEGORY_DEFAULT_ROLES = {
 }
 
 
-def build_legal_issue_plan(query: str, route: MatterRoute) -> LegalIssuePlan | None:
-    """Build a serializable plan scaffold from the current route.
-
-    Off-topic queries intentionally return None. The plan is diagnostic and
-    preparatory in this milestone; later milestones should make retrieval and
-    answer rendering consume it directly.
-    """
+def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
+    """Build the canonical v2 plan for a routed legal matter."""
     if route.category == "off_topic":
         return None
+
+    from .source_packs import source_packs_for_route
 
     q = _normalize(query)
     jurisdiction = _extract_jurisdiction(q, route)
     user_role = _extract_user_role(q, route.category)
     incident_status = _incident_date_status(q, route)
     required_facts = _dedupe(route.missing_facts)
-    authority_ledger = _authority_entries(q, route)
+    source_packs = source_packs_for_route(route, query)
+    retrieval_sources = [
+        RetrievalSourcePlan(
+            source_pack_id=pack.id,
+            title_patterns=list(pack.title_patterns),
+            search_query=pack.search_query,
+            doc_ids=list(pack.doc_ids),
+            anchor_patterns=list(pack.anchor_patterns),
+            source_types=list(pack.source_types),
+            priority=pack.priority,
+        )
+        for pack in source_packs
+    ]
+    authority_ledger = _bind_authority_policy(
+        _authority_entries(q, route),
+        retrieval_sources,
+    )
     safety_flags = _safety_flags(
         q,
         route=route,
@@ -171,25 +244,227 @@ def build_legal_issue_plan(query: str, route: MatterRoute) -> LegalIssuePlan | N
         jurisdiction=jurisdiction,
         incident_date_status=incident_status,
     )
+    action_pack = route.action_pack
+    case_stage = _case_stage(q)
+    desired_outcome = _desired_outcome(q, route)
+    secondary_issues = _secondary_issues(q, route.category)
+    forums = _dedupe(route.forums)
+    documents = _dedupe(action_pack.documents if action_pack else [])
+    next_steps = _dedupe(action_pack.next_steps if action_pack else [])
+    portals = _dedupe(action_pack.portals if action_pack else [])
+    escalation = _dedupe(action_pack.escalation if action_pack else [])
+    cautions = _dedupe(action_pack.cautions if action_pack else [])
+    requires_reviewed_contract = route.category in REVIEWED_CONTRACT_REQUIRED_CATEGORIES
+    answer_policy = AnswerPolicy(
+        required_primary_owner=(
+            "reviewed_workflow" if requires_reviewed_contract
+            else "server_template_or_verified_llm"
+        ),
+        allow_freeform_llm=not requires_reviewed_contract,
+        requires_reviewed_contract=requires_reviewed_contract,
+    )
+    plan_id = _plan_id(
+        query=q,
+        identity={
+            "issue": route.category,
+            "label": route.label,
+            "confidence": route.confidence,
+            "role": user_role,
+            "jurisdiction": asdict(jurisdiction),
+            "incident_date_status": incident_status,
+            "legal_regime": route.legal_regime,
+            "case_stage": case_stage,
+            "desired_outcome": desired_outcome,
+            "urgency": route.urgency,
+            "secondary_issues": secondary_issues,
+            "required_facts": required_facts,
+            "authority_ledger": [asdict(entry) for entry in authority_ledger],
+            "retrieval_sources": [asdict(source) for source in retrieval_sources],
+            "forums": forums,
+            "documents": documents,
+            "next_steps": next_steps,
+            "portals": portals,
+            "escalation": escalation,
+            "cautions": cautions,
+            "safety_flags": safety_flags,
+            "answer_policy": asdict(answer_policy),
+        },
+    )
 
-    return LegalIssuePlan(
-        schema_version=1,
+    return MatterPlan(
+        schema_version=2,
+        plan_id=plan_id,
         primary_issue=route.category,
         primary_label=route.label,
         confidence=route.confidence,
         user_role=user_role,
         jurisdiction=jurisdiction,
         incident_date_status=incident_status,
-        case_stage=_case_stage(q),
-        desired_outcome=_desired_outcome(q, route),
+        legal_regime=route.legal_regime,
+        case_stage=case_stage,
+        desired_outcome=desired_outcome,
         urgency=route.urgency,
-        secondary_issues=_secondary_issues(q, route.category),
+        secondary_issues=secondary_issues,
         required_facts=required_facts,
         authority_ledger=authority_ledger,
-        forums=_dedupe(route.forums),
-        next_steps=_dedupe(route.action_pack.next_steps if route.action_pack else []),
+        retrieval_sources=retrieval_sources,
+        forums=forums,
+        remedies=[],
+        deadlines=[],
+        documents=documents,
+        next_steps=next_steps,
+        portals=portals,
+        escalation=escalation,
+        cautions=cautions,
         safety_flags=safety_flags,
+        answer_policy=answer_policy,
     )
+
+
+def _plan_id(
+    *,
+    query: str,
+    identity: dict,
+) -> str:
+    payload = {
+        "schema_version": 2,
+        "query_facts": re.sub(r"[^a-z0-9]+", " ", query.lower()).strip(),
+        **identity,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:20]
+    return f"matter_plan_v2_{digest}"
+
+
+def _authority_identity(
+    entry: AuthorityLedgerEntry,
+    canonical_act: str | None,
+) -> tuple[str, Literal["canonical", "provisional"]]:
+    if canonical_act:
+        identity = "|".join((canonical_act, _legal_name(entry.section or "all")))
+        status: Literal["canonical", "provisional"] = "canonical"
+    else:
+        identity = _normalize(entry.source)
+        status = "provisional"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+    prefix = "authority" if status == "canonical" else "authority_provisional"
+    return f"{prefix}_{digest}", status
+
+
+def _legal_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _canonical_alias(act: str | None) -> str | None:
+    aliases = {
+        "bns": "bharatiya nyaya sanhita 2023",
+        "bnss": "bharatiya nagarik suraksha sanhita 2023",
+        "bsa": "bharatiya sakshya adhiniyam 2023",
+        "constitution": "constitution of india",
+        "constitution of india": "constitution of india",
+        "crpc": "code of criminal procedure 1973",
+        "ipc": "indian penal code 1860",
+    }
+    return aliases.get(_legal_name(act or ""))
+
+
+def _canonical_act_from_sources(
+    entry: AuthorityLedgerEntry,
+    retrieval_sources: list[RetrievalSourcePlan],
+) -> str | None:
+    alias = _canonical_alias(entry.act)
+    if alias:
+        return alias
+    act_name = _legal_name(entry.act or "")
+    if not re.search(r"\b(?:18|19|20)\d{2}\b", act_name):
+        return None
+    candidates: set[str] = set()
+    for source in retrieval_sources:
+        matched = False
+        for title in source.title_patterns:
+            title_name = _legal_name(title)
+            if act_name and (
+                act_name == title_name
+                or act_name in title_name
+                or title_name in act_name
+            ):
+                candidates.add(title_name)
+                matched = True
+        if matched:
+            continue
+        prefix = source.source_pack_id.lower().split("_", 1)[0]
+        if prefix in _SOURCE_PACK_ACRONYMS and re.search(
+            rf"(?<![a-z0-9]){re.escape(prefix)}(?![a-z0-9])",
+            act_name,
+        ) and source.title_patterns:
+            candidates.add(_legal_name(source.title_patterns[0]))
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _bind_authority_policy(
+    entries: list[AuthorityLedgerEntry],
+    retrieval_sources: list[RetrievalSourcePlan],
+) -> list[AuthorityLedgerEntry]:
+    bound: list[AuthorityLedgerEntry] = []
+    for entry in entries:
+        source_pack_id = _matching_source_pack_id(entry, retrieval_sources)
+        canonical_act = _canonical_act_from_sources(entry, retrieval_sources)
+        authority_id, identity_status = _authority_identity(entry, canonical_act)
+        bound.append(replace(
+            entry,
+            authority_id=authority_id,
+            identity_status=identity_status,
+            source_pack_id=source_pack_id,
+        ))
+    return bound
+
+
+def _matching_source_pack_id(
+    entry: AuthorityLedgerEntry,
+    retrieval_sources: list[RetrievalSourcePlan],
+) -> str | None:
+    act_text = _normalize(entry.act or "")
+    section_text = _normalize(entry.section or "")
+    section_match = re.search(r"\b(?:section|article|order)\s+([0-9][0-9a-z-]*)", section_text)
+    section_token = section_match.group(1) if section_match else None
+    specific_act = bool(_canonical_alias(entry.act)) or bool(
+        re.search(r"\b(?:18|19|20)\d{2}\b", _normalize(entry.act or ""))
+    )
+    candidates: list[tuple[int, str]] = []
+    for source in retrieval_sources:
+        score = 0
+        if specific_act and any(
+            _legal_name(title) == _legal_name(entry.act or "")
+            or _legal_name(title) in _legal_name(entry.act or "")
+            or _legal_name(entry.act or "") in _legal_name(title)
+            for title in source.title_patterns
+            if title
+        ):
+            score += 100
+
+        prefix = source.source_pack_id.lower().split("_", 1)[0]
+        if prefix in _SOURCE_PACK_ACRONYMS and re.search(
+            rf"(?<![a-z0-9]){re.escape(prefix)}(?![a-z0-9])",
+            act_text,
+        ):
+            score += 60
+
+        if score and section_token and any(
+            re.search(rf"(?:sec|article|order)[-_/]?{re.escape(section_token)}(?:\D|$)", anchor.lower())
+            for anchor in source.anchor_patterns
+        ):
+            score += 40
+
+        if score:
+            candidates.append((score, source.source_pack_id))
+
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
+        return None
+    return candidates[0][1]
 
 
 def _normalize(text: str) -> str:
@@ -654,8 +929,11 @@ def _safety_flags(
 
 
 __all__ = [
+    "AnswerPolicy",
     "AuthorityLedgerEntry",
     "JurisdictionPlan",
-    "LegalIssuePlan",
-    "build_legal_issue_plan",
+    "MatterPlan",
+    "REVIEWED_CONTRACT_REQUIRED_CATEGORIES",
+    "RetrievalSourcePlan",
+    "build_matter_plan",
 ]

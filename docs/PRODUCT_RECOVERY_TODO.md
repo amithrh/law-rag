@@ -4,11 +4,11 @@
 
 Status: not production ready.
 
-The recovery baseline is committed locally. The deterministic API gates are
-green, but the product is still not launch-ready: remote CI, a fresh independent
-holdout run, manual legal-quality review, and the operational/privacy gates
-below remain open. Its architecture still contains interim workflow ownership
-and source-pack arbitration that must move into declarative MatterPlans.
+The reproducible recovery baseline is committed and green locally and in remote
+CI. The product is still not launch-ready: a fresh independent holdout run,
+manual legal-quality review, and the operational/privacy gates below remain
+open. Its architecture still contains interim answer ownership and source-gap
+arbitration that must move into canonical MatterPlan v2.
 
 P0 ownership baseline, 2026-07-11:
 
@@ -42,6 +42,21 @@ P0 ownership baseline, 2026-07-11:
   deterministic clean-clone selection (`1,283 passed`, `50 deselected` with a
   deliberately unreachable database), while the full `1,333`-test local gate
   continues to cover all three environment-backed slices.
+- Replacement remote CI run `29390974062` passed the deterministic API suite,
+  Docker-backed pgvector seed/API health smoke, frontend type-check, and merged
+  production Compose contract. This closes P0's remote reproducibility gate.
+- P1A now emits canonical `matter_plan` schema v2 with deterministic plan IDs,
+  canonical/provisional authority identity, exact retrieval-source descriptors,
+  and runtime-aligned critical-route answer policy. Multi-query retrieval
+  consumes the supplied plan and no longer reroutes or reselects source packs.
+  The benchmark parser records the same event. Adversarial tests fail closed on
+  section-only matches, neighboring laws, route-prose acronyms, generic/yearless
+  authorities, duplicate source packs, and punctuation-equivalent Act names.
+- P1A acceptance evidence: final independent review PASS, `1,341 passed` in the
+  full API suite (`381.44s`), `110 passed` in the focused plan/retrieval/evaluator
+  gate, two live-stack SSE checks, and frontend type-check green. This does not
+  close P1: answer rendering, source-gap/eval authority-ID consumption, UI, and
+  first-ten-route owner retirement remain open.
 - This is a regression result, not launch evidence. A fresh 500-prompt
   human-style evaluation, independent legal-quality review, and the operational
   release gates remain required before any production claim.
@@ -85,8 +100,7 @@ because a focused prompt slice passes.
   an explicit review run uses `--allow-fail`.
 - [x] Add non-interactive CI for API tests, frontend type-check, and syntax
   checks, plus a Docker-backed pgvector schema, synthetic seed, and `/healthz`
-  API startup smoke. A remote green workflow run is still required before P0
-  exit.
+  API startup smoke. Remote run `29390974062` is green.
 - [x] Update README and Makefile to match the real implementation; remove stale
   "pre-implementation" claims and placeholder eval commands.
 - [x] Create `scripts/corpus_manifest.py`, an aggregate-only corpus/runtime
@@ -100,13 +114,14 @@ and a documented local startup path.
 
 ## P1: Replace Competing Answer Owners
 
-- [ ] Define `MatterPlan v2` as the canonical schema for issue, role, state,
+- [x] Define `MatterPlan v2` as the canonical schema for issue, role, state,
   incident date, case stage, desired outcome, required facts, authority ledger,
   forum, remedies, deadlines, documents, safety flags, and confidence.
-- [ ] Make routing emit `MatterPlan v2`, not only `MatterRoute` plus free-text
+- [x] Make routing emit `MatterPlan v2`, not only `MatterRoute` plus free-text
   action-pack fields.
-- [ ] Make retrieval consume the authority ledger rather than independently
-  inferring source packs from overlapping keyword logic.
+- [x] Make retrieval consume MatterPlan's exact authority/retrieval policy rather
+  than independently rerouting and inferring source packs from overlapping
+  keyword logic.
 - [ ] Make answer rendering consume the same plan. Migrate high-volume routes
   first and retire their legacy template branches.
 - [ ] Make source-gap checks and eval scoring consume plan authority IDs instead

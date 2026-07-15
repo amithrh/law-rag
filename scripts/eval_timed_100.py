@@ -380,7 +380,7 @@ def stream_answer(api: str, query: str, *, timeout_s: int) -> dict[str, Any]:
         "passages": [],
         "sources": [],
         "matter_route": None,
-        "legal_issue_plan": None,
+        "matter_plan": None,
         "workflow": None,
         "timing": None,
         "wall_ms": None,
@@ -406,8 +406,8 @@ def stream_answer(api: str, query: str, *, timeout_s: int) -> dict[str, Any]:
                 out["events"][event_name] += 1
                 if event_name == "matter_route":
                     out["matter_route"] = data
-                elif event_name == "legal_issue_plan":
-                    out["legal_issue_plan"] = data if isinstance(data, dict) else None
+                elif event_name == "matter_plan":
+                    out["matter_plan"] = data if isinstance(data, dict) else None
                 elif event_name == "coverage":
                     out["coverage"] = data
                 elif event_name == "source_gap":
@@ -1336,7 +1336,7 @@ def _uses_criminal_code_framing(text: str) -> bool:
 
 def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str, Any]:
     route = observed.get("matter_route") or {}
-    plan = observed.get("legal_issue_plan") or {}
+    plan = observed.get("matter_plan") or {}
     workflow = observed.get("workflow") or {}
     timing = observed.get("timing") or {}
     relevance = observed.get("relevance") or {}
@@ -1432,7 +1432,7 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
         "action_pack_cautions": action_pack.get("cautions") or [],
         "action_pack_next_steps": action_pack.get("next_steps") or [],
         "red_flags": route.get("red_flags") or [],
-        "legal_issue_plan": plan,
+        "matter_plan": plan,
         "plan_primary_issue": plan.get("primary_issue"),
         "plan_secondary_issues": plan.get("secondary_issues") or [],
         "plan_user_role": plan.get("user_role"),
