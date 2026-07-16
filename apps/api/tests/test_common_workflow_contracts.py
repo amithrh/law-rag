@@ -20,10 +20,12 @@ from apps.api.main import (
     _legacy_template_preempts_workflow,
     _promote_reviewed_workflow_contract_line,
     _prompt_retrieval_candidates,
+    _promote_safe_route_next_step,
     _reviewed_workflow_relevance_result,
     _workflow_diagnostics_event,
 )
 from apps.api.matter_router import route_matter
+from apps.api.legal_issue_plan import build_matter_plan
 from apps.api.relevance import RelevanceResult, RelevanceVerdict
 from apps.api.verifier import SentenceStatus, SentenceVerification
 
@@ -39,6 +41,21 @@ def _grounded_joined(query: str, passages: list[dict]) -> str:
 def _workflow_id(query: str, passages: list[dict]) -> str | None:
     event = authority_graph_workflow_event(query, route_matter(query), passages)
     return event["id"] if event else None
+
+
+RBI_OMBUDSMAN_SOURCES = [
+    {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-1"},
+    {"index": 2, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-3"},
+    {"index": 3, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-6"},
+    {"index": 4, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-9"},
+    {"index": 5, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-10"},
+]
+LOAN_APP_REGULATORY_SOURCES = [
+    {"index": 6, "title": "Reserve Bank of India (Digital Lending) Directions, 2025", "anchor": "rbi-digital-lending-directions-2025/para-11"},
+    {"index": 7, "title": "Reserve Bank of India (Digital Lending) Directions, 2025", "anchor": "rbi-digital-lending-directions-2025/para-12"},
+    {"index": 8, "title": "Outsourcing of Financial Services - Responsibilities of regulated entities employing Recovery Agents", "anchor": "rbi-recovery-agents-2022/para-2"},
+    *RBI_OMBUDSMAN_SOURCES,
+]
 
 
 def test_stage_goal_exact_answer_contracts_cover_ndps_and_user_terms():
@@ -90,16 +107,13 @@ def _workflow_event_payload(query: str, passages: list[dict], lines: list[str]) 
 def test_common_workflow_contract_handles_bank_debit_and_freeze():
     debit = _joined(
         "bank deducted money wrongly and customer care not helping",
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-        ],
+        RBI_OMBUDSMAN_SOURCES,
     )
-    assert "wrong debit, deducted, debited" in debit
+    assert "wrong debit" in debit
     assert "RBI Ombudsman/CMS" in debit
     assert "transaction ID/RRN" in debit
-    assert "service-deficiency forum backup" in debit
-    assert "Consumer Protection Act 2019, Section 35" in debit
+    assert "Clause 10" in debit
+    assert "Consumer Protection Act" not in debit
 
     freeze = _joined(
         "salary account blocked by lien after cyber complaint no notice",
@@ -141,10 +155,7 @@ def test_common_workflow_contract_handles_bank_debit_and_freeze():
 
     maintenance_charge = _joined(
         "bank deducted maintenance charge twice and branch is not giving complaint number",
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-        ],
+        RBI_OMBUDSMAN_SOURCES,
     )
     assert "wrong deduction" in maintenance_charge
     assert "RBI Ombudsman/CMS" in maintenance_charge
@@ -152,10 +163,7 @@ def test_common_workflow_contract_handles_bank_debit_and_freeze():
 
     gpay = _joined(
         "GPay showed payment failed but amount debited from bank, both sides are blaming each other",
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-        ],
+        RBI_OMBUDSMAN_SOURCES,
     )
     assert "GPay" in gpay
     assert "RBI Ombudsman/CMS" in gpay
@@ -175,10 +183,7 @@ def test_common_workflow_contract_handles_bank_debit_and_freeze():
 
 
 def test_common_workflow_contract_diagnostics_explain_selection_and_miss():
-    debit_passages = [
-        {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-        {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-2"},
-    ]
+    debit_passages = RBI_OMBUDSMAN_SOURCES
 
     selected = common_workflow_contract_diagnostics(
         "ATM cash not dispensed but account debited branch not helping",
@@ -1325,47 +1330,46 @@ def test_stabilization_epf_zero_contribution_is_not_lost_withdrawal():
 def test_common_workflow_contract_handles_loan_app_harassment():
     answer = _joined(
         "loan app is harassing my contacts and sending my photo",
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-13"},
-            {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
-            {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
-        ],
+        LOAN_APP_REGULATORY_SOURCES,
     )
     assert "instant loan app sending your photo to contacts" in answer
     assert "RBI Ombudsman" in answer
-    assert "lender grievance, personal-data misuse" in answer
-    assert "sending your photo to contacts" in answer
-    assert "cyber police/1930" in answer
+    assert "Clause 1 applies the Scheme to services provided by a Regulated Entity" in answer
+    assert "Clause 3 defines a Regulated Entity" in answer
+    assert "contact lists or call logs" in answer
+    assert "family members, referees, and friends" in answer
+    assert "cyber police/1930" not in answer
     assert "messages sent to contacts" in answer
     assert "morphed nude/non-consensual image threat" not in answer
 
     workplace = _joined(
         "collection people came to my workplace shouting about emi default",
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-13"},
-            {"index": 3, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
-        ],
+        LOAN_APP_REGULATORY_SOURCES,
     )
     assert "collection/recovery people threatening workplace" in workplace
     assert "RBI Ombudsman" in workplace
-    assert "threat or criminal complaint as separate tracks" in workplace
-    assert "workplace or neighbour contact proof" in workplace
+    assert "recovery-agent circular prohibits" in workplace
+    assert "dated record" in workplace
 
     boss_contact = _joined(
         "loan app people are calling my boss and saying I am fraud",
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-13"},
-            {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66D"},
-            {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
-        ],
+        LOAN_APP_REGULATORY_SOURCES,
     )
     assert "calling your boss or employer" in boss_contact
-    assert "cybercrime.gov.in" in boss_contact
-    assert "calling your boss or employer" in boss_contact
-    assert "workplace or neighbour contact proof" in boss_contact
+    assert "cybercrime.gov.in" not in boss_contact
+    assert "dated record" in boss_contact
+
+    generic_route = route_matter("loan app is harassing my contacts and calling my boss")
+    generic_route_text = json.dumps(generic_route.to_event()).lower()
+    assert "cyber police" not in generic_route_text
+    assert "cybercrime.gov.in" not in generic_route_text
+
+    threat_route = route_matter(
+        "Unregistered loan app is blackmailing me with a morphed nude photo if I do not pay tonight."
+    )
+    threat_route_text = json.dumps(threat_route.to_event()).lower()
+    assert "cyber police" in threat_route_text
+    assert "cybercrime.gov.in" in threat_route_text
 
 
 def test_stage2_false_nbfc_loan_uses_credit_identity_workflow_not_loan_app():
@@ -1525,10 +1529,7 @@ def test_property_custody_phrasing_never_selects_habeas_workflow():
 
 
 def test_stage5_money_cyber_identity_rendered_contracts_hit_user_variant_terms():
-    bank_sources = [
-        {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-        {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-    ]
+    bank_sources = RBI_OMBUDSMAN_SOURCES
     bank = _grounded_joined("Bank deducted money wrongly and customer care not helping.", bank_sources)
     assert "wrong deduction" in bank
     assert "RBI Ombudsman" in bank
@@ -1559,32 +1560,29 @@ def test_stage5_money_cyber_identity_rendered_contracts_hit_user_variant_terms()
     loan_app = _grounded_joined(
         "loan app threatening to make morphed nude photo if I dont pay today",
         [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-13"},
-            {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
-            {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
+            *LOAN_APP_REGULATORY_SOURCES,
+            {"index": 9, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
+            {"index": 10, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-308"},
         ],
     )
     assert "RBI Ombudsman" in loan_app
-    assert "morphed nude" in loan_app
-    assert "Do not pay" in loan_app
-    assert "cyber police" in loan_app
+    assert "IT Act Section 66E is narrower" in loan_app
+    assert "BNS Section 308" in loan_app
+    assert "do not pay" in loan_app.lower()
+    assert "urgent cyber-reporting" in loan_app
     assert "threat" in loan_app.lower()
 
     exact_loan_app_morph = _grounded_joined(
         "unregistered loan app blackmailing with morphed nude if I miss payment tonight",
         [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-13"},
-            {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
-            {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
-            {"index": 5, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
+            *LOAN_APP_REGULATORY_SOURCES,
+            {"index": 9, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66E"},
+            {"index": 10, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-308"},
         ],
     )
-    assert "unregistered loan app blackmailing you with a morphed nude" in exact_loan_app_morph
-    assert "morphed nude" in exact_loan_app_morph
-    assert "do not reshare the image" in exact_loan_app_morph
-    assert "1930" in exact_loan_app_morph
+    assert "BNS Section 308" in exact_loan_app_morph
+    assert "do not pay or forward the threatened image" in exact_loan_app_morph
+    assert "urgent cyber-reporting" in exact_loan_app_morph
     assert "RBI Ombudsman/CMS" in exact_loan_app_morph
 
     fake_cbi = _grounded_joined(
@@ -1738,28 +1736,21 @@ def test_stage5_money_cyber_identity_rendered_contracts_hit_user_variant_terms()
 
 
 def test_stage3_money_property_workflows_emit_full_user_paths():
-    bank_sources = [
-        {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-        {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-    ]
+    bank_sources = RBI_OMBUDSMAN_SOURCES
     debit = _grounded_joined("Bank deducted money wrongly and customer care not helping.", bank_sources)
     assert "written complaint" in debit
     assert "RBI Ombudsman/CMS" in debit
-    assert "service-deficiency forum backup" in debit
+    assert "Clause 10" in debit
+    assert "Consumer Protection Act" not in debit
     assert "UPI/transaction ID/RRN" in debit
 
     loan_app = _grounded_joined(
         "Loan app is harassing my contacts.",
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Information Technology Act 2000", "anchor": "it-2000/sec-66D"},
-            {"index": 3, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-8"},
-            {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
-        ],
+        LOAN_APP_REGULATORY_SOURCES,
     )
-    assert "lender/NBFC or regulated partner" in loan_app
-    assert "contact-data abuse" in loan_app
-    assert "cyber police/1930/cybercrime.gov.in" in loan_app
+    assert "Clause 1 applies the Scheme to services provided by a Regulated Entity" in loan_app
+    assert "contact lists or call logs" in loan_app
+    assert "cyber police" not in loan_app
 
     tenant = _grounded_joined(
         "My tenant is not vacating house and not paying rent",
@@ -1802,10 +1793,7 @@ def test_stage3_banking_mixed_routes_do_not_emit_generic_criminal_regime_caveat(
 
 
 def test_stage5_high_volume_contracts_select_expected_workflows():
-    bank_sources = [
-        {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-        {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-    ]
+    bank_sources = RBI_OMBUDSMAN_SOURCES
     upi_refund = _grounded_joined(
         "customer care says failed UPI refund will come after 30 days, can I complain now",
         bank_sources,
@@ -1816,7 +1804,7 @@ def test_stage5_high_volume_contracts_select_expected_workflows():
     ) == "wrong_bank_debit"
     assert "failed UPI debit" in upi_refund
     assert "RBI Ombudsman/CMS" in upi_refund
-    assert "Consumer Protection Act" in upi_refund
+    assert "Consumer Protection Act" not in upi_refund
     assert "transaction ID/RRN" in upi_refund
     assert "1930" not in upi_refund
 
@@ -1825,7 +1813,7 @@ def test_stage5_high_volume_contracts_select_expected_workflows():
         bank_sources,
     )
     assert "PhonePe/payment app" in phonepe
-    assert "Consumer Protection Act" in phonepe
+    assert "Consumer Protection Act" not in phonepe
     assert "complaint number" in phonepe
 
     freeze_sources = [
@@ -2166,24 +2154,16 @@ def test_stage3_property_workflows_own_common_user_answers():
 def test_common_workflow_contract_handles_recovery_agent_and_cyber_money_lanes():
     recovery = _joined(
         "loan recovery agents came home and threatened my mother",
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
-            {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173"},
-        ],
+        LOAN_APP_REGULATORY_SOURCES,
     )
-    assert "recovery-agent harassment" in recovery
+    assert "recovery-agent circular prohibits" in recovery
     assert "RBI Ombudsman" in recovery
-    assert "threat or criminal complaint as separate tracks" in recovery
-    assert "visit details" in recovery or "call logs" in recovery
+    assert "family members, referees, and friends" in recovery
+    assert "threat recordings" in recovery or "call logs" in recovery
 
     office_recovery = _joined(
         "recovery agent came to my office shouting EMI default in front of staff",
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
-            {"index": 3, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-8"},
-        ],
+        LOAN_APP_REGULATORY_SOURCES,
     )
     assert "recovery agent came to office" in office_recovery
     assert "EMI default in front of staff" in office_recovery
@@ -2590,6 +2570,30 @@ def test_wage_false_fir_prompt_window_preserves_criminal_sources():
     assert "Bharatiya Nagarik Suraksha" in titles
     assert "Bharatiya Nyaya" in titles
     assert all("Social Security" not in item.title for item in filtered)
+
+
+def test_loan_app_prompt_window_preserves_all_registry_sources_and_drops_decoy():
+    query = "Loan app is harassing my contacts and calling my boss. What can I do?"
+    route = route_matter(query)
+    retrieved = [
+        SimpleNamespace(index=source["index"], title=source["title"], anchor=source["anchor"])
+        for source in LOAN_APP_REGULATORY_SOURCES
+    ] + [
+        SimpleNamespace(
+            index=99,
+            title="Banking Regulation Act 1949",
+            anchor="banking-regulation-1949/sec-45za",
+        )
+    ]
+
+    filtered = _prompt_retrieval_candidates(query, route, retrieved)
+    anchors = {item.anchor for item in filtered}
+
+    assert len(filtered) == 8
+    assert "rbi-digital-lending-directions-2025/para-11" in anchors
+    assert "rbi-digital-lending-directions-2025/para-12" in anchors
+    assert "rbi-recovery-agents-2022/para-2" in anchors
+    assert "banking-regulation-1949/sec-45za" not in anchors
 
 
 def test_common_workflow_contract_handles_family_intimacy_safely():
@@ -3295,12 +3299,9 @@ def test_common_workflow_contract_wires_before_old_templates():
     answer = " ".join(_grounded_template_lines(
         query,
         route_matter(query),
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-        ],
+        RBI_OMBUDSMAN_SOURCES,
     ))
-    assert "wrong debit, deducted, debited" in answer
+    assert "wrong debit" in answer
     assert "transaction ID/RRN" in answer
 
 
@@ -4739,6 +4740,10 @@ def test_stage2_money_identity_failures_have_deterministic_workflow_owners():
             {"index": 10, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
             {"index": 11, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-106"},
         ]
+    sources.extend(
+        {**source, "index": 20 + offset}
+        for offset, source in enumerate(LOAN_APP_REGULATORY_SOURCES)
+    )
     cases = {
         "someone posted my phone number on dating app and strangers are calling me": (
             "dating_app_phone_number_abuse",
@@ -4762,7 +4767,7 @@ def test_stage2_money_identity_failures_have_deterministic_workflow_owners():
         ),
         "loan app people are calling my boss and saying I am fraud": (
             "loan_app_harassment",
-            ("RBI Ombudsman/CMS", "workplace"),
+            ("RBI Ombudsman/CMS", "boss or employer"),
         ),
         "credit card charged annual fee twice and support closed my complaint": (
             "wrong_bank_debit",
@@ -4943,6 +4948,10 @@ def test_stage4_public_service_and_consumer_prompts_have_authority_owners():
         {"index": 14, "title": "Indian Contract Act 1872", "anchor": "indian-contract-1872/sec-37"},
         {"index": 15, "title": "Micro, Small and Medium Enterprises Development Act 2006", "anchor": "msmed-2006/sec-18"},
     ]
+    sources.extend(
+        {**source, "index": 20 + offset}
+        for offset, source in enumerate(RBI_OMBUDSMAN_SOURCES)
+    )
     cases = {
         "fake customer support made me install AnyDesk and money got transferred from my bank account": (
             "cyber_money_fraud",
@@ -7486,6 +7495,36 @@ def test_reviewed_workflow_relevance_override_is_source_gated_and_exact_owner_on
     assert overridden.verdict == RelevanceVerdict.OK
     assert overridden.score == cosine_false_negative.score
 
+    weak_contract = _reviewed_workflow_relevance_result(
+        cosine_false_negative,
+        route=route,
+        workflow_result=workflow,
+        template_lines=workflow.lines,
+        source_gap_event=None,
+        emitted_citation_indices={1, 2},
+        sentence_quality_failed=True,
+    )
+    assert weak_contract is not None
+    assert weak_contract.verdict == RelevanceVerdict.OFF_TOPIC
+
+    cosine_ok = RelevanceResult(
+        score=0.72,
+        verdict=RelevanceVerdict.OK,
+        threshold=0.50,
+        band=0.08,
+    )
+    quality_downgraded = _reviewed_workflow_relevance_result(
+        cosine_ok,
+        route=route,
+        workflow_result=workflow,
+        template_lines=workflow.lines,
+        source_gap_event=None,
+        emitted_citation_indices={1, 2},
+        sentence_quality_failed=True,
+    )
+    assert quality_downgraded is not None
+    assert quality_downgraded.verdict == RelevanceVerdict.PARTIAL
+
     no_citations = _reviewed_workflow_relevance_result(
         cosine_false_negative,
         route=route,
@@ -7518,6 +7557,34 @@ def test_reviewed_workflow_relevance_override_is_source_gated_and_exact_owner_on
     )
     assert legacy_shadow is not None
     assert legacy_shadow.verdict == RelevanceVerdict.OFF_TOPIC
+
+
+def test_registry_owned_bank_evidence_checklist_is_operational_guidance():
+    query = "Bank deducted money wrongly and customer care is not helping"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    header = SentenceVerification(
+        text="**What you can do next**",
+        status=SentenceStatus.META,
+        citations=[],
+        entailment_score=None,
+        reason="meta line",
+        auto_cited=False,
+    )
+    checklist = SentenceVerification(
+        text="- Keep the bank statement entry, UPI/transaction ID/RRN, alerts, customer-care messages or call logs, complaint number, reply or no-reply proof, and debit/refund timeline.",
+        status=SentenceStatus.UNSUPPORTED,
+        citations=[],
+        entailment_score=None,
+        reason="operational checklist",
+        auto_cited=False,
+    )
+
+    promoted = _promote_safe_route_next_step(checklist, route, header, plan)
+
+    assert promoted.status == SentenceStatus.GUIDANCE
+    assert promoted.citations == []
 
 
 def test_ismw_registration_uses_narrow_source_gated_legacy_owner_not_labour_fallback():

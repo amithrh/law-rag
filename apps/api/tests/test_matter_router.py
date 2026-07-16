@@ -999,6 +999,12 @@ def test_criminal_regime_handles_july_2024_cutover_phrases():
         assert route.category == "cyber_fraud_or_harassment"
         assert route.legal_regime == expected, query
 
+    immediate_loan_app = route_matter(
+        "loan app is blackmailing me with a morphed nude if I do not pay tonight"
+    )
+    assert immediate_loan_app.category == "banking_credit_dispute"
+    assert immediate_loan_app.legal_regime == current
+
 
 def test_mixed_criminal_dates_require_regime_clarification():
     for query in (
@@ -1837,8 +1843,8 @@ def test_common_user_gate_failure_clusters_route_to_specific_action_packs():
             "loan_app_harassment",
         ),
         "loan app threatening to make morphed nude photo if I dont pay today": (
-            "cyber_fraud_or_harassment",
-            "cyber",
+            "banking_credit_dispute",
+            "loan_app_harassment",
         ),
         "private hospital not giving medical records after discharge": (
             "consumer",
@@ -4034,3 +4040,11 @@ def test_stage_e9_fra_claim_refusal_routes_to_forest_rights_not_criminal_composi
     assert route.label == "Forest rights / FRA claim or forest produce"
     assert any("Forest Rights Act 2006" in source for source in route.required_sources)
     assert not any("BNS/BNSS" in source or "IPC/CrPC" in source for source in route.required_sources)
+
+
+def test_loan_app_contact_harassment_is_not_mislabeled_as_shelter_risk():
+    contact_only = route_matter("loan app is harassing my contacts and calling relatives")
+    assert "Shelter or personal safety concern" not in contact_only.red_flags
+
+    home_threat = route_matter("loan app agent is threatening me and coming to my home")
+    assert "Shelter or personal safety concern" in home_threat.red_flags

@@ -10,7 +10,12 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from .model import AuthorityMigration, AuthorityRecord, legal_name
+from .model import (
+    AuthorityMigration,
+    AuthorityRecord,
+    AuthorityWorkflowRecord,
+    legal_name,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -26,11 +31,18 @@ class LoadedAuthorityMigration:
 class AuthorityRegistry:
     schema_version: int
     records: tuple[AuthorityRecord, ...]
+    workflows: tuple[AuthorityWorkflowRecord, ...]
     migrations: tuple[LoadedAuthorityMigration, ...]
 
     def by_key(self, canonical_key: str) -> AuthorityRecord | None:
         return next(
             (record for record in self.records if record.canonical_key == canonical_key), None
+        )
+
+    def workflow_for_scenario(self, scenario_id: str) -> AuthorityWorkflowRecord | None:
+        return next(
+            (record for record in self.workflows if record.scenario_id == scenario_id),
+            None,
         )
 
     def resolve(
@@ -87,6 +99,7 @@ def build_authority_registry(
     migrations: tuple[LoadedAuthorityMigration, ...],
 ) -> AuthorityRegistry:
     records: dict[str, AuthorityRecord] = {}
+    workflows: dict[str, AuthorityWorkflowRecord] = {}
     authority_ids: dict[str, str] = {}
     document_anchors: dict[tuple[str, str], str] = {}
     previous_migration_id = ""
@@ -116,9 +129,28 @@ def build_authority_registry(
             records[record.canonical_key] = record
             authority_ids[record.authority_id_expected] = record.canonical_key
             document_anchors[anchor_key] = record.canonical_key
+        for operation in migration.workflow_operations:
+            workflow = operation.record
+            previous = workflows.get(workflow.scenario_id)
+            previous_hash = previous.record_sha256 if previous else None
+            if operation.expected_previous_record_sha256 != previous_hash:
+                raise ValueError(
+                    f"unexpected previous workflow hash for {workflow.scenario_id}: "
+                    f"expected {operation.expected_previous_record_sha256}, found {previous_hash}"
+                )
+            workflows[workflow.scenario_id] = workflow
+    for workflow in workflows.values():
+        missing = sorted(
+            {item.registry_key for item in workflow.authorities if item.registry_key not in records}
+        )
+        if missing:
+            raise ValueError(
+                f"workflow {workflow.scenario_id} references unknown authorities: {missing}"
+            )
     return AuthorityRegistry(
         schema_version=1,
         records=tuple(records[key] for key in sorted(records)),
+        workflows=tuple(workflows[key] for key in sorted(workflows)),
         migrations=migrations,
     )
 

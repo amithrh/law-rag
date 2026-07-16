@@ -9,6 +9,7 @@ The sparse-vector test that loads the actual BGE-M3 weights is marked
 `needs_models` so CI without ML deps skips it; the offline tests are
 unmarked and run on every commit.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -16,19 +17,20 @@ import json
 from dataclasses import replace
 
 import pytest
-
 from apps.api.config import Settings
 from apps.api.retrieval import (
+    RequiredAuthorityAnchor,
     RetrievedChunk,
-    _apply_authority_rerank_boosts,
     _anchor_boundary_regexes,
     _anchor_regexes_from_patterns,
+    _apply_authority_rerank_boosts,
     _bm25_retrieve_sql,
     _fetch_source_pack_candidates,
     _filter_query_ineligible_sources,
     _focus_required_source_pack_text,
     _preserve_required_source_packs,
     _provenance_filter_sql,
+    _required_source_pack_limit,
     _rerank_candidate_union,
     _retrieval_policy,
     _section_numbers_from_anchor_patterns,
@@ -125,18 +127,18 @@ def test_rrf_fusion_combines_three_sources():
       E: 1/(60+4)                    = 0.01562
       F: 1/(60+3)                    = 0.01587
     """
-    dense = [1, 2, 3, 4]      # A=1, B=2, D=3, E=4
-    sparse = [5, 6, 1, 2]     # C=5, F=6, A=1 at rank 3, B=2 at rank 4
-    bm25 = [1, 2]             # A=1, B=2 at rank 2
+    dense = [1, 2, 3, 4]  # A=1, B=2, D=3, E=4
+    sparse = [5, 6, 1, 2]  # C=5, F=6, A=1 at rank 3, B=2 at rank 4
+    bm25 = [1, 2]  # A=1, B=2 at rank 2
 
     # Re-map to chunk_ids: A=1, B=2, D=3, E=4, C=5, F=6
     rankings = [dense, sparse, bm25]
     fused = rrf_fuse(rankings, k=60)
 
-    expected_a = 1 / 61 + 1 / 63 + 1 / 61   # A at ranks 1, 3, 1
-    expected_b = 1 / 62 + 1 / 64 + 1 / 62   # B at ranks 2, 4, 2
-    expected_c = 1 / 61                      # C only in sparse rank 1
-    expected_e = 1 / 64                      # E only in dense rank 4
+    expected_a = 1 / 61 + 1 / 63 + 1 / 61  # A at ranks 1, 3, 1
+    expected_b = 1 / 62 + 1 / 64 + 1 / 62  # B at ranks 2, 4, 2
+    expected_c = 1 / 61  # C only in sparse rank 1
+    expected_e = 1 / 64  # E only in dense rank 4
 
     assert fused[1] == pytest.approx(expected_a, rel=1e-6)
     assert fused[2] == pytest.approx(expected_b, rel=1e-6)
@@ -171,10 +173,7 @@ def test_rrf_k_dampens_top_rank_dominance():
 
 
 def test_preserve_required_source_pack_keeps_exact_act_in_top_k():
-    candidates = [
-        _retrieved_chunk(i, rerank=0.99 - i * 0.05)
-        for i in range(8)
-    ]
+    candidates = [_retrieved_chunk(i, rerank=0.99 - i * 0.05) for i in range(8)]
     required = _retrieved_chunk(
         99,
         rerank=0.48,
@@ -191,10 +190,7 @@ def test_preserve_required_source_pack_keeps_exact_act_in_top_k():
 
 
 def test_preserve_required_source_pack_can_promote_exact_act_to_visible_window():
-    candidates = [
-        _retrieved_chunk(i, rerank=0.99 - i * 0.05)
-        for i in range(8)
-    ]
+    candidates = [_retrieved_chunk(i, rerank=0.99 - i * 0.05) for i in range(8)]
     required = _retrieved_chunk(
         99,
         rerank=0.48,
@@ -210,6 +206,72 @@ def test_preserve_required_source_pack_can_promote_exact_act_to_visible_window()
 
     assert [c.chunk_id for c in out[:3]] == [0, 1, 2]
     assert out[3].chunk_id == 99
+
+
+def test_preserve_all_mandatory_authorities_when_one_pack_has_many_clauses():
+    candidates = [_retrieved_chunk(i, rerank=0.99 - i * 0.01) for i in range(12)]
+    requirements: list[RequiredAuthorityAnchor] = []
+    for offset, clause in enumerate(("1", "3", "6", "9", "10"), start=1):
+        chunk = _retrieved_chunk(
+            100 + offset,
+            rerank=0.20 - offset * 0.01,
+            title="Reserve Bank - Integrated Ombudsman Scheme 2021",
+            metadata={"_required_source_pack": "rbi_integrated_ombudsman_2021"},
+        )
+        chunk.anchor = f"rbi-integrated-ombudsman-2021/sec-{clause}"
+        candidates.append(chunk)
+        requirements.append(
+            RequiredAuthorityAnchor(
+                authority_id=f"authority_clause_{clause}",
+                source_pack_id="rbi_integrated_ombudsman_2021",
+                anchor_patterns=(f"/sec-{clause}",),
+            )
+        )
+
+    out = _preserve_required_source_packs(
+        candidates,
+        ["rbi_integrated_ombudsman_2021"],
+        limit=10,
+        required_authorities=tuple(requirements),
+    )
+
+    assert len(out) == 10
+    assert {
+        chunk.anchor.rsplit("/", 1)[-1]
+        for chunk in out
+        if chunk.metadata.get("_required_source_pack") == "rbi_integrated_ombudsman_2021"
+    } == {"sec-1", "sec-3", "sec-6", "sec-9", "sec-10"}
+
+
+def test_mandatory_authorities_expand_capacity_beyond_requested_top_k():
+    candidates: list[RetrievedChunk] = []
+    requirements: list[RequiredAuthorityAnchor] = []
+    for index in range(1, 10):
+        pack_id = f"required_pack_{index}"
+        chunk = _retrieved_chunk(
+            200 + index,
+            rerank=1.0 - index * 0.01,
+            metadata={"_required_source_pack": pack_id},
+        )
+        chunk.anchor = f"required-doc-{index}/sec-{index}"
+        candidates.append(chunk)
+        requirements.append(
+            RequiredAuthorityAnchor(
+                authority_id=f"authority_required_{index}",
+                source_pack_id=pack_id,
+                anchor_patterns=(f"/sec-{index}",),
+            )
+        )
+
+    out = _preserve_required_source_packs(
+        candidates,
+        [f"required_pack_{index}" for index in range(1, 10)],
+        limit=8,
+        required_authorities=tuple(requirements),
+    )
+
+    assert len(out) == 9
+    assert {chunk.chunk_id for chunk in out} == set(range(201, 210))
 
 
 def test_preserve_required_source_pack_prefers_distinct_higher_priority_packs():
@@ -259,10 +321,7 @@ def test_preserve_required_source_pack_prefers_distinct_higher_priority_packs():
 
 
 def test_preserve_customs_pack_keeps_issue_critical_sections():
-    candidates = [
-        _retrieved_chunk(i, rerank=0.99 - i * 0.03)
-        for i in range(8)
-    ]
+    candidates = [_retrieved_chunk(i, rerank=0.99 - i * 0.03) for i in range(8)]
     for chunk_id, section_no, rerank in (
         (124, "124", 0.49),
         (112, "112", 0.48),
@@ -411,6 +470,7 @@ def test_rerank_candidate_union_preserves_required_pack(monkeypatch):
         variants=["default bail", "BNSS section 187 default bail"],
         route_category="criminal_defence_bail",
         packs=[pack],
+        plan=None,
         top_k=2,
         timings={},
     )
@@ -476,9 +536,7 @@ def test_focus_required_source_pack_normalizes_misanchored_ndps_section_37():
 
     assert chunk.anchor == "ndps-1985/sec-37"
     assert chunk.metadata["section_no"] == "37"
-    assert chunk.text.startswith(
-        "Narcotic Drugs and Psychotropic Substances Act 1985, Section 37"
-    )
+    assert chunk.text.startswith("Narcotic Drugs and Psychotropic Substances Act 1985, Section 37")
     assert "Offences to be cognizable and non-bailable" in chunk.text
     assert "38. Offences by companies" not in chunk.text
 
@@ -725,24 +783,65 @@ def test_required_source_pack_literal_anchor_patterns_are_exactly_bounded():
     assert params[4] == [r"(^|[#/])adult\-formalities($|@|__)"]
 
 
+def test_required_source_pack_limit_cannot_drop_a_mandatory_registry_clause():
+    pack = SourcePack(
+        id="rbi_integrated_ombudsman_2021",
+        title_patterns=("Reserve Bank Integrated Ombudsman Scheme 2021",),
+        anchor_patterns=("/sec-1", "/sec-3", "/sec-6", "/sec-9", "/sec-10"),
+        search_query="RBI Ombudsman scope forum complaint maintainability",
+    )
+    assert _required_source_pack_limit(pack, 4) == 5
+
+
+def test_registry_source_pack_fetches_only_exact_authority_projection():
+    conn = _StubConn(fetch_return=[])
+    pack = SourcePack(
+        id="rbi_integrated_ombudsman_2021",
+        title_patterns=("Reserve Bank Integrated Ombudsman Scheme 2021",),
+        doc_ids=("rbi-integrated-ombudsman-2021",),
+        anchor_patterns=("/sec-10",),
+        search_query="RBI Ombudsman Clause 10 maintainability",
+        authority_ids=("authority_8584dce173a80302ee86",),
+    )
+
+    asyncio.run(
+        _fetch_source_pack_candidates(
+            _StubPool(conn),
+            "bank complaint unanswered for 30 days",
+            packs=[pack],
+            limit_per_pack=4,
+        )
+    )
+
+    sql, params = conn.fetch_calls[0]
+    assert "LEFT JOIN document_authorities da" in sql
+    assert "da.authority_id = ANY($8::text[])" in sql
+    assert "cardinality($8::text[]) = 0 OR da.authority_id IS NOT NULL" in sql
+    assert params[7] == ["authority_8584dce173a80302ee86"]
+
+
 def test_source_pack_anchor_patterns_use_exact_section_boundaries():
-    section_nos = _section_numbers_from_anchor_patterns((
-        "/sec-3",
-        "/sec-33A@",
-        "/sec-13-b",
-        "sec-71-a",
-        "surrogacy-2021/sec-4-",
-    ))
+    section_nos = _section_numbers_from_anchor_patterns(
+        (
+            "/sec-3",
+            "/sec-33A@",
+            "/sec-13-b",
+            "sec-71-a",
+            "surrogacy-2021/sec-4-",
+        )
+    )
 
     assert section_nos == ["3", "33A", "13B", "71A", "4"]
     assert _anchor_boundary_regexes(["3"]) == [r"(^|/)sec-3(@|-|__|$)"]
 
 
 def test_source_pack_anchor_patterns_allow_literal_non_section_anchors():
-    anchor_regexes = _anchor_regexes_from_patterns((
-        "adult-required-documents",
-        "/sec-3",
-    ))
+    anchor_regexes = _anchor_regexes_from_patterns(
+        (
+            "adult-required-documents",
+            "/sec-3",
+        )
+    )
 
     assert anchor_regexes == [
         r"(^|/)sec-3(@|-|__|$)",

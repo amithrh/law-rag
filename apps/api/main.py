@@ -13,13 +13,6 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query, Response
-from fastapi.middleware.cors import CORSMiddleware as _CORSMiddleware
-from fastapi.responses import JSONResponse
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import BaseModel
-from sse_starlette.sse import EventSourceResponse
-
 from apps.api import config as cfg
 from apps.api import metrics
 from apps.api.authority_ledger import criminal_authority_ledger_template_lines
@@ -40,18 +33,18 @@ from apps.api.customs_logic import (
     customs_svb_issue,
 )
 from apps.api.db import close_pool, get_pool
+from apps.api.legal_issue_plan import (
+    REVIEWED_CONTRACT_REQUIRED_CATEGORIES,
+    MatterPlan,
+    authority_ids_for_passage,
+    build_matter_plan,
+)
 from apps.api.llm import (
     LLMModelUnavailable,
     build_messages,
     check_model_available,
     load_answer_prompt,
     stream_chat,
-)
-from apps.api.legal_issue_plan import (
-    REVIEWED_CONTRACT_REQUIRED_CATEGORIES,
-    MatterPlan,
-    authority_ids_for_passage,
-    build_matter_plan,
 )
 from apps.api.matter_router import (
     MatterRoute,
@@ -65,6 +58,7 @@ from apps.api.relevance import RelevanceResult, RelevanceVerdict, compute_releva
 from apps.api.retrieval import (
     RetrievedChunk,
     _preserve_required_source_packs,
+    _required_authority_anchors,
     hybrid_retrieve,
     multi_query_hybrid_retrieve,
 )
@@ -79,6 +73,12 @@ from apps.api.verifier import (
     segment_sentences,
     verify_sentence,
 )
+from fastapi import FastAPI, Query, Response
+from fastapi.middleware.cors import CORSMiddleware as _CORSMiddleware
+from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -230,15 +230,30 @@ def _make_passages(
     """Return (passages-for-prompt, idx-to-passage-text-map)."""
     passages: list[dict] = []
     idx_map: dict[int, str] = {}
+    registry_owned_ids = {
+        entry.authority_id
+        for entry in (plan.authority_ledger if plan is not None else [])
+        if entry.note == "registry_workflow_authority" and entry.authority_id
+    }
     for i, h in enumerate(retrieved[:n], start=1):
         required_source_pack = h.metadata.get("_required_source_pack")
-        authority_ids = authority_ids_for_passage(
-            plan,
-            title=h.title,
-            anchor=h.anchor,
-            source_pack_id=required_source_pack,
-            source_type=h.source_type,
-        ) if plan else []
+        explicit_authority_ids = list(h.metadata.get("_authority_ids") or [])
+        if registry_owned_ids:
+            authority_ids = [
+                authority_id
+                for authority_id in explicit_authority_ids
+                if authority_id in registry_owned_ids
+            ]
+        else:
+            authority_ids = explicit_authority_ids or (
+                authority_ids_for_passage(
+                    plan,
+                    title=h.title,
+                    anchor=h.anchor,
+                    source_pack_id=required_source_pack,
+                    source_type=h.source_type,
+                ) if plan else []
+            )
         passages.append({
             "index": i,
             "text": h.text,
@@ -721,8 +736,9 @@ def _reviewed_workflow_relevance_result(
     template_lines: list[str],
     source_gap_event: dict | None,
     emitted_citation_indices: set[int],
+    sentence_quality_failed: bool = False,
 ) -> RelevanceResult | None:
-    if rel is None or rel.verdict == RelevanceVerdict.OK:
+    if rel is None:
         return rel
     if route.category == "off_topic":
         return rel
@@ -733,6 +749,17 @@ def _reviewed_workflow_relevance_result(
     if source_gap_event is not None and source_gap_event.get("has_gap"):
         return rel
     if not emitted_citation_indices:
+        return rel
+    if sentence_quality_failed:
+        if rel.verdict == RelevanceVerdict.OK:
+            return RelevanceResult(
+                score=rel.score,
+                verdict=RelevanceVerdict.PARTIAL,
+                threshold=rel.threshold,
+                band=rel.band,
+            )
+        return rel
+    if rel.verdict == RelevanceVerdict.OK:
         return rel
 
     return RelevanceResult(
@@ -824,7 +851,20 @@ def _source_gap_event_for_retrieved(
     plan: MatterPlan | None = None,
 ) -> dict | None:
     filtered = _filter_state_specific_source_mismatches(query, retrieved) if retrieved else []
-    passages, _ = _make_passages(filtered, top_k, plan=plan)
+    pack_ids = list(
+        dict.fromkeys(
+            str(chunk.metadata.get("_required_source_pack"))
+            for chunk in filtered
+            if chunk.metadata.get("_required_source_pack")
+        )
+    )
+    preserved = _preserve_required_source_packs(
+        filtered,
+        pack_ids,
+        limit=top_k,
+        required_authorities=_required_authority_anchors(plan),
+    )
+    passages, _ = _make_passages(preserved, len(preserved), plan=plan)
     return build_source_gap_event(
         query=query,
         route_category=route.category,
@@ -21279,6 +21319,11 @@ def _is_safe_template_next_step(
         "workplace_sexual_harassment",
     }
     lower = text.lower()
+    if action_pack_id == "loan_app_harassment" and _has_any_term(
+        lower,
+        ("police", "1930", "cybercrime.gov.in", "cyber cell"),
+    ):
+        return False
     if action_pack_id == "employment_wages":
         return (
             _has_any_term(lower, (
@@ -23207,12 +23252,16 @@ def _is_uncited_operational_guidance(text: str) -> bool:
         "magistrate", "ombudsman", "cms", "tribunal", "commission",
         "file a complaint", "lodge a complaint", "submit a complaint",
         "grievance officer", "appeal", "petition", "legal notice", "fir",
-        "bail", "remand", "injunction", "compensation", "refund",
+        "bail", "remand", "injunction", "compensation",
         "escalate", "authority", "forum", "limitation", "deadline",
         "within 24", "within twenty", "within 30", "within thirty",
         "police station", "cybercrime.gov.in", "1930",
     )
-    if any(term in f" {lower} " for term in legal_terms):
+    legal_claim_terms = legal_terms + (
+        "entitled to a refund", "entitled to refund", "claim a refund",
+        "claim refund", "order a refund", "order refund", "refund right",
+    )
+    if any(term in f" {lower} " for term in legal_claim_terms):
         return False
 
     evidence_action = lower.lstrip("- ").startswith((
@@ -23486,6 +23535,46 @@ def _passages_by_index(passages: list[dict]) -> dict[int, dict]:
     }
 
 
+def _missing_registry_must_cite_authority_ids(
+    plan: MatterPlan | None,
+    passages: list[dict],
+    citation_indices: set[int],
+) -> tuple[str, ...]:
+    """Return registry authorities retrieved but absent from visible citations.
+
+    Retrieval/source-gap validation owns missing evidence. This answer-layer
+    check runs only when every active registry authority is present in the
+    passage window, so it cannot turn a retrieval miss into a misleadingly
+    partial answer. Its job is narrower: prevent a verifier-filtered template
+    from looking complete after silently dropping a mandatory citation.
+    """
+    required = {
+        entry.authority_id
+        for entry in (plan.authority_ledger if plan is not None else [])
+        if entry.note == "registry_workflow_authority"
+        and entry.must_cite
+        and entry.authority_id
+    }
+    if not required:
+        return ()
+
+    retrieved: set[str] = set()
+    cited: set[str] = set()
+    for passage in passages:
+        authority_ids = {
+            str(authority_id)
+            for authority_id in (passage.get("authority_ids") or [])
+            if authority_id
+        }
+        retrieved.update(authority_ids)
+        if passage.get("index") in citation_indices:
+            cited.update(authority_ids)
+
+    if not required.issubset(retrieved):
+        return ()
+    return tuple(sorted(required - cited))
+
+
 def _answer_contract_lines(
     route: MatterRoute,
     passages: list[dict],
@@ -23505,6 +23594,17 @@ def _answer_contract_lines(
     illustrations, or unrelated procedure fragments.
     """
     official = _official_passages_for_contract(passages)
+    registry_owned_authority_ids = {
+        entry.authority_id
+        for entry in (plan.authority_ledger if plan is not None else [])
+        if entry.note == "registry_workflow_authority" and entry.authority_id
+    }
+    if registry_owned_authority_ids:
+        official = [
+            passage
+            for passage in official
+            if registry_owned_authority_ids.intersection(passage.get("authority_ids") or [])
+        ]
     if not official:
         return []
 
@@ -23743,11 +23843,17 @@ def _answer_contract_lines(
         and state.get("saw_next_step_sentence")
     ):
         source_budget = 0
+    elif (
+        registry_owned_authority_ids
+        and cited_source_keys
+        and state.get("saw_next_step_sentence")
+    ):
+        source_budget = 0
     elif cited_source_keys and state.get("saw_next_step_sentence") and int(state.get("emitted") or 0) >= 3:
         source_budget = 0 if len(cited_source_keys) >= 3 else min(1, len(missing_required_keys))
     else:
         source_budget = max(max(0, 2 - len(cited_source_keys)), min(required_budget, len(missing_required_keys)))
-    if route_required_candidates:
+    if route_required_candidates and not registry_owned_authority_ids:
         source_budget = max(source_budget, min(required_budget, len(route_required_candidates)))
 
     # Cite official/statutory source families the model skipped. Keep this
@@ -23830,7 +23936,7 @@ def _route_required_source_floor_passages(
     """
     required_sources = (
         [entry.source for entry in plan.authority_ledger if entry.must_cite]
-        if plan is not None and route.label == "Caste certificate rejection / appeal"
+        if plan is not None
         else list(route.required_sources)
     )
     if not official or not required_sources:
@@ -24842,6 +24948,10 @@ def _prompt_retrieval_candidates(
             h for h in retrieved
             if "reserve bank integrated ombudsman" in str(getattr(h, "title", "")).lower()
             or "rbi-integrated-ombudsman" in str(getattr(h, "anchor", "")).lower()
+            or "digital lending" in str(getattr(h, "title", "")).lower()
+            or "rbi-digital-lending" in str(getattr(h, "anchor", "")).lower()
+            or "recovery agents" in str(getattr(h, "title", "")).lower()
+            or "rbi-recovery-agents" in str(getattr(h, "anchor", "")).lower()
             or "digital personal data protection" in str(getattr(h, "title", "")).lower()
             or "dpdp" in str(getattr(h, "anchor", "")).lower()
             or "information technology" in str(getattr(h, "title", "")).lower()
@@ -25699,6 +25809,17 @@ async def answer(req: AnswerRequest):
     t_prompt = time.perf_counter()
     prompt_candidates = _prompt_retrieval_candidates(req.q, route, retrieved)
     prompt_candidates = _filter_state_specific_source_mismatches(req.q, prompt_candidates)
+    registry_owned_ids = {
+        entry.authority_id
+        for entry in (issue_plan.authority_ledger if issue_plan is not None else [])
+        if entry.note == "registry_workflow_authority" and entry.authority_id
+    }
+    if registry_owned_ids:
+        prompt_candidates = [
+            hit
+            for hit in prompt_candidates
+            if registry_owned_ids.intersection(hit.metadata.get("_authority_ids") or [])
+        ]
     required_pack_ids = []
     for h in prompt_candidates:
         pack_id = h.metadata.get("_required_source_pack")
@@ -25709,8 +25830,13 @@ async def answer(req: AnswerRequest):
         required_pack_ids,
         limit=req.top_k,
         preferred_top_n=settings.required_source_pack_preferred_top_n,
+        required_authorities=_required_authority_anchors(issue_plan),
     )
-    passages, idx_map = _make_passages(prompt_retrieved, req.top_k, plan=issue_plan)
+    passages, idx_map = _make_passages(
+        prompt_retrieved,
+        len(prompt_retrieved),
+        plan=issue_plan,
+    )
 
     # Build prompt
     system = load_answer_prompt()
@@ -25791,6 +25917,7 @@ async def answer(req: AnswerRequest):
         state = {
             "emitted": 0,
             "unsupported": 0,
+            "weak_support": 0,
             "skip_threshold": settings.skip_ratio_stop,
             "min_unsupported": settings.min_unsupported_before_stop,
             # Per Codex review (round 2) #4: the model can't be trusted to
@@ -25946,6 +26073,7 @@ async def answer(req: AnswerRequest):
                 ).inc()
             elif v.status == SentenceStatus.WEAK_SUPPORT:
                 metrics.weak_support_total.inc()
+                state["weak_support"] += 1
             if v.status != SentenceStatus.META:
                 state["emitted"] += 1
             triggered = (
@@ -26041,18 +26169,6 @@ async def answer(req: AnswerRequest):
             if v.status == SentenceStatus.WEAK_SUPPORT:
                 if _is_safe_template_next_step(v.text, route, pending_header):
                     return True
-                # Allow bare_act citations and required-source-pack sentences
-                # through even under weak support — suppressing statute text
-                # harms layperson answers more than the entailment shortfall.
-                if v.citations:
-                    _by_idx = {int(p["index"]): p for p in passages if isinstance(p.get("index"), int)}
-                    _cited = [_by_idx[i] for i in v.citations if i in _by_idx]
-                    if any(
-                        str(p.get("source_type") or "").lower() == "bare_act"
-                        or p.get("required_source_pack")
-                        for p in _cited
-                    ):
-                        return True
                 return False
             return True
 
@@ -26096,6 +26212,36 @@ async def answer(req: AnswerRequest):
             if sentence_ev is not None:
                 out.append(sentence_ev)
             return out, should_stop
+
+        def _template_candidate_citation_indices() -> set[int]:
+            """Preflight the exact candidate filter used by the template path."""
+            citation_indices: set[int] = set()
+            pending_header: SentenceVerification | None = None
+            active_next_step_header: SentenceVerification | None = None
+            for sent in template_lines:
+                v = _verify_with_timing(sent)
+                if _is_deferred_template_header(v.text):
+                    pending_header = v
+                    active_next_step_header = v
+                    continue
+                v = _promote_safe_route_next_step(
+                    v,
+                    route,
+                    pending_header or active_next_step_header,
+                    issue_plan,
+                )
+                v = _promote_safe_template_source_bridge(v, route, issue_plan)
+                v = _promote_reviewed_workflow_contract_line(
+                    v,
+                    workflow_result_for_template,
+                    template_lines,
+                    issue_plan,
+                )
+                if not _candidate_template_sentence_should_emit(v, pending_header):
+                    continue
+                citation_indices.update(v.citations)
+                pending_header = None
+            return citation_indices
 
         # A fail-closed owner/source gap must not leak even harmless answer
         # preamble before the refusal. Emit only routing diagnostics and the
@@ -26164,6 +26310,44 @@ async def answer(req: AnswerRequest):
         if template_lines:
             state["server_template_used"] = True
             _add_stage_elapsed(timings, "llm_stream", 0.0)
+            missing_answer_authorities = _missing_registry_must_cite_authority_ids(
+                issue_plan,
+                passages,
+                _template_candidate_citation_indices(),
+            )
+            if missing_answer_authorities:
+                metrics.refused_total.inc()
+                yield {"event": "source_gap", "data": json.dumps({
+                    "reason": "mandatory_authority_not_cited",
+                    "missing_authority_ids": list(missing_answer_authorities),
+                    "message": (
+                        "The retrieved legal sources are complete, but the reviewed "
+                        "answer could not safely cite every mandatory authority."
+                    ),
+                })}
+                yield {"event": "refused", "data": json.dumps({
+                    "message": (
+                        "I found the controlling sources, but I could not produce a "
+                        "complete claim-level cited answer without dropping a mandatory "
+                        "authority. Please treat this as intake and verify the route with "
+                        "DLSA or a qualified lawyer."
+                    ),
+                    "reason": "mandatory_authority_not_cited",
+                    "disclaimer": DISCLAIMER_FOOTER,
+                })}
+                yield _timing_event(
+                    timings,
+                    request_started,
+                    llm_model=settings.llm_model,
+                    llm_model_available=llm_model_available,
+                    retrieved_count=len(retrieved),
+                    passages_used=len(passages),
+                    expansion_variant_count=len(expansion_variants),
+                    state=state,
+                )
+                yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                _record_final_metrics(state, time.perf_counter())
+                return
             pending_template_header: SentenceVerification | None = None
             active_template_next_step_header: SentenceVerification | None = None
             for sent in template_lines:
@@ -26280,6 +26464,9 @@ async def answer(req: AnswerRequest):
                     template_lines=template_lines,
                     source_gap_event=source_gap_event,
                     emitted_citation_indices=state["emitted_citation_indices"],
+                    sentence_quality_failed=bool(
+                        state["unsupported"] or state["weak_support"]
+                    ),
                 )
                 _record_stage(timings, "relevance", t_relevance)
                 if rel is not None:
@@ -26443,6 +26630,9 @@ async def answer(req: AnswerRequest):
                     template_lines=template_lines,
                     source_gap_event=source_gap_event,
                     emitted_citation_indices=state["emitted_citation_indices"],
+                    sentence_quality_failed=bool(
+                        state["unsupported"] or state["weak_support"]
+                    ),
                 )
                 _record_stage(timings, "relevance", t_relevance)
                 if rel is not None:

@@ -116,6 +116,32 @@ P0 ownership baseline, 2026-07-11:
   text (`0.984375` similarity), promoted only the mapped chunk, and the live
   `/answer` replay returned the canonical authority/source without refusal.
   This completes the registry pilot, not P2 coverage.
+- P2B extends the immutable registry to the released RBI grievance family and
+  its conditional criminal/privacy overlays. Migrations `0002`-`0005` now own
+  RBI Integrated Ombudsman Scheme Clauses 1, 3, 6, 9, and 10; Digital Lending
+  Directions paragraphs 11 and 12; the recovery-agent harassment paragraph;
+  IT Act Section 66E; and BNS Section 308. The `wrong_bank_debit` and
+  `loan_app_harassment` workflows consume registry keys directly instead of
+  rebuilding authority identity from titles or source-pack prose.
+- P2B retrieval expands the result window when a plan has more mandatory
+  authorities than `top_k`, joins through `document_authorities`, and refuses
+  before emission if a fully retrieved registry authority set is not actually
+  cited in the candidate answer. Current private-image payment threats add BNS
+  Section 308 only for an unambiguous current regime; IT Act Section 66E is
+  described narrowly and is not presented as a general morphed-image offence.
+- P2B deterministic evidence is green: authority/ownership `288 passed`,
+  retrieval/source-gap `134 passed`, workflow/source-pack `413 passed`,
+  router/endpoint `469 passed`, migration stack `2 passed`, wheel build and
+  wheel-content checks pass, and the official BNS Section 308 projection
+  passed exact provenance verification. Live `/answer` checks passed for
+  wrongful debit, contact harassment, and current payment-linked morphed-image
+  blackmail with every expected registry key present, no source gap/refusal,
+  and no weak/unsupported legal sentence. A bank-freeze near miss did not
+  inherit the new registry workflows, but exposed two existing weak-support
+  bridge sentences; that remains a production blocker outside this slice.
+- P2B is not closed until a post-implementation independent review is recorded.
+  The review service reached its child-thread limit during the final gate; this
+  is an explicit open gate, not an inferred PASS from tests.
 - This is a regression result, not launch evidence. A fresh 500-prompt
   human-style evaluation, independent legal-quality review, and the operational
   release gates remain required before any production claim.
@@ -198,14 +224,18 @@ policy, one answer owner, and no `main.py` special-case fallback.
 - [ ] Create declarative authority records for Act, section, jurisdiction,
   effective date, canonical URL, publisher, provenance status, and verbatim
   status.
-  Pilot complete for CrPC 1973 Section 436A; remaining released authorities
-  still need migration into the registry.
+  Complete for CrPC 1973 Section 436A and the P2B RBI/IT Act/BNS authority
+  family listed in the current baseline; remaining released authorities still
+  need migration into the registry.
 - [ ] Add relationships: issue -> conditions -> authority -> remedy -> forum ->
   deadline -> documents -> escalation.
+  Complete for `wrong_bank_debit` and `loan_app_harassment`; remaining released
+  scenarios still need registry-owned workflow relationships.
 - [ ] Replace one-off `add_*` scripts with repeatable ingestion migrations tied
   to authority-record IDs.
   The Section 436A one-off script is replaced by migration
-  `0001_crpc_436a`; other one-off corpus patches remain to be inventoried and
+  `0001_crpc_436a`; P2B uses migrations `0002`-`0005` and deterministic
+  manifest builders. Other one-off corpus patches remain to be inventoried and
   migrated.
 - [ ] Define supported geography: national law plus a verified set of states.
   Unsupported state-law matters must use a source-gap/handoff policy.

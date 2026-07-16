@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,7 +12,11 @@ from apps.api.retrieval import _fetch_source_pack_candidates
 from apps.api.source_packs import SourcePack
 
 from authority_registry.ingest import AuthorityMigrationConflict, apply_authority_migration
-from authority_registry.loader import LoadedAuthorityMigration, load_authority_migrations
+from authority_registry.loader import (
+    LoadedAuthorityMigration,
+    load_authority_migrations,
+    load_authority_registry,
+)
 from authority_registry.model import AuthorityMigration
 
 ZERO_HALFVEC_1024 = "[" + ",".join("0" for _ in range(1024)) + "]"
@@ -87,6 +92,251 @@ class _ConnectionPool:
                 return False
 
         return _Context()
+
+
+@pytest.mark.needs_stack
+@pytest.mark.asyncio
+async def test_rbi_authority_family_real_postgres_contract():
+    settings = Settings()
+    conn = await asyncpg.connect(dsn=settings.resolved_database_url_host_side)
+    outer = conn.transaction()
+    await outer.start()
+    try:
+        await conn.execute("DROP SCHEMA IF EXISTS authority_registry_rbi_test CASCADE")
+        await conn.execute("CREATE SCHEMA authority_registry_rbi_test")
+        await conn.execute("SET LOCAL search_path TO authority_registry_rbi_test, public")
+        await conn.execute(LEGACY_SCHEMA_SQL)
+        await conn.execute(Path("infra/postgres/migrations/005_authority_registry.sql").read_text())
+
+        migrations = load_authority_migrations()
+        assert [item.manifest.migration_id for item in migrations] == [
+            "0001_crpc_436a",
+            "0002_rbi_grievance_family",
+            "0003_it_act_private_image",
+            "0004_it_act_66e_verbatim_correction",
+            "0005_bns_extortion",
+        ]
+        result = await apply_authority_migration(conn, migrations[0], embed=_fixture_embed)
+        assert result.status == "applied"
+
+        rbi_record = migrations[1].manifest.operations[0].record
+        legacy_source_id = await conn.fetchval(
+            """
+            INSERT INTO sources (
+                source_type, origin, url, canonical_url_hash, provenance_tier,
+                raw_sha256, raw_bytes_size
+            ) VALUES ('bare_act', 'rbi', $1, $2, 'canonical', $3, $4)
+            RETURNING id
+            """,
+            rbi_record.canonical_url,
+            hashlib.sha256(rbi_record.canonical_url.encode()).hexdigest(),
+            rbi_record.provenance.raw_sha256,
+            rbi_record.provenance.raw_bytes_size,
+        )
+        legacy_document_id = await conn.fetchval(
+            """
+            INSERT INTO documents (
+                source_id, doc_id, title, statute_short, statute_year,
+                subject_area, as_at, provenance_verified
+            ) VALUES ($1, $2, $3, $3, 2021, 'consumer', '2021-11-12', true)
+            RETURNING id
+            """,
+            legacy_source_id,
+            rbi_record.doc_id,
+            rbi_record.title,
+        )
+        await conn.execute(
+            """
+            INSERT INTO chunks (
+                document_id, source_type, subject_area, anchor, text,
+                token_count, as_at, provenance_verified
+            ) VALUES ($1, 'bare_act', 'consumer', $2, $3, 6, '2021-11-12', true)
+            """,
+            legacy_document_id,
+            f"{rbi_record.doc_id}/sec-1",
+            "Legacy 2021 Scheme snapshot",
+        )
+
+        result = await apply_authority_migration(conn, migrations[1], embed=_fixture_embed)
+        assert result.status == "applied"
+
+        rbi = migrations[1]
+        assert (
+            await conn.fetchval(
+                "SELECT COUNT(*) FROM document_authorities WHERE migration_id = $1",
+                rbi.manifest.migration_id,
+            )
+            == 8
+        )
+        rows = await conn.fetch(
+            """
+            SELECT da.canonical_key, s.origin, d.doc_id, c.anchor,
+                   d.provenance_verified AS document_verified,
+                   c.provenance_verified AS chunk_verified
+            FROM document_authorities da
+            JOIN sources s ON s.id = da.source_id
+            JOIN documents d ON d.id = da.document_id
+            JOIN chunks c ON c.id = da.chunk_id
+            WHERE da.migration_id = $1
+            ORDER BY c.anchor
+            """,
+            rbi.manifest.migration_id,
+        )
+        assert {row["canonical_key"] for row in rows} == {
+            "rbi_integrated_ombudsman_2021_clause_1",
+            "rbi_integrated_ombudsman_2021_clause_3",
+            "rbi_integrated_ombudsman_2021_clause_6",
+            "rbi_integrated_ombudsman_2021_clause_9",
+            "rbi_integrated_ombudsman_2021_clause_10",
+            "rbi_digital_lending_2025_paragraph_11",
+            "rbi_digital_lending_2025_paragraph_12",
+            "rbi_recovery_agents_2022_paragraph_2",
+        }
+        assert {row["origin"] for row in rows} == {"rbi"}
+        assert {row["doc_id"] for row in rows} == {
+            "rbi-integrated-ombudsman-2021",
+            "rbi-digital-lending-directions-2025",
+            "rbi-recovery-agents-2022",
+        }
+        assert {row["anchor"] for row in rows} == {
+            "rbi-integrated-ombudsman-2021/sec-1@2022-08-05",
+            "rbi-integrated-ombudsman-2021/sec-3@2022-08-05",
+            "rbi-integrated-ombudsman-2021/sec-6@2022-08-05",
+            "rbi-integrated-ombudsman-2021/sec-9@2022-08-05",
+            "rbi-integrated-ombudsman-2021/sec-10@2022-08-05",
+            "rbi-digital-lending-directions-2025/para-11",
+            "rbi-digital-lending-directions-2025/para-12",
+            "rbi-recovery-agents-2022/para-2",
+        }
+        assert all(
+            row["document_verified"] is (row["doc_id"] == "rbi-integrated-ombudsman-2021")
+            for row in rows
+        )
+        assert all(row["chunk_verified"] is False for row in rows)
+        historical = await conn.fetchrow(
+            """
+            SELECT quarantined, provenance_verified, as_at
+            FROM chunks
+            WHERE document_id = $1 AND anchor = $2
+            """,
+            legacy_document_id,
+            f"{rbi_record.doc_id}/sec-1",
+        )
+        assert historical is not None
+        assert historical["quarantined"] is False
+        assert historical["provenance_verified"] is True
+        assert str(historical["as_at"]) == "2021-11-12"
+
+        no_op = await apply_authority_migration(conn, rbi, embed=_fixture_embed)
+        assert no_op.status == "no_op"
+        assert no_op.records_applied == 0
+
+        private_image = migrations[2]
+        result = await apply_authority_migration(
+            conn,
+            private_image,
+            embed=_fixture_embed,
+        )
+        assert result.status == "applied"
+        it_row = await conn.fetchrow(
+            """
+            SELECT da.authority_id, da.canonical_key, s.origin, s.provenance_tier,
+                   s.raw_sha256, s.raw_bytes_size, d.doc_id, c.anchor,
+                   c.provenance_verified
+            FROM document_authorities da
+            JOIN sources s ON s.id = da.source_id
+            JOIN documents d ON d.id = da.document_id
+            JOIN chunks c ON c.id = da.chunk_id
+            WHERE da.migration_id = $1
+            """,
+            private_image.manifest.migration_id,
+        )
+        assert it_row is not None
+        assert it_row["authority_id"] == "authority_ad90922325a79b902a63"
+        assert it_row["canonical_key"] == "information_technology_act_2000_section_66e"
+        assert it_row["origin"] == "indiacode"
+        assert it_row["provenance_tier"] == "canonical"
+        assert it_row["raw_sha256"] == (
+            "e71725fa32e892f887308816046c42275fc855b5cbb4ee1063cdbd518f165140"
+        )
+        assert it_row["raw_bytes_size"] == 832355
+        assert it_row["doc_id"] == "it-2000"
+        assert it_row["anchor"] == "it-2000/sec-66E"
+        assert it_row["provenance_verified"] is False
+
+        no_op = await apply_authority_migration(
+            conn,
+            private_image,
+            embed=_fixture_embed,
+        )
+        assert no_op.status == "no_op"
+        assert no_op.records_applied == 0
+
+        correction = migrations[3]
+        result = await apply_authority_migration(
+            conn,
+            correction,
+            embed=_fixture_embed,
+        )
+        assert result.status == "applied"
+        corrected = await conn.fetchrow(
+            """
+            SELECT da.migration_id, da.record_sha256, c.text,
+                   c.provenance_verified, c.metadata->>'text_sha256' AS text_sha256
+            FROM document_authorities da
+            JOIN chunks c ON c.id = da.chunk_id
+            WHERE da.authority_id = 'authority_ad90922325a79b902a63'
+            """
+        )
+        assert corrected["migration_id"] == "0004_it_act_66e_verbatim_correction"
+        assert corrected["record_sha256"] == (
+            load_authority_registry()
+            .by_key("information_technology_act_2000_section_66e")
+            .record_sha256
+        )
+        assert corrected["text_sha256"] == (
+            "24957549caaf03e1e8d323c66863d43c7830fd93658cbcd70c74509e89ecde19"
+        )
+        assert "regardless of whether that person is in a public or private place" in (
+            corrected["text"]
+        )
+        assert corrected["provenance_verified"] is False
+
+        bns_extortion = migrations[4]
+        result = await apply_authority_migration(
+            conn,
+            bns_extortion,
+            embed=_fixture_embed,
+        )
+        assert result.status == "applied"
+        bns_row = await conn.fetchrow(
+            """
+            SELECT da.authority_id, da.canonical_key, s.origin, s.provenance_tier,
+                   s.raw_sha256, s.raw_bytes_size, d.doc_id, c.anchor,
+                   c.provenance_verified
+            FROM document_authorities da
+            JOIN sources s ON s.id = da.source_id
+            JOIN documents d ON d.id = da.document_id
+            JOIN chunks c ON c.id = da.chunk_id
+            WHERE da.migration_id = $1
+            """,
+            bns_extortion.manifest.migration_id,
+        )
+        assert bns_row is not None
+        assert bns_row["authority_id"] == "authority_1377e9f3337ec9d06de0"
+        assert bns_row["canonical_key"] == "bharatiya_nyaya_sanhita_2023_section_308"
+        assert bns_row["origin"] == "indiacode"
+        assert bns_row["provenance_tier"] == "canonical"
+        assert bns_row["raw_sha256"] == (
+            "ff92dcc72778944011807644b6033b1140ddbe6d7e9f82ac32fd419dae03aa86"
+        )
+        assert bns_row["raw_bytes_size"] == 896392
+        assert bns_row["doc_id"] == "bns-2023"
+        assert bns_row["anchor"] == "bns-2023/sec-308"
+        assert bns_row["provenance_verified"] is False
+    finally:
+        await outer.rollback()
+        await conn.close()
 
 
 @pytest.mark.needs_stack

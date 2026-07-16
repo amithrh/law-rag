@@ -40,7 +40,7 @@ class JurisdictionRecord(StrictModel):
 
 
 class ProvisionRecord(StrictModel):
-    kind: Literal["section", "article", "rule", "order", "paragraph"]
+    kind: Literal["section", "article", "rule", "clause", "order", "paragraph"]
     number: str = Field(min_length=1)
     heading: str = Field(min_length=1)
     canonical_anchor: str = Field(pattern=r"^/")
@@ -84,15 +84,16 @@ class AuthorityRecord(StrictModel):
     authority_id_expected: str = Field(pattern=r"^authority_[0-9a-f]{20}$")
     canonical_name: str = Field(min_length=1)
     aliases: tuple[str, ...] = ()
-    authority_type: Literal["statute", "rule", "judgment", "circular"]
+    authority_type: Literal["statute", "rule", "scheme", "judgment", "circular"]
     jurisdiction: JurisdictionRecord
     provision: ProvisionRecord
     effective_from: date
     effective_to: date | None = None
     savings: SavingsRecord | None = None
+    consolidation_as_at: date | None = None
     publisher: PublisherRecord
     canonical_url: str = Field(pattern=r"^https://")
-    source_origin: Literal["indiacode"]
+    source_origin: Literal["indiacode", "rbi"]
     provenance: ProvenanceDeclaration
     doc_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
@@ -127,6 +128,8 @@ class AuthorityRecord(StrictModel):
             raise ValueError("canonical provenance requires an official publisher")
         if self.effective_to is not None and self.effective_to < self.effective_from:
             raise ValueError("effective_to cannot precede effective_from")
+        if self.consolidation_as_at is not None and self.consolidation_as_at < self.effective_from:
+            raise ValueError("consolidation_as_at cannot precede effective_from")
         if self.effective_to is not None and self.savings is None:
             raise ValueError("ended authority requires an explicit savings record")
         if legal_name(self.canonical_name) not in {
@@ -141,7 +144,10 @@ class AuthorityRecord(StrictModel):
 
     @property
     def record_sha256(self) -> str:
-        payload = self.model_dump_json(exclude_none=False)
+        # Keep pre-versioning record hashes stable when the optional version
+        # field is absent; already-applied immutable migrations depend on it.
+        exclude = {"consolidation_as_at"} if self.consolidation_as_at is None else None
+        payload = self.model_dump_json(exclude=exclude, exclude_none=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -154,7 +160,59 @@ class AuthorityMigrationOperation(StrictModel):
     )
 
 
+class WorkflowAuthorityRequirement(StrictModel):
+    registry_key: str = Field(pattern=r"^[a-z0-9][a-z0-9_]*$")
+    role: Literal["scope", "forum", "legal_basis", "maintainability", "remedy"]
+    required: bool = True
+    condition_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_conditions(self) -> WorkflowAuthorityRequirement:
+        if not self.required and not self.condition_ids:
+            raise ValueError("conditional authority requires at least one condition_id")
+        if len(self.condition_ids) != len(set(self.condition_ids)):
+            raise ValueError("authority condition IDs must be unique")
+        return self
+
+
+class AuthorityWorkflowRecord(StrictModel):
+    schema_version: Literal[1]
+    scenario_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_]*$")
+    owner_token: str = Field(min_length=1)
+    condition_ids: tuple[str, ...] = Field(min_length=1)
+    authorities: tuple[WorkflowAuthorityRequirement, ...] = Field(min_length=1)
+    forums: tuple[str, ...] = Field(min_length=1)
+    remedies: tuple[str, ...] = Field(min_length=1)
+    deadline_rules: tuple[str, ...] = ()
+    documents: tuple[str, ...] = Field(min_length=1)
+    escalation: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_workflow(self) -> AuthorityWorkflowRecord:
+        keys = [item.registry_key for item in self.authorities]
+        if len(keys) != len(set(keys)):
+            raise ValueError("workflow authority keys must be unique")
+        if len(self.condition_ids) != len(set(self.condition_ids)):
+            raise ValueError("workflow condition IDs must be unique")
+        return self
+
+    @property
+    def record_sha256(self) -> str:
+        payload = self.model_dump_json(exclude_none=False)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class WorkflowMigrationOperation(StrictModel):
+    op: Literal["upsert"]
+    record: AuthorityWorkflowRecord
+    expected_previous_record_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+
+
 class AuthorityMigration(StrictModel):
     migration_id: str = Field(pattern=r"^[0-9]{4}_[a-z0-9][a-z0-9_]*$")
     schema_version: Literal[1]
     operations: tuple[AuthorityMigrationOperation, ...] = Field(min_length=1)
+    workflow_operations: tuple[WorkflowMigrationOperation, ...] = ()

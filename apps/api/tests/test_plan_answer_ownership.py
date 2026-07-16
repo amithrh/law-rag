@@ -696,6 +696,23 @@ def _passage(index, title, anchor, pack, source_type="bare_act"):
     }
 
 
+def _rbi_ombudsman_passages(start=1, *, pack="rbi_integrated_ombudsman_2021"):
+    title = "Reserve Bank Integrated Ombudsman Scheme 2021"
+    return [
+        _passage(start + offset, title, f"rbi-integrated-ombudsman-2021/sec-{clause}", pack)
+        for offset, clause in enumerate((1, 3, 6, 9, 10))
+    ]
+
+
+def _loan_app_registry_passages():
+    return [
+        _passage(1, "Reserve Bank of India (Digital Lending) Directions, 2025", "rbi-digital-lending-directions-2025/para-11", "rbi_digital_lending_directions_2025", "guideline"),
+        _passage(2, "Reserve Bank of India (Digital Lending) Directions, 2025", "rbi-digital-lending-directions-2025/para-12", "rbi_digital_lending_directions_2025", "guideline"),
+        _passage(3, "Outsourcing of Financial Services - Responsibilities of regulated entities employing Recovery Agents", "rbi-recovery-agents-2022/para-2", "rbi_recovery_agents_2022", "circular"),
+        *_rbi_ombudsman_passages(4),
+    ]
+
+
 @pytest.mark.parametrize(
     "query,passages",
     (
@@ -720,19 +737,13 @@ def _passage(index, title, anchor, pack, source_type="bare_act"):
             _passage(2, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-173-c", "bnss_2023_vehicle_theft_fir"),
             _passage(3, "Code of Criminal Procedure 1973", "crpc-1973/sec-154", "crpc_1973_vehicle_theft_fir"),
         ]),
-        ("Loan app is harassing my contacts and sending my photo", [
-            _passage(1, "Reserve Bank Integrated Ombudsman Scheme 2021", "rbi-integrated-ombudsman-2021/sec-2", "rbi_integrated_ombudsman_2021_loan_app_cyber"),
-            _passage(2, "Reserve Bank Integrated Ombudsman Scheme 2021", "rbi-integrated-ombudsman-2021/sec-9", "rbi_integrated_ombudsman_2021_loan_app_cyber"),
-        ]),
+        ("Loan app is harassing my contacts and sending my photo", _loan_app_registry_passages()),
         ("Cyber police put a lien on my frozen bank account", [
             _passage(1, "Reserve Bank Integrated Ombudsman Scheme 2021", "rbi-integrated-ombudsman-2021/sec-2", "rbi_integrated_ombudsman_2021"),
             _passage(2, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-106", "bnss_2023_bank_account_legal_hold"),
             _passage(3, "Code of Criminal Procedure 1973", "crpc-1973/sec-102", "crpc_1973_bank_account_legal_hold"),
         ]),
-        ("Bank deducted money wrongly and customer care is not helping", [
-            _passage(1, "Reserve Bank Integrated Ombudsman Scheme 2021", "rbi-integrated-ombudsman-2021/sec-2", "rbi_integrated_ombudsman_2021"),
-            _passage(2, "Reserve Bank Integrated Ombudsman Scheme 2021", "rbi-integrated-ombudsman-2021/sec-9", "rbi_integrated_ombudsman_2021"),
-        ]),
+        ("Bank deducted money wrongly and customer care is not helping", _rbi_ombudsman_passages()),
         ("The insurer is rejecting my claim", [
             _passage(1, "Insurance Ombudsman Rules 2017", "insurance-ombudsman-rules-2017/sec-13", "insurance_ombudsman_rules_2017"),
             _passage(2, "Insurance Ombudsman Rules 2017", "insurance-ombudsman-rules-2017/sec-14", "insurance_ombudsman_rules_2017"),
@@ -1017,19 +1028,91 @@ def test_loan_app_owner_reports_the_same_activation_source_it_enforces():
     route = route_matter(query)
     plan = build_matter_plan(query, route)
     assert plan is not None
+    passages = _loan_app_registry_passages()
+
+    workflow = _selected_workflow_result(query, route, passages, plan)
+
+    assert workflow is not None
+    assert workflow.required_sources == (
+        "digital_grievance", "digital_data", "recovery_conduct",
+        "rbi_application", "rbi_definitions", "rbi_forum",
+        "rbi_grounds", "rbi_maintainability",
+    )
+    assert workflow.source_indices == {
+        "digital_grievance": 1,
+        "digital_data": 2,
+        "recovery_conduct": 3,
+        "rbi_application": 4,
+        "rbi_definitions": 5,
+        "rbi_forum": 6,
+        "rbi_grounds": 7,
+        "rbi_maintainability": 8,
+    }
+    assert "DPDP Act Section 13" not in " ".join(workflow.lines)
+
+
+def test_wrong_bank_owner_uses_each_clause_and_ignores_decoy_law():
+    query = "Bank deducted money wrongly and customer care is not helping"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
     passages = [
-        {"index": 1, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-8"},
-        {"index": 2, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-13"},
-        {"index": 3, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-        {"index": 4, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-9"},
+        *_rbi_ombudsman_passages(),
+        _passage(6, "Banking Regulation Act 1949", "banking-regulation-1949/sec-45ZA", "banking_regulation_1949"),
+        _passage(7, "Consumer Protection Act 2019", "consumer-protection-2019/sec-2", "consumer_protection_2019"),
     ]
 
     workflow = _selected_workflow_result(query, route, passages, plan)
 
     assert workflow is not None
-    assert workflow.required_sources == ("rbi_scope", "rbi_complaint")
-    assert workflow.source_indices == {"rbi_scope": 3, "rbi_complaint": 4}
-    assert "DPDP Act Section 13" not in " ".join(workflow.lines)
+    assert workflow.source_indices == {
+        "rbi_application": 1,
+        "rbi_definitions": 2,
+        "rbi_forum": 3,
+        "rbi_grounds": 4,
+        "rbi_maintainability": 5,
+    }
+    answer = " ".join(workflow.lines)
+    assert "Clause 1" in answer
+    assert "Clause 3" in answer
+    assert "Clause 9" in answer
+    assert "Clause 10" in answer
+    assert "Clause 6" in answer
+    assert "45ZA" not in answer
+    assert "Consumer Protection" not in answer
+
+
+def test_loan_app_police_advice_requires_independent_offence_source():
+    generic_query = "Loan app is harassing my contacts and calling relatives"
+    generic_route = route_matter(generic_query)
+    generic_plan = build_matter_plan(generic_query, generic_route)
+    generic = _selected_workflow_result(
+        generic_query, generic_route, _loan_app_registry_passages(), generic_plan
+    )
+    assert generic is not None
+    assert "cyber police" not in " ".join(generic.lines).lower()
+    assert "1930" not in " ".join(generic.lines)
+
+    image_query = "Loan app is blackmailing me with a morphed nude photo"
+    image_route = route_matter(image_query)
+    image_plan = build_matter_plan(image_query, image_route)
+    without_it = _selected_workflow_result(
+        image_query, image_route, _loan_app_registry_passages(), image_plan
+    )
+    assert without_it is not None
+    assert "cyber police" not in " ".join(without_it.lines).lower()
+
+    with_it_passages = [
+        *_loan_app_registry_passages(),
+        _passage(9, "Information Technology Act 2000", "it-act-2000/sec-66E", "it_act_2000"),
+    ]
+    with_it = _selected_workflow_result(
+        image_query, image_route, with_it_passages, image_plan
+    )
+    assert with_it is not None
+    answer = " ".join(with_it.lines)
+    assert "IT Act Section 66E" in answer
+    assert "urgent cyber-reporting option" in answer
+    assert "cyber police/1930/cybercrime.gov.in [9]" not in answer
 
 
 @pytest.mark.parametrize(

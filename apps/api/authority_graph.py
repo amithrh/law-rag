@@ -266,7 +266,10 @@ def _required_source_specs(
         return tuple(
             spec
             for spec in contract.source_specs
-            if spec.key in {"rbi_scope", "rbi_complaint"}
+            if spec.key in {
+                "rbi_application", "rbi_definitions", "rbi_forum",
+                "rbi_grounds", "rbi_maintainability",
+            }
         )
     if not strict_plan:
         return tuple(spec for spec in contract.source_specs if spec.required)
@@ -1128,6 +1131,8 @@ def _resolve_sources(
         )
     }
     allowed_keys = _allowed_source_keys_for_regime(contract, route)
+    if strict_plan and contract.id == "wrong_bank_debit":
+        allowed_keys = required_keys
     out: dict[str, int] = {}
     for spec in contract.source_specs:
         if allowed_keys is not None and spec.key not in allowed_keys:
@@ -2146,11 +2151,15 @@ def _render_digital_arrest_impersonation(q: str, sources: dict[str, int]) -> lis
 
 
 def _render_wrong_bank_debit(q: str, sources: dict[str, int]) -> list[str]:
-    rbi_scope = sources.get("rbi_scope")
-    rbi_complaint = sources.get("rbi_complaint")
-    rbi = rbi_complaint or rbi_scope
-    consumer_complaint = sources.get("consumer_complaint")
-    if rbi is None:
+    rbi_application = sources.get("rbi_application")
+    rbi_definitions = sources.get("rbi_definitions")
+    rbi_forum = sources.get("rbi_forum")
+    rbi_grounds = sources.get("rbi_grounds")
+    rbi_maintainability = sources.get("rbi_maintainability")
+    if any(index is None for index in (
+        rbi_application, rbi_definitions, rbi_forum,
+        rbi_grounds, rbi_maintainability,
+    )):
         return []
     card_context = _has_any(q, ("credit card", "debit card", "card", "annual fee", "card fee", "fee charged", "card was closed", "card closed"))
     atm_context = _has_any(q, (
@@ -2197,35 +2206,31 @@ def _render_wrong_bank_debit(q: str, sources: dict[str, int]) -> list[str]:
         if imps_context
         else "chargeback or failed-order debit where the bank has not processed reversal"
         if chargeback_context
-        else "wrong debit, deducted, debited, wrong deduction, failed UPI debit, unauthorised, or unauthorized bank transaction"
+        else "failed UPI debit or wrong payment-app deduction"
+        if "upi" in q or "payment app" in q or "phonepe" in q or "gpay" in q or "paytm" in q
+        else "wrong debit or wrong deduction"
     )
     evidence_phrase = (
-        "card statement entry, annual-fee/charge line item, card complaint or service-request number, SMS/email alerts, customer-care chats/call logs, written refusal or no-reply proof, and exact debit/refund timeline"
+        "card statement entry, annual-fee or charge line item, complaint number, alerts, customer-care messages or call logs, and debit/refund timeline"
         if card_context
-        else "ATM ID/location, withdrawal time, account statement debit, ATM slip if any, SMS/email alerts, branch/customer-care complaint number, written refusal or no-reply proof, and CCTV/request timeline"
+        else "ATM ID/location, withdrawal time, statement debit, ATM slip if any, complaint number, and CCTV/request timeline"
         if atm_context
-        else "IMPS transaction ID/RRN, beneficiary account details, bank statement debit, payment status screenshot, SMS/email alerts, bank complaint number, written refusal or no-reply proof, and exact debit/refund timeline"
+        else "IMPS transaction ID/RRN, beneficiary details, statement debit, status screenshot, complaint number, and debit/refund timeline"
         if imps_context
-        else "order ID, chargeback/request number, bank statement debit, failed-order or cancellation proof, seller/platform reply, bank complaint number, written refusal or no-reply proof, and exact debit/refund timeline"
+        else "order ID, chargeback/request number, statement debit, failed-order or cancellation proof, platform reply, and complaint number"
         if chargeback_context
-        else "bank statement entry, UPI/transaction ID/RRN, SMS or email alerts, customer-care chats/call logs, complaint number, written refusal or no-reply proof, and exact debit/refund timeline"
+        else "bank statement entry, UPI/transaction ID/RRN, alerts, customer-care messages or call logs, complaint number, reply or no-reply proof, and debit/refund timeline"
     )
     lines = [
-        f"For this {issue_phrase}, first raise a written complaint with the {app_phrase}; the RBI Integrated Ombudsman Scheme covers commercial banks, specified co-operative banks, qualifying NBFCs, and system participants [{rbi}].",
-        f"If the regulated entity rejects the complaint, gives an unsatisfactory reply, or does not reply within the Scheme's complaint window, use the RBI Ombudsman/CMS escalation route with the complaint record [{rbi}].",
-    ]
-    if consumer_complaint is not None:
-        lines.append(
-            f"If the bank still does not reverse or explain the duplicate/wrong debit, wrong deduction, failed UPI debit, or card charge after the written complaint and RBI record, use Consumer Protection Act 2019, Section 35 [{consumer_complaint}] as the service-deficiency forum backup."
-        )
-    lines.extend([
+        f"The RBI Integrated Ombudsman Scheme applies to services provided in India by the regulated entities covered by Clause 1 [{rbi_application}].",
+        f"Clause 3 defines a complaint, deficiency in service, and the bank, NBFC, payment-system participant, or other Regulated Entity responsible for the service [{rbi_definitions}].",
+        f"Clause 9 permits a customer complaint about deficiency in service by a Regulated Entity, subject to Clause 10 maintainability [{rbi_grounds}].",
+        f"Clause 10 requires a prior written complaint to the Regulated Entity; escalation follows rejection, an unsatisfactory reply, or 30 days without a reply, and the same cause must not already be pending or decided before another forum [{rbi_maintainability}].",
         "**What you can do next**",
-        (
-            f"- Raise a written complaint with the {app_phrase}, get a complaint number, and keep the {evidence_phrase} [{rbi}], [{consumer_complaint}]."
-            if consumer_complaint is not None
-            else f"- Raise a written complaint with the {app_phrase}, get a complaint number, and keep the {evidence_phrase} [{rbi}]."
-        ),
-    ])
+        f"- Under Clause 10, first make a written complaint to the {app_phrase} about the {issue_phrase}; keep the reply, or proof that 30 days passed without a reply [{rbi_maintainability}].",
+        f"- If Clause 10 is satisfied, file through RBI Ombudsman/CMS or the Centralised Receipt and Processing Centre identified by Clause 6 [{rbi_forum}].",
+        f"- Keep the {evidence_phrase}.",
+    ]
     return lines
 
 
@@ -5167,16 +5172,16 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
             ),
         ),
         source_specs=(
-            PassageSpec("rbi_scope", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-2", "/sec-3"), required=True),
-            PassageSpec("rbi_complaint", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-9", "/sec-10")),
-            PassageSpec("consumer_complaint", ("consumer protection",), ("/sec-35",)),
+            PassageSpec("rbi_application", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-1",), required=True),
+            PassageSpec("rbi_definitions", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-3",), required=True),
+            PassageSpec("rbi_forum", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-6",), required=True),
+            PassageSpec("rbi_grounds", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-9",), required=True),
+            PassageSpec("rbi_maintainability", ("reserve bank integrated ombudsman", "integrated ombudsman"), ("/sec-10",), required=True),
         ),
         line_specs=(
-            LineSpec("First confirm from the RBI Scheme's scope provisions that the bank, NBFC, or payment-system participant is a covered regulated entity [{rbi_scope}].", ("rbi_scope",)),
-            LineSpec("Use the Scheme's complaint and maintainability provisions to check the prior written bank grievance, response or no-response period, and whether the complaint is eligible for RBI Ombudsman/CMS [{rbi_complaint}].", ("rbi_complaint",)),
-            LineSpec("If the bank still does not reverse or explain the duplicate/wrong debit, wrong deduction, or failed UPI debit after the written bank complaint and RBI record, use Consumer Protection Act 2019, Section 35 [{consumer_complaint}] as the service-deficiency forum backup.", ("consumer_complaint",)),
+            LineSpec("Clause 1 supplies application, Clause 3 definitions, Clause 9 the complaint ground, and Clause 10 maintainability [{rbi_application}], [{rbi_definitions}], [{rbi_grounds}], [{rbi_maintainability}].", ("rbi_application", "rbi_definitions", "rbi_grounds", "rbi_maintainability")),
             LineSpec("**What you can do next**"),
-            LineSpec("- Keep the bank statement, UPI/transaction ID/RRN, SMS or email alerts, customer-care chats/call logs, complaint number, written refusal or no-reply proof, and exact debit/refund timeline [{rbi_complaint}].", ("rbi_complaint",)),
+            LineSpec("- If Clause 10 is satisfied, file through RBI CMS or the Centralised Receipt and Processing Centre under Clause 6 [{rbi_forum}].", ("rbi_forum",)),
         ),
         priority=90,
     ),

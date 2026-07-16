@@ -35,6 +35,7 @@ The legacy mode `hybrid_mode='dense_bm25'` keeps the 70/30 weighted-sum
 behavior for A/B comparison and for environments where the sparse
 column hasn't been backfilled.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,7 +46,6 @@ from dataclasses import dataclass, field
 from datetime import date
 
 import asyncpg
-
 from apps.api.config import get_settings
 from apps.api.embeddings import embedding_to_halfvec_literal, get_embedder
 from apps.api.legal_issue_plan import MatterPlan
@@ -90,6 +90,13 @@ class RetrievedChunk:
         return 0.7 * self.dense_score + 0.3 * self.bm25_score
 
 
+@dataclass(frozen=True)
+class RequiredAuthorityAnchor:
+    authority_id: str
+    source_pack_id: str
+    anchor_patterns: tuple[str, ...]
+
+
 def _retrieval_policy(
     query: str,
     *,
@@ -99,9 +106,7 @@ def _retrieval_policy(
     """Resolve source policy once, preferring the canonical MatterPlan."""
     if plan is not None:
         if route is not None and route.category != plan.primary_issue:
-            raise ValueError(
-                "MatterPlan primary issue does not match the supplied MatterRoute"
-            )
+            raise ValueError("MatterPlan primary issue does not match the supplied MatterRoute")
         packs = [
             SourcePack(
                 id=source.source_pack_id,
@@ -110,6 +115,7 @@ def _retrieval_policy(
                 doc_ids=tuple(source.doc_ids),
                 anchor_patterns=tuple(source.anchor_patterns),
                 source_types=tuple(source.source_types),
+                authority_ids=tuple(source.authority_ids),
                 priority=source.priority,
             )
             for source in plan.retrieval_sources
@@ -208,7 +214,7 @@ async def sparse_retrieve(
     # restricts the candidate set to chunks that share at least one
     # token with the query.
     sql = f"""
-        WITH q AS (SELECT ${base+1}::jsonb AS qs)
+        WITH q AS (SELECT ${base + 1}::jsonb AS qs)
         SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                c.subject_area, c.as_at, c.paragraph_no, c.metadata,
                d.title, d.citation, d.court, d.statute_short,
@@ -224,9 +230,9 @@ async def sparse_retrieve(
         JOIN documents d ON d.id = c.document_id
         WHERE {where_clause}
           AND c.embedding_sparse IS NOT NULL
-          AND c.embedding_sparse ?| ${base+2}::text[]
+          AND c.embedding_sparse ?| ${base + 2}::text[]
         ORDER BY sparse_score DESC
-        LIMIT ${base+3}
+        LIMIT ${base + 3}
     """
     return await pool_or_conn.fetch(sql, *params)
 
@@ -410,8 +416,7 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
                 sec_no = match.group(1)
                 chunk.text = (
                     "Juvenile Justice (Care and Protection of Children) Act 2015, "
-                    f"Section {sec_no}\n\n"
-                    + match.group(0).strip()
+                    f"Section {sec_no}\n\n" + match.group(0).strip()
                 )
                 chunk.anchor = f"jj-2015/sec-{sec_no}"
                 chunk.metadata["section_no"] = sec_no
@@ -419,7 +424,9 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
     text = chunk.text or ""
     match = re.search(r"36A\.\s+Offences triable by Special Courts.*", text, flags=re.DOTALL)
     if not match and "one hundred and eighty days" in text.lower():
-        match = re.search(r"\(4\)\s+In respect of persons accused.*?(?=\n\s*\(5\)|$)", text, flags=re.DOTALL)
+        match = re.search(
+            r"\(4\)\s+In respect of persons accused.*?(?=\n\s*\(5\)|$)", text, flags=re.DOTALL
+        )
     if match:
         chunk.text = (
             "Narcotic Drugs and Psychotropic Substances Act 1985, Section 36A\n\n"
@@ -430,18 +437,55 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
 
 
 _BIHAR_TERMS = (
-    "bihar", "patna", "gaya", "muzaffarpur", "bhagalpur",
-    "darbhanga", "purnea", "samastipur", "siwan", "chhapra",
-    "motihari", "nalanda", "begusarai", "madhubani",
+    "bihar",
+    "patna",
+    "gaya",
+    "muzaffarpur",
+    "bhagalpur",
+    "darbhanga",
+    "purnea",
+    "samastipur",
+    "siwan",
+    "chhapra",
+    "motihari",
+    "nalanda",
+    "begusarai",
+    "madhubani",
 )
 _NON_BIHAR_STATE_TERMS = (
-    "andhra", "assam", "chhattisgarh", "delhi", "goa", "gujarat",
-    "haryana", "himachal", "jharkhand", "karnataka", "kerala",
-    "madhya pradesh", "maharashtra", "manipur", "odisha", "orissa",
-    "punjab", "rajasthan", "tamil nadu", "telangana", "uttar pradesh",
-    "uttarakhand", "west bengal", "bengal",
-    "bhopal", "indore", "jaipur", "jodhpur", "udaipur", "kota",
-    "ajmer", "lucknow", "kanpur",
+    "andhra",
+    "assam",
+    "chhattisgarh",
+    "delhi",
+    "goa",
+    "gujarat",
+    "haryana",
+    "himachal",
+    "jharkhand",
+    "karnataka",
+    "kerala",
+    "madhya pradesh",
+    "maharashtra",
+    "manipur",
+    "odisha",
+    "orissa",
+    "punjab",
+    "rajasthan",
+    "tamil nadu",
+    "telangana",
+    "uttar pradesh",
+    "uttarakhand",
+    "west bengal",
+    "bengal",
+    "bhopal",
+    "indore",
+    "jaipur",
+    "jodhpur",
+    "udaipur",
+    "kota",
+    "ajmer",
+    "lucknow",
+    "kanpur",
 )
 
 
@@ -458,34 +502,72 @@ def _query_allows_state_specific_source(query: str, chunk: RetrievedChunk) -> bo
     if "bihar mukhyamantri kanya vivah" in title:
         if any(term in q for term in _BIHAR_TERMS):
             return True
-        kanya_context = any(term in q for term in (
-            "kanya vivah", "kanyadan", "kanya bibaha", "vivah yojana",
-            "daughter wedding", "marriage scheme",
-        ))
+        kanya_context = any(
+            term in q
+            for term in (
+                "kanya vivah",
+                "kanyadan",
+                "kanya bibaha",
+                "vivah yojana",
+                "daughter wedding",
+                "marriage scheme",
+            )
+        )
         return kanya_context and not _query_has_non_bihar_kanya_context(q)
-    if (
-        any(term in q for term in ("prohibition law", "excise act", "liquor", "caught me drinking", "drinking village", "sharab"))
-        and ("state of bihar" in title or "bihar prohibition" in title)
-    ):
+    if any(
+        term in q
+        for term in (
+            "prohibition law",
+            "excise act",
+            "liquor",
+            "caught me drinking",
+            "drinking village",
+            "sharab",
+        )
+    ) and ("state of bihar" in title or "bihar prohibition" in title):
         return _query_has_bihar_excise_jurisdiction(q)
     return True
 
 
 def _query_has_bihar_excise_jurisdiction(q: str) -> bool:
-    if any(term in q for term in (
-        "bihar colony", "bihar border", "near bihar border", "bihar bhawan",
-        "from bihar",
-    )):
+    if any(
+        term in q
+        for term in (
+            "bihar colony",
+            "bihar border",
+            "near bihar border",
+            "bihar bhawan",
+            "from bihar",
+        )
+    ):
         return False
     if any(term in q for term in ("delhi", "uttar pradesh", " up ", " u.p.", "noida", "lucknow")):
         return False
-    return any(term in q for term in (
-        "bihar prohibition", "bihar excise", "in bihar", "at bihar",
-        "under bihar", "bihar police", "bihar thana", "patna", "gaya",
-        "muzaffarpur", "bhagalpur", "darbhanga", "purnea", "samastipur",
-        "siwan", "chhapra", "motihari", "nalanda", "begusarai",
-        "madhubani",
-    ))
+    return any(
+        term in q
+        for term in (
+            "bihar prohibition",
+            "bihar excise",
+            "in bihar",
+            "at bihar",
+            "under bihar",
+            "bihar police",
+            "bihar thana",
+            "patna",
+            "gaya",
+            "muzaffarpur",
+            "bhagalpur",
+            "darbhanga",
+            "purnea",
+            "samastipur",
+            "siwan",
+            "chhapra",
+            "motihari",
+            "nalanda",
+            "begusarai",
+            "madhubani",
+        )
+    )
 
 
 def _filter_query_ineligible_sources(
@@ -501,6 +583,7 @@ def _preserve_required_source_packs(
     *,
     limit: int,
     preferred_top_n: int | None = None,
+    required_authorities: tuple[RequiredAuthorityAnchor, ...] = (),
 ) -> list[RetrievedChunk]:
     """Keep at least one exact required-source chunk per fired pack.
 
@@ -513,13 +596,12 @@ def _preserve_required_source_packs(
     """
     if limit <= 0 or not candidates or not pack_ids:
         return candidates[:limit]
+    limit = max(limit, len(required_authorities))
 
     selected = candidates[:limit]
     selected_chunk_ids = {c.chunk_id for c in selected}
     present_pack_ids = {
-        str(pack_id)
-        for c in selected
-        if (pack_id := c.metadata.get("_required_source_pack"))
+        str(pack_id) for c in selected if (pack_id := c.metadata.get("_required_source_pack"))
     }
 
     for pack_id in pack_ids:
@@ -557,6 +639,12 @@ def _preserve_required_source_packs(
         pack_ids,
         limit=limit,
     )
+    _preserve_required_authority_anchors(
+        selected,
+        candidates,
+        required_authorities,
+        limit=limit,
+    )
 
     selected.sort(
         key=lambda c: c.rerank_score if c.rerank_score is not None else -1e9,
@@ -569,6 +657,134 @@ def _preserve_required_source_packs(
             preferred_top_n=min(preferred_top_n, limit),
         )
     return selected[:limit]
+
+
+def _required_authority_anchors(plan: MatterPlan | None) -> tuple[RequiredAuthorityAnchor, ...]:
+    if plan is None:
+        return ()
+    requirements: list[RequiredAuthorityAnchor] = []
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    for entry in plan.authority_ledger:
+        if (
+            not entry.must_cite
+            or not entry.authority_id
+            or not entry.source_pack_id
+            or not entry.required_anchor_patterns
+        ):
+            continue
+        requirement = RequiredAuthorityAnchor(
+            authority_id=entry.authority_id,
+            source_pack_id=entry.source_pack_id,
+            anchor_patterns=tuple(entry.required_anchor_patterns),
+        )
+        key = (
+            requirement.authority_id,
+            requirement.source_pack_id,
+            requirement.anchor_patterns,
+        )
+        if key not in seen:
+            seen.add(key)
+            requirements.append(requirement)
+    return tuple(requirements)
+
+
+def _chunk_matches_required_authority(
+    chunk: RetrievedChunk,
+    requirement: RequiredAuthorityAnchor,
+) -> bool:
+    if chunk.metadata.get("_required_source_pack") != requirement.source_pack_id:
+        return False
+    anchor = chunk.anchor or ""
+    return any(
+        re.search(pattern, anchor, flags=re.IGNORECASE)
+        for pattern in _anchor_regexes_from_patterns(requirement.anchor_patterns)
+    )
+
+
+def _preserve_required_authority_anchors(
+    selected: list[RetrievedChunk],
+    candidates: list[RetrievedChunk],
+    requirements: tuple[RequiredAuthorityAnchor, ...],
+    *,
+    limit: int,
+) -> None:
+    """Keep one exact chunk for every mandatory authority named by MatterPlan."""
+    if limit <= 0 or not requirements:
+        return
+
+    matched_candidates: dict[RequiredAuthorityAnchor, RetrievedChunk] = {}
+    for requirement in requirements:
+        best = next(
+            (
+                candidate
+                for candidate in candidates
+                if _chunk_matches_required_authority(candidate, requirement)
+            ),
+            None,
+        )
+        if best is None:
+            logger.warning(
+                "required authority unavailable before final ranking: authority=%s pack=%s anchors=%s",
+                requirement.authority_id,
+                requirement.source_pack_id,
+                requirement.anchor_patterns,
+            )
+            continue
+        matched_candidates[requirement] = best
+
+    mandatory_chunk_ids = {chunk.chunk_id for chunk in matched_candidates.values()}
+    if len(mandatory_chunk_ids) > limit:
+        logger.error(
+            "required authority count exceeds retrieval limit: required=%d limit=%d",
+            len(mandatory_chunk_ids),
+            limit,
+        )
+
+    selected_chunk_ids = {chunk.chunk_id for chunk in selected}
+    protected_chunk_ids = {
+        chunk.chunk_id
+        for requirement in requirements
+        for chunk in selected
+        if _chunk_matches_required_authority(chunk, requirement)
+    }
+    for requirement, best in matched_candidates.items():
+        existing = next(
+            (
+                chunk
+                for chunk in selected
+                if _chunk_matches_required_authority(chunk, requirement)
+            ),
+            None,
+        )
+        if existing is not None:
+            protected_chunk_ids.add(existing.chunk_id)
+            continue
+        if best.chunk_id in selected_chunk_ids:
+            protected_chunk_ids.add(best.chunk_id)
+            continue
+        if len(selected) < limit:
+            selected.append(best)
+        else:
+            replace_idx = next(
+                (
+                    idx
+                    for idx in range(len(selected) - 1, -1, -1)
+                    if selected[idx].chunk_id not in protected_chunk_ids
+                    and selected[idx].chunk_id not in mandatory_chunk_ids
+                ),
+                None,
+            )
+            if replace_idx is None:
+                logger.error(
+                    "no retrieval slot available for required authority: authority=%s pack=%s",
+                    requirement.authority_id,
+                    requirement.source_pack_id,
+                )
+                continue
+            selected_chunk_ids.discard(selected[replace_idx].chunk_id)
+            selected[replace_idx] = best
+        selected_chunk_ids.add(best.chunk_id)
+        protected_chunk_ids.add(best.chunk_id)
 
 
 def _preserve_section_diverse_required_packs(
@@ -588,8 +804,7 @@ def _preserve_section_diverse_required_packs(
             continue
 
         pack_candidates = [
-            c for c in candidates
-            if c.metadata.get("_required_source_pack") == pack_id
+            c for c in candidates if c.metadata.get("_required_source_pack") == pack_id
         ]
         if not pack_candidates:
             continue
@@ -606,9 +821,9 @@ def _preserve_section_diverse_required_packs(
                 continue
             best = next(
                 (
-                    c for c in pack_candidates
-                    if _chunk_section_number(c) == wanted
-                    and c.chunk_id not in selected_chunk_ids
+                    c
+                    for c in pack_candidates
+                    if _chunk_section_number(c) == wanted and c.chunk_id not in selected_chunk_ids
                 ),
                 None,
             )
@@ -803,7 +1018,9 @@ def _source_quality_score(chunk: RetrievedChunk, *, route_category: str) -> floa
             base += 0.03
 
     title_blob = f"{chunk.title} {chunk.statute_short or ''}".lower()
-    if source_type == "bare_act" and any(marker in title_blob for marker in (" act", " code", "sanhita", "adhiniyam")):
+    if source_type == "bare_act" and any(
+        marker in title_blob for marker in (" act", " code", "sanhita", "adhiniyam")
+    ):
         base += 0.03
 
     return max(0.0, min(1.0, base))
@@ -890,7 +1107,9 @@ def _anchor_boundary_regexes(section_nos: list[str]) -> list[str]:
 
 
 def _anchor_regexes_from_patterns(anchor_patterns: tuple[str, ...]) -> list[str]:
-    section_regexes = _anchor_boundary_regexes(_section_numbers_from_anchor_patterns(anchor_patterns))
+    section_regexes = _anchor_boundary_regexes(
+        _section_numbers_from_anchor_patterns(anchor_patterns)
+    )
     literal_regexes = [
         rf"(^|[#/]){re.escape(pattern.removeprefix('/').removesuffix('@'))}($|@|__)"
         for pattern in anchor_patterns
@@ -979,6 +1198,12 @@ def _diversify_source_pack_chunks(
     return diversified
 
 
+def _required_source_pack_limit(pack: SourcePack, configured_limit: int) -> int:
+    """Never cap a pack below its distinct mandatory section anchors."""
+    section_count = len(_section_numbers_from_anchor_patterns(pack.anchor_patterns))
+    return max(configured_limit, section_count)
+
+
 async def _fetch_source_pack_candidates(
     pool: asyncpg.Pool,
     query: str,
@@ -1042,12 +1267,17 @@ async def _fetch_source_pack_candidates(
             doc_ids = list(pack.doc_ids)
             section_nos = _section_numbers_from_anchor_patterns(pack.anchor_patterns)
             anchor_regexes = _anchor_regexes_from_patterns(pack.anchor_patterns)
-            fetch_limit = max(limit_per_pack, limit_per_pack * max(1, len(pack.anchor_patterns)) * 4)
+            pack_limit = _required_source_pack_limit(pack, limit_per_pack)
+            fetch_limit = max(
+                pack_limit,
+                pack_limit * max(1, len(pack.anchor_patterns)) * 4,
+            )
             rows = await conn.fetch(
                 f"""
                 SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                        c.subject_area, c.as_at, c.paragraph_no, c.metadata,
                        d.title, d.citation, d.court, d.statute_short,
+                       da.authority_id AS registry_authority_id,
                        ts_rank(c.text_tsv, plainto_tsquery('english', $6)) AS bm25_score,
                        CASE
                          WHEN cardinality($4::text[]) > 0
@@ -1059,6 +1289,9 @@ async def _fetch_source_pack_candidates(
                        COALESCE(array_position($4::text[], c.metadata->>'section_no'), 9999) AS anchor_order
                 FROM chunks c
                 JOIN documents d ON d.id = c.document_id
+                LEFT JOIN document_authorities da
+                  ON da.chunk_id = c.id
+                 AND da.authority_id = ANY($8::text[])
                 WHERE NOT c.quarantined
                   AND c.source_type = ANY($2::text[])
                   AND (
@@ -1071,6 +1304,7 @@ async def _fetch_source_pack_candidates(
                     OR c.metadata->>'section_no' = ANY($4::text[])
                     OR c.anchor ~* ANY($5::text[])
                   )
+                  AND (cardinality($8::text[]) = 0 OR da.authority_id IS NOT NULL)
                   {provenance_clause}
                 ORDER BY anchor_priority DESC, anchor_order ASC, bm25_score DESC,
                          c.paragraph_no NULLS LAST, c.id
@@ -1083,6 +1317,7 @@ async def _fetch_source_pack_candidates(
                 anchor_regexes,
                 pack.search_query,
                 fetch_limit,
+                list(pack.authority_ids),
             )
             pack_chunks: list[RetrievedChunk] = []
             for row in rows:
@@ -1110,13 +1345,18 @@ async def _fetch_source_pack_candidates(
                 chunk.metadata["_required_source_pack"] = pack.id
                 chunk.metadata["_required_source_priority"] = pack.priority
                 chunk.metadata["_required_source_query"] = pack.search_query
+                registry_authority_id = row.get("registry_authority_id")
+                if registry_authority_id:
+                    chunk.metadata["_authority_ids"] = [registry_authority_id]
                 pack_chunks.append(chunk)
-            out.extend(_diversify_source_pack_chunks(
-                pack_chunks,
-                section_nos=section_nos,
-                anchor_regexes=anchor_regexes,
-                limit=limit_per_pack,
-            ))
+            out.extend(
+                _diversify_source_pack_chunks(
+                    pack_chunks,
+                    section_nos=section_nos,
+                    anchor_regexes=anchor_regexes,
+                    limit=pack_limit,
+                )
+            )
     return out
 
 
@@ -1187,6 +1427,7 @@ def _rerank_candidate_union(
     variants: list[str],
     route_category: str,
     packs: list[SourcePack],
+    plan: MatterPlan | None,
     top_k: int | None,
     timings: dict[str, float] | None,
 ) -> list[RetrievedChunk]:
@@ -1198,9 +1439,16 @@ def _rerank_candidate_union(
 
     do_rerank = s.rerank_enabled
     if not do_rerank:
-        return candidate_list[:limit]
+        return _preserve_required_source_packs(
+            candidate_list,
+            [pack.id for pack in packs],
+            limit=limit,
+            preferred_top_n=getattr(s, "required_source_pack_preferred_top_n", 4),
+            required_authorities=_required_authority_anchors(plan),
+        )
 
     from apps.api.rerank import rerank as _rerank
+
     # Cap candidates at rerank_input_k to bound cost.
     candidate_list.sort(
         key=lambda c: (
@@ -1210,7 +1458,13 @@ def _rerank_candidate_union(
         ),
         reverse=True,
     )
-    candidate_list = candidate_list[: s.rerank_input_k]
+    required_authorities = _required_authority_anchors(plan)
+    candidate_list = _preserve_required_source_packs(
+        candidate_list,
+        [pack.id for pack in packs],
+        limit=s.rerank_input_k,
+        required_authorities=required_authorities,
+    )
 
     # rerank() mutates each chunk's rerank_score in place. To take
     # the max across variants we call it once per query and copy
@@ -1245,6 +1499,7 @@ def _rerank_candidate_union(
     #    score similarly. Inspired by TurboVec's source_quality
     #    weight feature.
     import re as _re
+
     _sec_ref = _re.compile(r"section\s+(\d{1,4}[A-Z]?)|article\s+(\d{1,4}[A-Z]?)", _re.IGNORECASE)
     _sc_anchor = _re.compile(r"^\d{4}-(insc|\d+-\d+)")
     sec_matches = _sec_ref.findall(query)
@@ -1293,6 +1548,7 @@ def _rerank_candidate_union(
         [pack.id for pack in packs],
         limit=limit,
         preferred_top_n=getattr(s, "required_source_pack_preferred_top_n", 4),
+        required_authorities=required_authorities,
     )
 
 
@@ -1412,11 +1668,11 @@ async def hybrid_retrieve(
             f"""SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                        c.subject_area, c.as_at, c.paragraph_no, c.metadata,
                        d.title, d.citation, d.court, d.statute_short,
-                       1 - (c.embedding <=> ${len(params)+1}::halfvec) AS dense_score
+                       1 - (c.embedding <=> ${len(params) + 1}::halfvec) AS dense_score
                 FROM chunks c JOIN documents d ON d.id = c.document_id
                 WHERE {where_clause}
-                ORDER BY c.embedding <=> ${len(params)+1}::halfvec
-                LIMIT ${len(params)+2}""",
+                ORDER BY c.embedding <=> ${len(params) + 1}::halfvec
+                LIMIT ${len(params) + 2}""",
             *params_dense,
         )
 
@@ -1524,14 +1780,20 @@ async def hybrid_retrieve(
     do_rerank = use_reranker if use_reranker is not None else s.rerank_enabled
     if do_rerank and out:
         from apps.api.rerank import rerank as _rerank
+
         candidates = out[: s.rerank_input_k]
         reranked = _rerank(query, candidates, keep=top_k)
         logger.info(
             "hybrid_retrieve[%s]: %d dense + %d bm25 + %d sparse + %d fielded "
             "→ %d merged → rerank(%d) → top %d",
             s.hybrid_mode,
-            len(dense_rows), len(bm25_rows), len(sparse_rows), len(fielded_bm25_rows),
-            len(merged), len(candidates), len(reranked),
+            len(dense_rows),
+            len(bm25_rows),
+            len(sparse_rows),
+            len(fielded_bm25_rows),
+            len(merged),
+            len(candidates),
+            len(reranked),
         )
         return reranked
 
@@ -1539,8 +1801,12 @@ async def hybrid_retrieve(
         "hybrid_retrieve[%s]: %d dense + %d bm25 + %d sparse + %d fielded → %d merged → "
         "top %d (no rerank)",
         s.hybrid_mode,
-        len(dense_rows), len(bm25_rows), len(sparse_rows), len(fielded_bm25_rows),
-        len(merged), min(top_k, len(out)),
+        len(dense_rows),
+        len(bm25_rows),
+        len(sparse_rows),
+        len(fielded_bm25_rows),
+        len(merged),
+        min(top_k, len(out)),
     )
     return out[:top_k]
 
@@ -1594,8 +1860,10 @@ async def multi_query_hybrid_retrieve(
     if not getattr(s, "query_expansion_enabled", True):
         t_plain = time.perf_counter()
         chunks = await hybrid_retrieve(
-            pool, query,
-            source_types=source_types, subject_areas=subject_areas,
+            pool,
+            query,
+            source_types=source_types,
+            subject_areas=subject_areas,
             top_k=top_k,
         )
         if timings is not None:
@@ -1606,6 +1874,7 @@ async def multi_query_hybrid_retrieve(
     t_expand = time.perf_counter()
     try:
         from apps.api.query_expand import expand_query
+
         variants = await expand_query(
             query,
             max_variants=getattr(s, "query_expansion_max_variants", 2),
@@ -1648,23 +1917,28 @@ async def multi_query_hybrid_retrieve(
                 variants=variants,
                 route_category=route_category,
                 packs=packs,
+                plan=plan,
                 top_k=top_k,
                 timings=timings,
             )
             logger.info(
-                "single_query_retrieve: original only → %d candidates → top %d "
-                "(top_rerank=%.3f)",
+                "single_query_retrieve: original only → %d candidates → top %d (top_rerank=%.3f)",
                 len(union),
                 len(candidate_list),
-                (candidate_list[0].rerank_score if candidate_list and
-                 candidate_list[0].rerank_score is not None else 0.0),
+                (
+                    candidate_list[0].rerank_score
+                    if candidate_list and candidate_list[0].rerank_score is not None
+                    else 0.0
+                ),
             )
             return candidate_list, []
 
         t_single = time.perf_counter()
         chunks = await hybrid_retrieve(
-            pool, query,
-            source_types=source_types, subject_areas=subject_areas,
+            pool,
+            query,
+            source_types=source_types,
+            subject_areas=subject_areas,
             top_k=top_k,
         )
         if timings is not None:
@@ -1702,17 +1976,20 @@ async def multi_query_hybrid_retrieve(
             variants=variants,
             route_category=route_category,
             packs=packs,
+            plan=plan,
             top_k=top_k,
             timings=timings,
         )
         logger.info(
-            "single_query_retrieve: %d variants → %d candidates → top %d "
-            "(top_rerank=%.3f)",
+            "single_query_retrieve: %d variants → %d candidates → top %d (top_rerank=%.3f)",
             len(variants),
             len(union),
             len(candidate_list),
-            (candidate_list[0].rerank_score if candidate_list and
-             candidate_list[0].rerank_score is not None else 0.0),
+            (
+                candidate_list[0].rerank_score
+                if candidate_list and candidate_list[0].rerank_score is not None
+                else 0.0
+            ),
         )
         return candidate_list, variants[1:]
 
@@ -1734,7 +2011,8 @@ async def multi_query_hybrid_retrieve(
     candidates_per_variant = await asyncio.gather(
         *[
             hybrid_retrieve(
-                pool, v,
+                pool,
+                v,
                 source_types=source_types,
                 subject_areas=subject_areas,
                 top_k=s.rerank_input_k,
@@ -1776,6 +2054,7 @@ async def multi_query_hybrid_retrieve(
         variants=variants,
         route_category=route_category,
         packs=packs,
+        plan=plan,
         top_k=top_k,
         timings=timings,
     )
@@ -1783,15 +2062,23 @@ async def multi_query_hybrid_retrieve(
     logger.info(
         "multi_query_retrieve: %d variants → %d union candidates → "
         "rerank-max top %d (top_rerank=%.3f)",
-        len(variants), len(union), len(candidate_list),
-        (candidate_list[0].rerank_score if candidate_list and
-         candidate_list[0].rerank_score is not None else 0.0),
+        len(variants),
+        len(union),
+        len(candidate_list),
+        (
+            candidate_list[0].rerank_score
+            if candidate_list and candidate_list[0].rerank_score is not None
+            else 0.0
+        ),
     )
 
     return candidate_list, variants[1:]
 
 
 __all__ = [
-    "RetrievedChunk", "hybrid_retrieve", "multi_query_hybrid_retrieve",
-    "rrf_fuse", "sparse_retrieve",
+    "RetrievedChunk",
+    "hybrid_retrieve",
+    "multi_query_hybrid_retrieve",
+    "rrf_fuse",
+    "sparse_retrieve",
 ]

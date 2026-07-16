@@ -105,6 +105,32 @@ def test_plan_source_gap_uses_authority_ids_as_primary_key():
     assert missing[0]["match_mode"] == "authority_id"
 
 
+def test_rbi_workflow_fails_closed_when_one_mandatory_clause_is_missing():
+    query = "Bank deducted money wrongly and customer care is not helping"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    def passage(clause: str) -> dict:
+        return {
+            "index": int(clause),
+            "title": "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+            "anchor": f"rbi-integrated-ombudsman-2021/sec-{clause}",
+            "source_type": "bare_act",
+            "required_source_pack": "rbi_integrated_ombudsman_2021",
+        }
+
+    incomplete = [passage(clause) for clause in ("1", "3", "6", "10")]
+    missing = missing_plan_authorities(plan=plan, passages=incomplete, query=query)
+    assert [item["required_source"] for item in missing] == [
+        "Reserve Bank - Integrated Ombudsman Scheme, 2021 Clause 9"
+    ]
+    assert missing[0]["authority_id"] == "authority_46d05174f2cefb7daa20"
+
+    complete = [*incomplete, passage("9")]
+    assert missing_plan_authorities(plan=plan, passages=complete, query=query) == []
+
+
 def test_plan_source_gap_respects_plan_must_cite_policy_and_state_gap():
     query = "office rejected my caste certificate what appeal"
     plan = build_matter_plan(query, route_matter(query))

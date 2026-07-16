@@ -43,6 +43,9 @@ def build_projection(record: AuthorityRecord) -> AuthorityProjection:
     document_metadata = {
         "canonical_url": record.canonical_url,
         "jurisdiction": record.jurisdiction.model_dump(mode="json"),
+        "consolidation_as_at": (
+            record.consolidation_as_at.isoformat() if record.consolidation_as_at else None
+        ),
         "registry_projection": "document",
     }
     provision_metadata = {
@@ -51,6 +54,9 @@ def build_projection(record: AuthorityRecord) -> AuthorityProjection:
         "authority_record_sha256": record.record_sha256,
         "effective_from": record.effective_from.isoformat(),
         "effective_to": record.effective_to.isoformat() if record.effective_to else None,
+        "consolidation_as_at": (
+            record.consolidation_as_at.isoformat() if record.consolidation_as_at else None
+        ),
         "savings": record.savings.model_dump(mode="json") if record.savings else None,
         "verbatim_status": record.verbatim_status,
         "text_sha256": record.text_sha256,
@@ -137,9 +143,11 @@ async def _project_record(
     projection = build_projection(record)
     existing_projections = await conn.fetch(
         """
-        SELECT document_id, chunk_id, authority_id, canonical_key
-        FROM document_authorities
-        WHERE authority_id = $1 OR canonical_key = $2
+        SELECT da.document_id, da.chunk_id, da.authority_id, da.canonical_key,
+               c.as_at AS chunk_as_at
+        FROM document_authorities da
+        JOIN chunks c ON c.id = da.chunk_id
+        WHERE da.authority_id = $1 OR da.canonical_key = $2
         FOR UPDATE
         """,
         record.authority_id_expected,
@@ -191,7 +199,7 @@ async def _project_record(
             INSERT INTO documents (
                 source_id, doc_id, title, statute_short, statute_year,
                 subject_area, as_at, metadata, provenance_verified
-            ) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7::jsonb, false)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, false)
             RETURNING id
             """,
             source_id,
@@ -200,6 +208,7 @@ async def _project_record(
             record.statute,
             record.year,
             record.subject_area,
+            record.consolidation_as_at,
             json.dumps(projection.document_metadata),
         )
     else:
@@ -208,22 +217,34 @@ async def _project_record(
         await conn.execute(
             """
             UPDATE documents
-            SET title = $1,
-                statute_short = $2,
-                statute_year = $3,
-                subject_area = $4,
-                metadata = metadata || $5::jsonb
-            WHERE id = $6
+            SET source_id = $1,
+                title = $2,
+                statute_short = $3,
+                statute_year = $4,
+                subject_area = $5,
+                as_at = $6,
+                metadata = metadata || $7::jsonb
+            WHERE id = $8
             """,
+            source_id,
             record.title,
             record.statute,
             record.year,
             record.subject_area,
+            record.consolidation_as_at,
             json.dumps(projection.document_metadata),
             document_id,
         )
 
-    anchors = tuple(f"{record.doc_id}{anchor}" for anchor in record.provision.all_anchors)
+    version_suffix = (
+        f"@{record.consolidation_as_at.isoformat()}"
+        if record.consolidation_as_at is not None
+        else ""
+    )
+    anchors = tuple(
+        f"{record.doc_id}{anchor}{version_suffix}"
+        for anchor in record.provision.all_anchors
+    )
     chunk_id = await conn.fetchval(
         """
         SELECT id
@@ -237,7 +258,9 @@ async def _project_record(
         list(anchors),
     )
     dense, sparse = await embed(record.text)
-    canonical_anchor = f"{record.doc_id}{record.provision.canonical_anchor}"
+    canonical_anchor = (
+        f"{record.doc_id}{record.provision.canonical_anchor}{version_suffix}"
+    )
     if chunk_id is None:
         chunk_id = await conn.fetchval(
             """
@@ -247,7 +270,7 @@ async def _project_record(
                 as_at, metadata
             ) VALUES (
                 $1, $2, $3, $4, NULL, $5, $6, 'section', $7::halfvec,
-                $8::jsonb, NULL, $9::jsonb
+                $8::jsonb, $9, $10::jsonb
             )
             RETURNING id
             """,
@@ -259,6 +282,7 @@ async def _project_record(
             len(record.text.split()),
             dense,
             sparse,
+            record.consolidation_as_at,
             json.dumps(projection.chunk_metadata),
         )
     else:
@@ -274,11 +298,12 @@ async def _project_record(
                 chunk_strategy = 'section',
                 embedding = $6::halfvec,
                 embedding_sparse = $7::jsonb,
+                as_at = $8,
                 quarantined = false,
                 provenance_verified = false,
                 provenance_verified_at = NULL,
-                metadata = metadata || $8::jsonb
-            WHERE id = $9
+                metadata = metadata || $9::jsonb
+            WHERE id = $10
             """,
             record.source_type,
             record.subject_area,
@@ -287,11 +312,20 @@ async def _project_record(
             len(record.text.split()),
             dense,
             sparse,
+            record.consolidation_as_at,
             json.dumps(projection.chunk_metadata),
             chunk_id,
         )
 
-    if existing_projection is not None and existing_projection["chunk_id"] != chunk_id:
+    replaces_same_snapshot = (
+        existing_projection is not None
+        and existing_projection["chunk_as_at"] == record.consolidation_as_at
+    )
+    if (
+        existing_projection is not None
+        and existing_projection["chunk_id"] != chunk_id
+        and replaces_same_snapshot
+    ):
         await conn.execute(
             """
             UPDATE chunks

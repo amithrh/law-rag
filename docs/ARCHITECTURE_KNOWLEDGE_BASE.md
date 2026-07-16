@@ -822,3 +822,46 @@ authority with no source gap or refusal.
 This is a vertical pilot, not registry completeness. P2 remains open for the
 rest of the released authority catalog, authority relationships, geography,
 freshness operations, and an uninjected retrieval benchmark.
+
+## 2026-07-15 P2B Registry-Owned RBI and Loan-App Workflows
+
+P2B turns the registry pilot into a multi-authority workflow. Immutable
+migrations now declare the RBI Ombudsman application, definition, forum,
+complaint-ground, and maintainability clauses; Digital Lending grievance and
+data-access paragraphs; recovery-agent conduct; IT Act Section 66E; and BNS
+Section 308. The runtime workflow is assembled from registry relationships,
+not duplicated title and anchor guesses.
+
+Additional invariants established by this stage:
+
+1. A workflow relationship names ordered authority keys and condition IDs.
+   Runtime code resolves those keys to canonical authority IDs and fails closed
+   when a key is missing or unverified.
+2. Exact registry requirements replace generic source-pack obligations for the
+   same workflow. They do not coexist as competing answer owners.
+3. Retrieval capacity is at least the number of mandatory authorities. A
+   caller's small `top_k` cannot silently drop part of a compound legal route.
+4. Registry retrieval joins `document_authorities`; shared document metadata
+   is never treated as proof that the requested provision was retrieved.
+5. The candidate answer must cite every activated must-cite registry authority.
+   If retrieval is complete but the answer omits one, the server refuses before
+   emitting legal sentences.
+6. Conditional authorities remain fact and regime dependent. IT Act Section
+   66E is a narrow private-area image rule, not a catch-all morphed-image law.
+   BNS Section 308 is activated for a current payment-linked threat; an unknown
+   or legacy incident cannot be forced into the current code by the word
+   `now` appearing in unrelated prose.
+7. RBI escalation is conditional on a covered Regulated Entity and Clause 10
+   maintainability. An unregistered app does not become RBI-regulated merely
+   because the user calls it a loan app.
+8. A near-miss must prove non-capture, not merely a different final label. The
+   bank-freeze replay contains no P2B registry keys, while its separate weak
+   bridge sentences remain visible as a later blocker.
+
+The stage gate combines exact migration and wheel checks, real PostgreSQL
+upgrade/idempotence tests, official-source provenance verification, broad
+router/retrieval/answer tests, and live SSE replays. The three owned prompts
+returned the complete expected registry sets with no source gap, refusal, or
+weak/unsupported legal sentence. P2B is still awaiting an independent
+post-implementation review because the reviewer service reached its child
+thread limit; tests do not convert that missing review into a PASS.

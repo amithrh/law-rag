@@ -1711,7 +1711,7 @@ def _canonical_alias_match(required_lower: str, item_blob: str) -> bool:
         (
             ("banking regulation act", "bank-service dispute", "banking grievance", "education-loan refusal", "education loan refusal", "rbi/banking grievance", "rbi integrated ombudsman", "rbi integrated ombudsman scheme"),
             ("banking regulation", "reserve bank integrated ombudsman", "rbi integrated ombudsman"),
-            ("#header", "sec-2", "sec-20", "sec-35a", "sec-35-a", "sec-45za", "sec-45-za", "/sec-2", "/sec-20", "/sec-35a", "/sec-35-a", "/sec-45za", "/sec-45-za"),
+            ("#header", "sec-2", "sec-20", "sec-35a", "sec-35-a", "/sec-2", "/sec-20", "/sec-35a", "/sec-35-a"),
         ),
         (
             ("negotiable instruments act", "negotiable instrument", "ni act", "cheque dishonour"),

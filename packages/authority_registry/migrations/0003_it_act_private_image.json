@@ -1,0 +1,147 @@
+{
+  "migration_id": "0003_it_act_private_image",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "information_technology_act_2000_section_66e",
+        "authority_id_expected": "authority_ad90922325a79b902a63",
+        "canonical_name": "Information Technology Act, 2000",
+        "aliases": [
+          "Information Technology Act 2000"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "section",
+          "number": "66E",
+          "heading": "Punishment for violation of privacy",
+          "canonical_anchor": "/sec-66E",
+          "anchor_aliases": []
+        },
+        "effective_from": "2009-10-27",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/13116/1/it_act_2000_updated.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "e71725fa32e892f887308816046c42275fc855b5cbb4ee1063cdbd518f165140",
+          "raw_bytes_size": 832355
+        },
+        "doc_id": "it-2000",
+        "title": "Information Technology Act 2000",
+        "statute": "Information Technology Act 2000",
+        "year": 2000,
+        "subject_area": "cyber",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "it_act_2000_loan_app_private_image",
+          "title_patterns": [
+            "Information Technology Act, 2000",
+            "Information Technology Act 2000"
+          ],
+          "doc_ids": [
+            "it-2000"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Information Technology Act 2000 section 66E punishment for violation of privacy private area image capture publication transmission without consent"
+        },
+        "verbatim_status": "declared",
+        "text": "66E. Punishment for violation of privacy.\nWhoever, intentionally or knowingly captures, publishes or transmits the image of a private area of any person without his or her consent, under circumstances violating the privacy of that person, shall be punished with imprisonment which may extend to three years or with fine not exceeding two lakh rupees, or with both.\nExplanation.-For the purposes of this section-\n(a) transmit means to electronically send a visual image with the intent that it be viewed by a person or persons;\n(b) capture, with respect to an image, means to videotape, photograph, film or record by any means;\n(c) private area means the naked or undergarment clad genitals, pubic area, buttocks or female breast;\n(d) publishes means reproduction in the printed or electronic form and making it available for public;\n(e) under circumstances violating privacy means circumstances in which a person can have a reasonable expectation that he or she could disrobe in privacy without an image being captured, or that a private area would not be visible to the public.",
+        "text_sha256": "d84a91fefceee3cb89f4b0a40351f702fe46e3e70e9b00fcc582bd1c8d88c2c0"
+      },
+      "expected_previous_record_sha256": null
+    }
+  ],
+  "workflow_operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "loan_app_harassment",
+        "owner_token": "common_workflow_contracts:loan_app_harassment",
+        "condition_ids": [
+          "loan_app_harassment_facts",
+          "rbi_regulated_entity_check",
+          "private_image_abuse"
+        ],
+        "authorities": [
+          {
+            "registry_key": "rbi_digital_lending_2025_paragraph_11",
+            "role": "remedy"
+          },
+          {
+            "registry_key": "rbi_digital_lending_2025_paragraph_12",
+            "role": "legal_basis"
+          },
+          {
+            "registry_key": "rbi_recovery_agents_2022_paragraph_2",
+            "role": "legal_basis"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_1",
+            "role": "scope"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_3",
+            "role": "scope"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_6",
+            "role": "forum"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_9",
+            "role": "legal_basis"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_10",
+            "role": "maintainability"
+          },
+          {
+            "registry_key": "information_technology_act_2000_section_66e",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "private_image_abuse"
+            ]
+          }
+        ],
+        "forums": [
+          "RBI Complaint Management System / Ombudsman"
+        ],
+        "remedies": [
+          "written grievance to the regulated entity",
+          "RBI Ombudsman complaint for an eligible deficiency in service"
+        ],
+        "deadline_rules": [
+          "wait for rejection or 30 days without a reply before the Ombudsman complaint",
+          "file within one year of the reply, or one year and 30 days from the written complaint if there is no reply"
+        ],
+        "documents": [
+          "written complaint to the regulated entity",
+          "reply or proof that 30 days passed without reply",
+          "transaction/account/loan records and complaint reference"
+        ],
+        "escalation": [
+          "RBI CMS only after confirming the provider is a regulated entity and Clause 10 maintainability"
+        ]
+      },
+      "expected_previous_record_sha256": "f5c0843bb5d789082d903931c96939b0cbd12f2d80277ea7b90976c4c02f7c73"
+    }
+  ]
+}

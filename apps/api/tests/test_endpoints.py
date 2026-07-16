@@ -23,6 +23,25 @@ from fastapi.testclient import TestClient
 from apps.api.main import app
 
 
+def _rbi_ombudsman_sources(start_index: int = 1) -> list[dict[str, object]]:
+    return [
+        {"index": start_index, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-1"},
+        {"index": start_index + 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-3"},
+        {"index": start_index + 2, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-6"},
+        {"index": start_index + 3, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-9"},
+        {"index": start_index + 4, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-10"},
+    ]
+
+
+def _loan_app_regulatory_sources(start_index: int = 1) -> list[dict[str, object]]:
+    return [
+        {"index": start_index, "title": "Reserve Bank of India (Digital Lending) Directions, 2025", "anchor": "rbi-digital-lending-directions-2025/para-11"},
+        {"index": start_index + 1, "title": "Reserve Bank of India (Digital Lending) Directions, 2025", "anchor": "rbi-digital-lending-directions-2025/para-12"},
+        {"index": start_index + 2, "title": "Outsourcing of Financial Services - Responsibilities of regulated entities employing Recovery Agents", "anchor": "rbi-recovery-agents-2022/para-2"},
+        *_rbi_ombudsman_sources(start_index + 3),
+    ]
+
+
 def test_college_certificate_prompt_candidates_filter_rte_bleed():
     from apps.api import main as api_main
     from apps.api.matter_router import route_matter
@@ -2143,7 +2162,7 @@ def test_primary_workflow_template_does_not_append_unrelated_contract_floor(monk
         chunk(
             2,
             "Consumer Protection Act 2019",
-            "consumer-protection-2019/sec-2-e",
+            "consumer-protection-2019/sec-2",
             required_source_pack="consumer_protection_2019_education_service",
         ),
         chunk(
@@ -3474,6 +3493,42 @@ def test_answer_contract_source_floor_only_adds_missing_route_authority():
     assert "Reserve Bank Integrated Ombudsman Scheme 2021, Section 2 [2]" in joined
     assert "Consumer Protection Act 2019, Section 35 [3]" in joined
     assert "**What you can do next**" not in joined
+
+
+def test_registry_answer_coverage_gate_detects_only_visible_citation_omissions():
+    from apps.api.legal_issue_plan import build_matter_plan
+    from apps.api.main import _missing_registry_must_cite_authority_ids
+    from apps.api.matter_router import route_matter
+
+    query = "Loan app is blackmailing me with a morphed nude photo if I do not pay tonight"
+    plan = build_matter_plan(query, route_matter(query))
+    required_ids = [
+        entry.authority_id
+        for entry in plan.authority_ledger
+        if entry.note == "registry_workflow_authority" and entry.must_cite
+    ]
+    passages = [
+        {"index": index, "authority_ids": [authority_id]}
+        for index, authority_id in enumerate(required_ids, start=1)
+    ]
+
+    assert len(required_ids) == 10
+    assert _missing_registry_must_cite_authority_ids(
+        plan,
+        passages,
+        set(range(1, 10)),
+    ) == (required_ids[-1],)
+    assert _missing_registry_must_cite_authority_ids(
+        plan,
+        passages,
+        set(range(1, 11)),
+    ) == ()
+    # Retrieval/source-gap validation owns an incomplete authority window.
+    assert _missing_registry_must_cite_authority_ids(
+        plan,
+        passages[:-1],
+        set(range(1, 10)),
+    ) == ()
 
 
 def test_answer_contract_adds_inherited_property_succession_source_not_specific_relief_noise():
@@ -6699,11 +6754,8 @@ def test_common_user_smoke_templates_answer_screenshot_failures():
         ),
         (
             "Bank deducted money wrongly and customer care not helping.",
-            [
-                {"index": 27, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-                {"index": 28, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-            ],
-            ("RBI Ombudsman/CMS", "[27]", "written complaint", "[28]"),
+            _rbi_ombudsman_sources(27),
+            ("RBI Ombudsman/CMS", "[27]", "written complaint", "[31]"),
         ),
     ]
 
@@ -8125,11 +8177,8 @@ def test_milestone_b_common_failure_templates_cover_required_sources():
         ),
         (
             "HDFC bank wrongly debited forex transaction no response what to do",
-            [
-                {"index": 10, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-                {"index": 11, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-            ],
-            ("RBI Ombudsman/CMS", "[10]", "commercial banks", "statement entry", "[10]"),
+            _rbi_ombudsman_sources(10),
+            ("RBI Ombudsman/CMS", "[10]", "regulated entities", "statement entry", "[14]"),
         ),
         (
             "vit student caught with bhang lassi in mahabaleshwar holi is it ndps",
@@ -9378,27 +9427,21 @@ def test_common_user_answer_templates_cover_ui_failure_prompts():
     bank = " ".join(_grounded_template_lines(
         "bank reversed my balance saying technical error but not giving reason",
         route_matter("bank reversed my balance saying technical error but not giving reason"),
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Consumer Protection Act 2019", "anchor": "consumer-protection-2019/sec-35"},
-        ],
+        _rbi_ombudsman_sources(),
     ))
     assert "RBI Ombudsman" in bank
-    assert "Consumer Protection Act" in bank
+    assert "Consumer Protection Act" not in bank
 
     loan_app = " ".join(_grounded_template_lines(
         "online loan app calling my relatives and abusing me",
         route_matter("online loan app calling my relatives and abusing me"),
-        [
-            {"index": 1, "title": "Reserve Bank Integrated Ombudsman Scheme 2021", "anchor": "rbi-integrated-ombudsman-2021/sec-2"},
-            {"index": 2, "title": "Digital Personal Data Protection Act 2023", "anchor": "dpdp-2023/sec-8"},
-            {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-act-2000/sec-66e"},
-            {"index": 4, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-351"},
-        ],
+        _loan_app_regulatory_sources(),
     ))
     assert "RBI Ombudsman" in loan_app
-    assert "personal-data misuse" in loan_app
-    assert "cyber police/1930/cybercrime.gov.in" in loan_app
+    assert "contact lists or call logs" in loan_app
+    assert "intimidation or harassment, public humiliation" in loan_app
+    assert "privacy of a debtor's family members, referees, and friends" in loan_app
+    assert "cyber police" not in loan_app
 
 
 def test_common_user_near_miss_guards_do_not_overstate_facts():

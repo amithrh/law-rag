@@ -1,4 +1,5 @@
 """Canonical legal matter plan shared by retrieval and answer policy."""
+
 from __future__ import annotations
 
 import hashlib
@@ -7,10 +8,14 @@ import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Literal
 
-from authority_registry import AuthorityRecord, load_authority_registry
+from authority_registry import (
+    AuthorityRecord,
+    AuthorityWorkflowRecord,
+    WorkflowAuthorityRequirement,
+    load_authority_registry,
+)
 
 from .matter_router import MatterRoute
-
 
 AuthorityPriority = Literal["must_cite", "conditional", "background"]
 
@@ -49,6 +54,7 @@ class RetrievalSourcePlan:
     doc_ids: list[str] = field(default_factory=list)
     anchor_patterns: list[str] = field(default_factory=list)
     source_types: list[str] = field(default_factory=lambda: ["bare_act"])
+    authority_ids: list[str] = field(default_factory=list)
     priority: float = 1.0
 
 
@@ -131,28 +137,30 @@ class MatterPlan:
         return payload
 
 
-REVIEWED_CONTRACT_REQUIRED_CATEGORIES = frozenset({
-    "arrest_custody_safeguard",
-    "bonded_labour_rescue",
-    "business_contract_partnership",
-    "child_marriage_protection",
-    "child_custody_adoption",
-    "criminal_procedure_notice",
-    "criminal_defence_bail",
-    "criminal_general",
-    "custody_compensation",
-    "cyber_fraud_or_harassment",
-    "digital_platform_account",
-    "family_domestic",
-    "labour_exploitation_discrimination",
-    "manual_scavenging_safety",
-    "pmla_ed",
-    "police_fir",
-    "reproductive_rights_mtp",
-    "sexual_offence_survivor",
-    "tribal_caste_atrocity",
-    "workplace_sexual_harassment",
-})
+REVIEWED_CONTRACT_REQUIRED_CATEGORIES = frozenset(
+    {
+        "arrest_custody_safeguard",
+        "bonded_labour_rescue",
+        "business_contract_partnership",
+        "child_marriage_protection",
+        "child_custody_adoption",
+        "criminal_procedure_notice",
+        "criminal_defence_bail",
+        "criminal_general",
+        "custody_compensation",
+        "cyber_fraud_or_harassment",
+        "digital_platform_account",
+        "family_domestic",
+        "labour_exploitation_discrimination",
+        "manual_scavenging_safety",
+        "pmla_ed",
+        "police_fir",
+        "reproductive_rights_mtp",
+        "sexual_offence_survivor",
+        "tribal_caste_atrocity",
+        "workplace_sexual_harassment",
+    }
+)
 
 
 # P1C release slice. These are scenario families, not individual benchmark
@@ -211,19 +219,60 @@ PLAN_OWNED_ANSWER_ROUTES: tuple[PlanOwnedAnswerRoute, ...] = (
     ),
 )
 
-_SOURCE_PACK_ACRONYMS = frozenset({
-    "bns", "bnss", "bsa", "crpc", "dpdp", "gst", "ibc", "ipc", "mmdr",
-    "ndps", "pesa", "pmla", "posh", "pwdva", "rfctlarr", "rte", "rti",
-})
+_SOURCE_PACK_ACRONYMS = frozenset(
+    {
+        "bns",
+        "bnss",
+        "bsa",
+        "crpc",
+        "dpdp",
+        "gst",
+        "ibc",
+        "ipc",
+        "mmdr",
+        "ndps",
+        "pesa",
+        "pmla",
+        "posh",
+        "pwdva",
+        "rfctlarr",
+        "rte",
+        "rti",
+    }
+)
 
 
 _STATE_TERMS = (
-    "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh",
-    "delhi", "goa", "gujarat", "haryana", "himachal pradesh", "jharkhand",
-    "karnataka", "kerala", "madhya pradesh", "maharashtra", "manipur",
-    "meghalaya", "mizoram", "nagaland", "odisha", "orissa", "punjab",
-    "rajasthan", "sikkim", "tamil nadu", "telangana", "tripura",
-    "uttar pradesh", "uttarakhand", "west bengal",
+    "andhra pradesh",
+    "arunachal pradesh",
+    "assam",
+    "bihar",
+    "chhattisgarh",
+    "delhi",
+    "goa",
+    "gujarat",
+    "haryana",
+    "himachal pradesh",
+    "jharkhand",
+    "karnataka",
+    "kerala",
+    "madhya pradesh",
+    "maharashtra",
+    "manipur",
+    "meghalaya",
+    "mizoram",
+    "nagaland",
+    "odisha",
+    "orissa",
+    "punjab",
+    "rajasthan",
+    "sikkim",
+    "tamil nadu",
+    "telangana",
+    "tripura",
+    "uttar pradesh",
+    "uttarakhand",
+    "west bengal",
 )
 
 _CITY_TO_STATE = {
@@ -259,9 +308,18 @@ _CITY_TO_STATE = {
 }
 
 _FORUM_TERMS = (
-    "high court", "supreme court", "family court", "consumer commission",
-    "district commission", "nclt", "tribunal", "labour court",
-    "police station", "magistrate", "dlsa", "ombudsman",
+    "high court",
+    "supreme court",
+    "family court",
+    "consumer commission",
+    "district commission",
+    "nclt",
+    "tribunal",
+    "labour court",
+    "police station",
+    "magistrate",
+    "dlsa",
+    "ombudsman",
 )
 
 _CRIMINAL_CATEGORIES = {
@@ -352,14 +410,121 @@ def resolve_plan_answer_ownership(
         if set(by_scenario) == compatible_pair:
             return PlanAnswerOwnershipResolution(
                 owner=by_scenario["lgbtq_identity_arrest_safeguard"],
-                additional_owners=(
-                    by_scenario["arrest_custody_station_case_not_disclosed"],
-                ),
+                additional_owners=(by_scenario["arrest_custody_station_case_not_disclosed"],),
             )
         return PlanAnswerOwnershipResolution(
             conflicts=tuple(rule.owner_token for rule in matches),
         )
     return PlanAnswerOwnershipResolution(owner=matches[0] if matches else None)
+
+
+def _registry_condition_matches(condition_id: str, query: str) -> bool:
+    q = _normalize(query)
+    if condition_id == "private_image_abuse":
+        image_facts = _has_any(q, (
+            "morphed", "deepfake", "fake nude", "nude", "private image",
+            "intimate image", "private photo", "sexual image",
+        ))
+        abuse_facts = _has_any(q, (
+            "blackmail", "threat", "extort", "publish", "post", "share",
+            "send", "upload", "leak", "circulate", "without consent",
+        ))
+        return image_facts and abuse_facts
+    if condition_id == "loan_app_private_image_extortion_current":
+        image_facts = _has_any(q, (
+            "morphed", "deepfake", "fake nude", "nude", "private image",
+            "intimate image", "private photo", "sexual image",
+        ))
+        payment_threat = _has_any(q, (
+            "blackmail", "extort", "demanding money", "demanded money",
+            "pay today", "pay tonight", "dont pay", "don't pay",
+            "miss payment", "payment tonight",
+        ))
+        current_incident = _has_any(q, (
+            "today", "tonight", "just now", "this morning",
+            "this afternoon", "this evening", "after 1 july 2024",
+            "after july 2024", "in 2025", "in 2026",
+        ))
+        return image_facts and payment_threat and current_incident
+    return False
+
+
+def _active_registry_requirements(
+    workflow: AuthorityWorkflowRecord,
+    query: str,
+) -> tuple[WorkflowAuthorityRequirement, ...]:
+    active: list[WorkflowAuthorityRequirement] = []
+    for requirement in workflow.authorities:
+        if requirement.required:
+            active.append(requirement)
+            continue
+        if requirement.condition_ids and all(
+            _registry_condition_matches(condition_id, query)
+            for condition_id in requirement.condition_ids
+        ):
+            active.append(requirement)
+    return tuple(active)
+
+
+def _registry_owner_retrieval_sources(
+    owner: PlanOwnedAnswerRoute | None,
+    retrieval_sources: list[RetrievalSourcePlan],
+    query: str,
+) -> list[RetrievalSourcePlan]:
+    """Scope registry expansion to the selected answer owner.
+
+    Route-level source packs are shared by many scenarios. Expanding one of
+    those packs globally made unrelated banking routes retrieve every RBI
+    Ombudsman clause. A registry-owned workflow instead replaces only its own
+    MatterPlan sources with the exact authorities declared by that workflow.
+    """
+    if owner is None:
+        return retrieval_sources
+    registry = load_authority_registry()
+    workflow = registry.workflow_for_scenario(owner.scenario_id)
+    if workflow is None:
+        return retrieval_sources
+
+    records = []
+    for requirement in _active_registry_requirements(workflow, query):
+        record = registry.by_key(requirement.registry_key)
+        if record is None:
+            raise ValueError(f"registry workflow authority missing: {requirement.registry_key}")
+        records.append(record)
+
+    by_pack: dict[str, list] = {}
+    for record in records:
+        by_pack.setdefault(record.retrieval.source_pack_id, []).append(record)
+
+    existing_by_id = {source.source_pack_id: source for source in retrieval_sources}
+    replacements: dict[str, RetrievalSourcePlan] = {}
+    for pack_id, pack_records in by_pack.items():
+        existing = existing_by_id.get(pack_id)
+        replacements[pack_id] = RetrievalSourcePlan(
+            source_pack_id=pack_id,
+            title_patterns=list(dict.fromkeys(
+                title for record in pack_records for title in record.retrieval.title_patterns
+            )),
+            search_query=" ".join(
+                dict.fromkeys(record.retrieval.search_query for record in pack_records)
+            ),
+            doc_ids=list(dict.fromkeys(
+                doc_id for record in pack_records for doc_id in record.retrieval.doc_ids
+            )),
+            anchor_patterns=[record.provision.canonical_anchor for record in pack_records],
+            source_types=list(dict.fromkeys(
+                source_type
+                for record in pack_records
+                for source_type in record.retrieval.source_types
+            )),
+            authority_ids=[record.authority_id_expected for record in pack_records],
+            priority=max(existing.priority if existing is not None else 0.0, 1.5),
+        )
+
+    # A registry-owned answer is a closed authority set. Keeping generic route
+    # packs here allowed unrelated statutes to enter the prompt and source list
+    # even though they could never support this workflow's reviewed answer.
+    return list(replacements.values())
 
 
 def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
@@ -378,9 +543,7 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
     ownership_resolution = resolve_plan_answer_ownership(q, route)
     plan_owner = ownership_resolution.owner
     plan_owners = (
-        (plan_owner, *ownership_resolution.additional_owners)
-        if plan_owner is not None
-        else ()
+        (plan_owner, *ownership_resolution.additional_owners) if plan_owner is not None else ()
     )
     retrieval_sources = [
         RetrievalSourcePlan(
@@ -394,12 +557,11 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
         )
         for pack in source_packs
     ]
+    retrieval_sources = _registry_owner_retrieval_sources(plan_owner, retrieval_sources, q)
     if plan_owner is not None:
         route_entries = _authority_entries(q, route)
         route_entries_by_act = {
-            _legal_name(entry.act or ""): entry
-            for entry in route_entries
-            if entry.act
+            _legal_name(entry.act or ""): entry for entry in route_entries if entry.act
         }
         owner_entries = [
             replace(
@@ -413,6 +575,7 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
                 owner,
                 retrieval_sources,
                 route,
+                q,
             )
         ]
         owner_acts = {_legal_name(entry.act or "") for entry in owner_entries}
@@ -434,6 +597,11 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
         raw_authority_entries,
         retrieval_sources,
     )
+    registry_workflow = (
+        load_authority_registry().workflow_for_scenario(plan_owner.scenario_id)
+        if plan_owner is not None
+        else None
+    )
     safety_flags = _safety_flags(
         q,
         route=route,
@@ -445,11 +613,23 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
     case_stage = _case_stage(q)
     desired_outcome = _desired_outcome(q, route)
     secondary_issues = _secondary_issues(q, route.category)
-    forums = _dedupe(route.forums)
-    documents = _dedupe(action_pack.documents if action_pack else [])
+    forums = _dedupe([*(registry_workflow.forums if registry_workflow else ()), *route.forums])
+    documents = _dedupe(
+        [
+            *(registry_workflow.documents if registry_workflow else ()),
+            *(action_pack.documents if action_pack else []),
+        ]
+    )
     next_steps = _dedupe(action_pack.next_steps if action_pack else [])
     portals = _dedupe(action_pack.portals if action_pack else [])
-    escalation = _dedupe(action_pack.escalation if action_pack else [])
+    escalation = _dedupe(
+        [
+            *(registry_workflow.escalation if registry_workflow else ()),
+            *(action_pack.escalation if action_pack else []),
+        ]
+    )
+    remedies = _dedupe(registry_workflow.remedies if registry_workflow else ())
+    deadlines = _dedupe(registry_workflow.deadline_rules if registry_workflow else ())
     cautions = _dedupe(action_pack.cautions if action_pack else [])
     requires_reviewed_contract = (
         plan_owner is not None
@@ -471,9 +651,7 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
         ),
         allow_freeform_llm=not requires_reviewed_contract,
         requires_reviewed_contract=requires_reviewed_contract,
-        fallback_reason=(
-            "multiple_plan_owners" if ownership_resolution.conflicts else None
-        ),
+        fallback_reason=("multiple_plan_owners" if ownership_resolution.conflicts else None),
         conflicting_primary_owners=list(ownership_resolution.conflicts),
         additional_primary_owners=[
             owner.owner_token for owner in ownership_resolution.additional_owners
@@ -497,6 +675,8 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
             "authority_ledger": [asdict(entry) for entry in authority_ledger],
             "retrieval_sources": [asdict(source) for source in retrieval_sources],
             "forums": forums,
+            "remedies": remedies,
+            "deadlines": deadlines,
             "documents": documents,
             "action_pack_id": action_pack.id if action_pack else None,
             "action_pack_title": action_pack.title if action_pack else None,
@@ -527,8 +707,8 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
         authority_ledger=authority_ledger,
         retrieval_sources=retrieval_sources,
         forums=forums,
-        remedies=[],
-        deadlines=[],
+        remedies=remedies,
+        deadlines=deadlines,
         documents=documents,
         action_pack_id=action_pack.id if action_pack else None,
         action_pack_title=action_pack.title if action_pack else None,
@@ -564,11 +744,13 @@ def _authority_identity(
     required_anchor_patterns: list[str] | None = None,
 ) -> tuple[str, Literal["canonical", "provisional"]]:
     if canonical_act:
-        anchors = sorted({
-            _legal_name(anchor)
-            for anchor in (required_anchor_patterns or entry.required_anchor_patterns)
-            if anchor
-        })
+        anchors = sorted(
+            {
+                _legal_name(anchor)
+                for anchor in (required_anchor_patterns or entry.required_anchor_patterns)
+                if anchor
+            }
+        )
         scope = _legal_name(entry.section) if entry.section else "|".join(anchors) or "all"
         identity = "|".join((canonical_act, scope))
         status: Literal["canonical", "provisional"] = "canonical"
@@ -604,16 +786,9 @@ def _canonical_act_from_sources(
     alias = _canonical_alias(entry.act)
     if alias:
         return alias
-    if (
-        entry.note == "plan_owned_contract_required_source"
-        and entry.source_pack_id
-    ):
+    if entry.note == "plan_owned_contract_required_source" and entry.source_pack_id:
         source = next(
-            (
-                item
-                for item in retrieval_sources
-                if item.source_pack_id == entry.source_pack_id
-            ),
+            (item for item in retrieval_sources if item.source_pack_id == entry.source_pack_id),
             None,
         )
         if source is not None and source.title_patterns:
@@ -630,19 +805,21 @@ def _canonical_act_from_sources(
         for title in source.title_patterns:
             title_name = _legal_name(title)
             if act_name and (
-                act_name == title_name
-                or act_name in title_name
-                or title_name in act_name
+                act_name == title_name or act_name in title_name or title_name in act_name
             ):
                 candidates.add(title_name)
                 matched = True
         if matched:
             continue
         prefix = source.source_pack_id.lower().split("_", 1)[0]
-        if prefix in _SOURCE_PACK_ACRONYMS and re.search(
-            rf"(?<![a-z0-9]){re.escape(prefix)}(?![a-z0-9])",
-            act_name,
-        ) and source.title_patterns:
+        if (
+            prefix in _SOURCE_PACK_ACRONYMS
+            and re.search(
+                rf"(?<![a-z0-9]){re.escape(prefix)}(?![a-z0-9])",
+                act_name,
+            )
+            and source.title_patterns
+        ):
             candidates.add(_legal_name(source.title_patterns[0]))
     return next(iter(candidates)) if len(candidates) == 1 else None
 
@@ -661,7 +838,7 @@ def _bind_authority_policy(
         registry_record = _registry_record_for_entry(entry, canonical_act)
         if registry_record is not None:
             canonical_act = registry_record.canonical_name
-            source_pack_id = registry_record.retrieval.source_pack_id
+            source_pack_id = source_pack_id or registry_record.retrieval.source_pack_id
         matching_sources = _authority_retrieval_sources(
             entry,
             canonical_act=canonical_act,
@@ -670,15 +847,11 @@ def _bind_authority_policy(
         )
         if not matching_sources and entry.note == "date_dependent_regime_choose_by_incident_date":
             matching_sources = _date_dependent_retrieval_sources(entry, retrieval_sources)
-        required_anchor_patterns = entry.required_anchor_patterns or _dedupe([
-            anchor
-            for source in matching_sources
-            for anchor in source.anchor_patterns
-            if anchor
-        ])
-        if (
-            entry.note == "date_dependent_regime_choose_by_incident_date"
-            and any(not source.anchor_patterns for source in matching_sources)
+        required_anchor_patterns = entry.required_anchor_patterns or _dedupe(
+            [anchor for source in matching_sources for anchor in source.anchor_patterns if anchor]
+        )
+        if entry.note == "date_dependent_regime_choose_by_incident_date" and any(
+            not source.anchor_patterns for source in matching_sources
         ):
             # One regime may have a reviewed title-level pack while the other
             # has section anchors. A single shared anchor list must not make
@@ -694,15 +867,17 @@ def _bind_authority_policy(
                 canonical_act,
                 required_anchor_patterns=required_anchor_patterns,
             )
-        bound.append(replace(
-            entry,
-            authority_id=authority_id,
-            registry_key=registry_record.canonical_key if registry_record else None,
-            identity_status=identity_status,
-            canonical_name=canonical_act,
-            source_pack_id=source_pack_id,
-            required_anchor_patterns=required_anchor_patterns,
-        ))
+        bound.append(
+            replace(
+                entry,
+                authority_id=authority_id,
+                registry_key=registry_record.canonical_key if registry_record else None,
+                identity_status=identity_status,
+                canonical_name=canonical_act,
+                source_pack_id=source_pack_id,
+                required_anchor_patterns=required_anchor_patterns,
+            )
+        )
     return bound
 
 
@@ -710,10 +885,12 @@ def _registry_record_for_entry(
     entry: AuthorityLedgerEntry,
     canonical_act: str | None,
 ) -> AuthorityRecord | None:
+    if entry.registry_key:
+        return load_authority_registry().by_key(entry.registry_key)
     if not canonical_act or not entry.section:
         return None
     match = re.search(
-        r"\b(section|article|rule|order|paragraph)\s+([0-9][0-9a-z()./-]*)",
+        r"\b(section|article|rule|clause|order|paragraph)\s+([0-9][0-9a-z()./-]*)",
         entry.section,
         flags=re.IGNORECASE,
     )
@@ -791,9 +968,16 @@ def _matching_source_pack_id(
         ):
             score += 60
 
-        if score and section_token and any(
-            re.search(rf"(?:sec|article|order)[-_/]?{re.escape(section_token)}(?:\D|$)", anchor.lower())
-            for anchor in source.anchor_patterns
+        if (
+            score
+            and section_token
+            and any(
+                re.search(
+                    rf"(?:sec|article|order)[-_/]?{re.escape(section_token)}(?:\D|$)",
+                    anchor.lower(),
+                )
+                for anchor in source.anchor_patterns
+            )
         ):
             score += 40
 
@@ -842,22 +1026,20 @@ def authority_ids_for_passage(
         source_pack_matches = bool(
             source_pack_id
             and matching_sources
-            and any(
-                source.source_pack_id == source_pack_id
-                for source in matching_sources
-            )
+            and any(source.source_pack_id == source_pack_id for source in matching_sources)
         )
         title_matches = title_name in allowed_titles or (
             source_pack_matches
             and any(
-                allowed_title and allowed_title in title_name
-                for allowed_title in allowed_titles
+                allowed_title and allowed_title in title_name for allowed_title in allowed_titles
             )
         )
         if not title_name or not title_matches:
             continue
-        if source_pack_id and matching_sources and all(
-            source.source_pack_id != source_pack_id for source in matching_sources
+        if (
+            source_pack_id
+            and matching_sources
+            and all(source.source_pack_id != source_pack_id for source in matching_sources)
         ):
             continue
         if matching_sources and (
@@ -879,7 +1061,7 @@ def authority_ids_for_passage(
 
 def _passage_anchor_matches_section(anchor: str, section: str) -> bool:
     match = re.search(
-        r"\b(?:section|sec\.?|article|order)\s+([0-9][0-9a-z()./-]*)",
+        r"\b(?:section|sec\.?|article|order|clause)\s+([0-9][0-9a-z()./-]*)",
         section,
         flags=re.IGNORECASE,
     )
@@ -891,8 +1073,10 @@ def _passage_anchor_matches_section(anchor: str, section: str) -> bool:
     if not anchor_match:
         return False
     anchor_token = anchor_match.group(1).lower().strip("-")
-    return anchor_token == token or anchor_token.replace("-", "") == token.replace("-", "") or (
-        "-" in token and anchor_token == token.split("-", 1)[0]
+    return (
+        anchor_token == token
+        or anchor_token.replace("-", "") == token.replace("-", "")
+        or ("-" in token and anchor_token == token.split("-", 1)[0])
     )
 
 
@@ -938,7 +1122,9 @@ def _extract_jurisdiction(q: str, route: MatterRoute) -> JurisdictionPlan:
     if state is None and city:
         state = _CITY_TO_STATE[city]
     forum = next((term for term in _FORUM_TERMS if term in q), None)
-    needs_state = any("state" in fact.lower() or "city" in fact.lower() for fact in route.missing_facts)
+    needs_state = any(
+        "state" in fact.lower() or "city" in fact.lower() for fact in route.missing_facts
+    )
     return JurisdictionPlan(
         state=state,
         city=city,
@@ -953,36 +1139,79 @@ def _wordish_contains(text: str, term: str) -> bool:
 
 def _extract_user_role(q: str, category: str) -> str:
     if _is_victim_bail_opposition_context(q):
-        if category == "sexual_offence_survivor" or _has_any(q, ("survivor", "rape", "sexual offence", "sexual assault")):
+        if category == "sexual_offence_survivor" or _has_any(
+            q, ("survivor", "rape", "sexual offence", "sexual assault")
+        ):
             return "sexual_offence_survivor_or_complainant"
         return "complainant_or_victim"
     if _is_victim_or_witness_against_accused(q):
         if _has_any(q, ("witness", "gawah")):
             return "witness_or_complainant"
         return "complainant_or_victim"
-    if _has_any(q, ("witness", "gawah")) and _has_any(q, ("notice", "summons", "police called", "police call")):
+    if _has_any(q, ("witness", "gawah")) and _has_any(
+        q, ("notice", "summons", "police called", "police call")
+    ):
         return "witness_or_notice_recipient"
-    if _is_user_accused_context(q) or _has_any(q, ("chargesheet", "charge sheet", "arrested", "arrest me")):
+    if _is_user_accused_context(q) or _has_any(
+        q, ("chargesheet", "charge sheet", "arrested", "arrest me")
+    ):
         return "accused_or_accused_family"
     if category in {"criminal_defence_bail", "undertrial_review_release"}:
         return "accused_or_accused_family"
-    if _has_any(q, ("undertrial", "in jail", "judicial custody", "police custody", "remand", "nbw", "warrant")):
+    if _has_any(
+        q,
+        ("undertrial", "in jail", "judicial custody", "police custody", "remand", "nbw", "warrant"),
+    ):
         return "accused_or_accused_family"
-    medical_family_context = _has_any(q, ("my father", "my mother", "my 80", "hospital", "doctor")) and _has_any(q, (
-        "hospital", "doctor", "clinic", "wrong leg", "wrong surgery", "wrong operation",
-        "operated wrong", "wrong injection", "medical negligence", "died", "death",
-    ))
+    medical_family_context = _has_any(
+        q, ("my father", "my mother", "my 80", "hospital", "doctor")
+    ) and _has_any(
+        q,
+        (
+            "hospital",
+            "doctor",
+            "clinic",
+            "wrong leg",
+            "wrong surgery",
+            "wrong operation",
+            "operated wrong",
+            "wrong injection",
+            "medical negligence",
+            "died",
+            "death",
+        ),
+    )
     if category == "consumer" and medical_family_context:
         return "patient_or_family"
     senior_home_context = (
         category in {"senior_citizen", "senior_citizen_maintenance"}
-        or _has_any(q, (
-            "senior citizen", "my son threw me", "my daughter threw me",
-            "threw me out of my own house", "old age pension", "75 yrs", "80 yr",
-        ))
+        or _has_any(
+            q,
+            (
+                "senior citizen",
+                "my son threw me",
+                "my daughter threw me",
+                "threw me out of my own house",
+                "old age pension",
+                "75 yrs",
+                "80 yr",
+            ),
+        )
         or (
             _has_any(q, ("my father", "my mother"))
-            and _has_any(q, ("75", "80", "senior", "maintenance", "gifted", "transferred", "threw", "not maintaining"))
+            and _has_any(
+                q,
+                (
+                    "75",
+                    "80",
+                    "senior",
+                    "maintenance",
+                    "gifted",
+                    "transferred",
+                    "threw",
+                    "not maintaining",
+                ),
+            )
         )
     )
     if senior_home_context:
@@ -994,7 +1223,9 @@ def _extract_user_role(q: str, category: str) -> str:
                 and not _is_active_accusation_context(q)
             ):
                 return "family_of_accused_or_detained_person"
-            if _is_active_accusation_context(q) or _has_any(q, ("police not filing", "not filing fir", "complaint")):
+            if _is_active_accusation_context(q) or _has_any(
+                q, ("police not filing", "not filing fir", "complaint")
+            ):
                 return "complainant_or_victim"
         return "parent_or_guardian"
     if _has_any(q, ("my tenant", "tenant is", "tenant not")):
@@ -1009,22 +1240,53 @@ def _extract_user_role(q: str, category: str) -> str:
         return "employer_or_manager"
     if _has_any(q, ("my employer", "boss", "manager", "salary", "wages", "terminated", "pip")):
         return "employee_or_worker"
-    if category in {"employment_wages", "labour_exploitation_discrimination"} and _has_any(q, (
-        "worker", "asha", "nrega", "mgnrega", "job card", "not paid", "honorarium",
-        "construction", "factory", "labour", "labor", "employee", "contractor",
-    )):
+    if category in {"employment_wages", "labour_exploitation_discrimination"} and _has_any(
+        q,
+        (
+            "worker",
+            "asha",
+            "nrega",
+            "mgnrega",
+            "job card",
+            "not paid",
+            "honorarium",
+            "construction",
+            "factory",
+            "labour",
+            "labor",
+            "employee",
+            "contractor",
+        ),
+    ):
         return "employee_or_worker"
-    if category == "consumer" and _has_any(q, (
-        "from customer", "customer filed", "customer complaint", "consumer complaint from customer",
-        "against my shop", "by my shop",
-    )):
+    if category == "consumer" and _has_any(
+        q,
+        (
+            "from customer",
+            "customer filed",
+            "customer complaint",
+            "consumer complaint from customer",
+            "against my shop",
+            "by my shop",
+        ),
+    ):
         return "business_or_service_provider_respondent"
     if _has_any(q, ("police not filing", "fir", "complaint", "stolen", "fraud", "harassment")):
         return "complainant_or_victim"
-    if category == "cyber_fraud_or_harassment" and _has_any(q, (
-        "data breach", "pan", "aadhaar leaked", "otp", "extortion", "account hacked",
-        "money taken", "fraud", "leaked",
-    )):
+    if category == "cyber_fraud_or_harassment" and _has_any(
+        q,
+        (
+            "data breach",
+            "pan",
+            "aadhaar leaked",
+            "otp",
+            "extortion",
+            "account hacked",
+            "money taken",
+            "fraud",
+            "leaked",
+        ),
+    ):
         return "complainant_or_victim"
     if category == "consumer":
         return "consumer_or_customer"
@@ -1054,17 +1316,54 @@ def _case_stage(q: str) -> str:
         return "chargesheet_filed"
     if _has_any(q, ("appeal filed", "appeal pending", "first appeal", "second appeal")):
         return "appeal_stage"
-    if _has_any(q, ("court ordered", "court order", "as per court order", "tribunal ordered", "decree", "judgment debtor", "order passed")):
+    if _has_any(
+        q,
+        (
+            "court ordered",
+            "court order",
+            "as per court order",
+            "tribunal ordered",
+            "decree",
+            "judgment debtor",
+            "order passed",
+        ),
+    ):
         return "order_or_decree_exists"
-    if _has_any(q, ("award passed", "award not paid", "execution", "execute order", "order not complied", "not complying with order")):
+    if _has_any(
+        q,
+        (
+            "award passed",
+            "award not paid",
+            "execution",
+            "execute order",
+            "order not complied",
+            "not complying with order",
+        ),
+    ):
         return "execution_or_compliance_stage"
     if _has_any(q, ("undertrial", "in jail", "judicial custody", "police custody", "remand")):
         return "custody_or_trial_pending"
     if _has_any(q, ("fir", "crime number")):
         return "fir_or_police_case"
-    if _has_any(q, ("legal notice", "notice under", "notice received", "received notice", "show cause", "sent me notice", "got notice", "summons", "nbw", "warrant")):
+    if _has_any(
+        q,
+        (
+            "legal notice",
+            "notice under",
+            "notice received",
+            "received notice",
+            "show cause",
+            "sent me notice",
+            "got notice",
+            "summons",
+            "nbw",
+            "warrant",
+        ),
+    ):
         return "notice_stage"
-    if _has_any(q, ("case filed", "petition filed", "complaint pending", "case pending", "hearings")):
+    if _has_any(
+        q, ("case filed", "petition filed", "complaint pending", "case pending", "hearings")
+    ):
         return "case_filed_or_pending"
     if _has_any(q, ("complained", "complaint filed", "written complaint")):
         return "complaint_made"
@@ -1072,23 +1371,39 @@ def _case_stage(q: str) -> str:
 
 
 def _desired_outcome(q: str, route: MatterRoute) -> str:
-    if _has_any(q, ("notice under", "notice received", "show cause", "sent me notice", "got notice", "summons")):
+    if _has_any(
+        q,
+        (
+            "notice under",
+            "notice received",
+            "show cause",
+            "sent me notice",
+            "got notice",
+            "summons",
+        ),
+    ):
         if _has_any(q, ("witness", "gawah")):
             return "witness_notice_response"
         if route.category == "tax_gst_compliance":
             return "tax_notice_response"
         if route.category == "banking_credit_dispute" or _has_any(q, ("sarfaesi", "13(2)", "13 2")):
             return "sarfaesi_or_banking_notice_response"
-        if route.category == "property_tenancy" or _has_any(q, ("rent act", "vacate", "eviction notice")):
+        if route.category == "property_tenancy" or _has_any(
+            q, ("rent act", "vacate", "eviction notice")
+        ):
             return "tenancy_notice_response"
         if route.category == "consumer":
             return "consumer_notice_response"
-        if route.category in _CRIMINAL_CATEGORIES or _has_any(q, ("41a", "41 a", "police", "bnss", "bns", "crpc", "ipc")):
+        if route.category in _CRIMINAL_CATEGORIES or _has_any(
+            q, ("41a", "41 a", "police", "bnss", "bns", "crpc", "ipc")
+        ):
             return "defence_or_notice_response"
         return "notice_response"
     if _is_victim_bail_threat_context(q):
         return "victim_protection_or_bail_cancellation"
-    if _has_any(q, ("witness", "gawah")) and _has_any(q, ("statement", "recording", "not recording", "police not recording")):
+    if _has_any(q, ("witness", "gawah")) and _has_any(
+        q, ("statement", "recording", "not recording", "police not recording")
+    ):
         return "witness_statement_or_police_followup"
     if _is_victim_bail_opposition_context(q):
         return "victim_protection_or_bail_cancellation"
@@ -1103,17 +1418,47 @@ def _desired_outcome(q: str, route: MatterRoute) -> str:
     outcome_terms = (
         ("fir_registration", ("file fir", "filing fir", "not filing fir", "fir copy")),
         ("bail_or_release", ("bail", "release", "arrested", "custody")),
-        ("defence_or_notice_response", ("notice under", "sent me notice", "got notice", "reply to notice")),
+        (
+            "defence_or_notice_response",
+            ("notice under", "sent me notice", "got notice", "reply to notice"),
+        ),
         ("refund_or_compensation", ("refund", "compensation", "recover money", "hospital bill")),
         ("eviction_or_possession", ("not vacating", "evict", "possession")),
-        ("maintenance_enforcement", ("maintenance", "child support", "stopped paying", "tribunal ordered")),
-        ("document_correction_or_certificate", ("birth certificate", "ration card", "aadhaar", "certificate")),
+        (
+            "maintenance_enforcement",
+            ("maintenance", "child support", "stopped paying", "tribunal ordered"),
+        ),
+        (
+            "document_correction_or_certificate",
+            ("birth certificate", "ration card", "aadhaar", "certificate"),
+        ),
         ("appeal_or_quashing", ("appeal", "quash", "quashing", "482", "528")),
-        ("order_execution_or_enforcement", ("execution", "execute order", "order not complied", "not paying child support", "as per court order")),
-        ("wages_or_benefits_payment", ("salary", "wages", "honorarium", "nrega", "mgnrega", "not paid")),
-        ("licence_or_compliance_filing", ("renew", "permit", "gst", "form 35", "annual return", "form 11", "roc")),
-        ("copyright_or_ip_takedown", ("copyright", "trademark", "copied", "takedown", "infringement")),
-        ("project_approval_or_compensation", ("gram sabha", "palli sabha", "noc", "land acquired", "rehabilitation")),
+        (
+            "order_execution_or_enforcement",
+            (
+                "execution",
+                "execute order",
+                "order not complied",
+                "not paying child support",
+                "as per court order",
+            ),
+        ),
+        (
+            "wages_or_benefits_payment",
+            ("salary", "wages", "honorarium", "nrega", "mgnrega", "not paid"),
+        ),
+        (
+            "licence_or_compliance_filing",
+            ("renew", "permit", "gst", "form 35", "annual return", "form 11", "roc"),
+        ),
+        (
+            "copyright_or_ip_takedown",
+            ("copyright", "trademark", "copied", "takedown", "infringement"),
+        ),
+        (
+            "project_approval_or_compensation",
+            ("gram sabha", "palli sabha", "noc", "land acquired", "rehabilitation"),
+        ),
         ("mediation_or_settlement", ("mediation", "settlement", "settle")),
         ("complaint_or_grievance", ("complaint", "where to go", "what to do", "how to complain")),
     )
@@ -1126,86 +1471,201 @@ def _desired_outcome(q: str, route: MatterRoute) -> str:
 
 
 def _is_victim_or_witness_against_accused(q: str) -> bool:
-    accused_third_party = _has_any(q, (
-        "the accused", "accused person", "main accused", "co accused", "co-accused",
-        "he is accused", "she is accused", "saw accused", "witness saw accused",
-    )) or ("accused" in q and not _is_user_accused_context(q))
-    victim_or_witness_context = _has_any(q, (
-        "threatening me", "threatens me", "harassing me", "intimidating me",
-        "threatened me", "threatening", "harassing", "intimidating",
-        "pressuring me", "pressurising me", "came to my house", "after bail",
-        "got bail", "is on bail", "out on bail", "released on bail", "victim",
-        "complainant", "witness", "statement", "not recording",
-    ))
+    accused_third_party = _has_any(
+        q,
+        (
+            "the accused",
+            "accused person",
+            "main accused",
+            "co accused",
+            "co-accused",
+            "he is accused",
+            "she is accused",
+            "saw accused",
+            "witness saw accused",
+        ),
+    ) or ("accused" in q and not _is_user_accused_context(q))
+    victim_or_witness_context = _has_any(
+        q,
+        (
+            "threatening me",
+            "threatens me",
+            "harassing me",
+            "intimidating me",
+            "threatened me",
+            "threatening",
+            "harassing",
+            "intimidating",
+            "pressuring me",
+            "pressurising me",
+            "came to my house",
+            "after bail",
+            "got bail",
+            "is on bail",
+            "out on bail",
+            "released on bail",
+            "victim",
+            "complainant",
+            "witness",
+            "statement",
+            "not recording",
+        ),
+    )
     return accused_third_party and victim_or_witness_context and not _is_user_accused_context(q)
 
 
 def _is_victim_bail_threat_context(q: str) -> bool:
-    accused_bail = _has_any(q, (
-        "accused got bail", "accused is on bail", "accused out on bail",
-        "accused released on bail", "the accused got bail", "the accused is on bail",
-        "after bail",
-    ))
-    threat = _has_any(q, (
-        "threatening me", "threatens me", "harassing me", "intimidating me",
-        "threatened me", "threatening", "harassing", "intimidating",
-        "pressuring me", "pressurising me", "came to my house",
-    ))
+    accused_bail = _has_any(
+        q,
+        (
+            "accused got bail",
+            "accused is on bail",
+            "accused out on bail",
+            "accused released on bail",
+            "the accused got bail",
+            "the accused is on bail",
+            "after bail",
+        ),
+    )
+    threat = _has_any(
+        q,
+        (
+            "threatening me",
+            "threatens me",
+            "harassing me",
+            "intimidating me",
+            "threatened me",
+            "threatening",
+            "harassing",
+            "intimidating",
+            "pressuring me",
+            "pressurising me",
+            "came to my house",
+        ),
+    )
     return accused_bail and threat
 
 
 def _is_victim_bail_opposition_context(q: str) -> bool:
-    victim_side = (
-        _is_active_accusation_context(q)
-        or _has_any(q, (
-            "survivor", "victim", "complainant", "the accused", "accused person",
-            "main accused", "co accused", "co-accused", "accused in my case",
-            "threatening me", "threatened me", "harassing me", "intimidating me",
-        ))
+    victim_side = _is_active_accusation_context(q) or _has_any(
+        q,
+        (
+            "survivor",
+            "victim",
+            "complainant",
+            "the accused",
+            "accused person",
+            "main accused",
+            "co accused",
+            "co-accused",
+            "accused in my case",
+            "threatening me",
+            "threatened me",
+            "harassing me",
+            "intimidating me",
+        ),
     )
-    bail_opposition = _has_any(q, (
-        "bail cancellation", "cancel bail", "cancel his bail", "cancel her bail",
-        "cancellation of bail", "oppose bail", "opposing bail", "object to bail",
-        "oppose anticipatory bail", "opposing anticipatory bail",
-        "anticipatory bail of accused", "bail of accused",
-    ))
-    bail_application = _has_any(q, (
-        "bail application", "applying bail", "applying for bail", "applied for bail",
-        "filed bail", "filed for bail", "filed bail application",
-    ))
+    bail_opposition = _has_any(
+        q,
+        (
+            "bail cancellation",
+            "cancel bail",
+            "cancel his bail",
+            "cancel her bail",
+            "cancellation of bail",
+            "oppose bail",
+            "opposing bail",
+            "object to bail",
+            "oppose anticipatory bail",
+            "opposing anticipatory bail",
+            "anticipatory bail of accused",
+            "bail of accused",
+        ),
+    )
+    bail_application = _has_any(
+        q,
+        (
+            "bail application",
+            "applying bail",
+            "applying for bail",
+            "applied for bail",
+            "filed bail",
+            "filed for bail",
+            "filed bail application",
+        ),
+    )
     opposition_words = _has_any(q, ("oppose", "opposing", "object", "cancel", "cancellation"))
     bail_opposition = bail_opposition or (bail_application and (victim_side or opposition_words))
     return bail_opposition and victim_side and not _is_user_accused_context(q)
 
 
 def _is_user_accused_context(q: str) -> bool:
-    if _has_any(q, (
-        "i am accused", "i was accused", "i got accused", "accused me",
-        "made me accused", "false case against me", "case against me",
-        "filed against me", "fir against me", "named me", "named in fir",
-        "my son was accused", "my daughter was accused",
-        "my husband was accused", "my wife was accused", "my brother was accused",
-        "my father was accused", "my mother was accused",
-    )):
+    if _has_any(
+        q,
+        (
+            "i am accused",
+            "i was accused",
+            "i got accused",
+            "accused me",
+            "made me accused",
+            "false case against me",
+            "case against me",
+            "filed against me",
+            "fir against me",
+            "named me",
+            "named in fir",
+            "my son was accused",
+            "my daughter was accused",
+            "my husband was accused",
+            "my wife was accused",
+            "my brother was accused",
+            "my father was accused",
+            "my mother was accused",
+        ),
+    ):
         return True
     family_member = (
-        "son", "daughter", "brother", "sister", "husband", "wife", "father",
-        "mother", "parent", "uncle", "aunt", "cousin",
+        "son",
+        "daughter",
+        "brother",
+        "sister",
+        "husband",
+        "wife",
+        "father",
+        "mother",
+        "parent",
+        "uncle",
+        "aunt",
+        "cousin",
     )
     family_pattern = "|".join(re.escape(member) for member in family_member)
     return bool(
         re.search(r"\b(?:i|me|myself)\s+(?:am|was|have been|has been|got)\s+accused\b", q)
-        or re.search(rf"\bmy\s+(?:{family_pattern})\s+(?:is|was|has been|have been|got)\s+accused\b", q)
+        or re.search(
+            rf"\bmy\s+(?:{family_pattern})\s+(?:is|was|has been|have been|got)\s+accused\b", q
+        )
         or re.search(rf"\bmy\s+(?:{family_pattern})\s+.*\baccused\s+(?:in|of|under|for)\b", q)
     )
 
 
 def _is_active_accusation_context(q: str) -> bool:
     family_member = (
-        "son", "daughter", "brother", "sister", "husband", "wife", "father",
-        "mother", "parent", "uncle", "aunt", "cousin",
+        "son",
+        "daughter",
+        "brother",
+        "sister",
+        "husband",
+        "wife",
+        "father",
+        "mother",
+        "parent",
+        "uncle",
+        "aunt",
+        "cousin",
     )
-    actor_pattern = r"(?:i|my\s+(?:" + "|".join(re.escape(member) for member in family_member) + r"))"
+    actor_pattern = (
+        r"(?:i|my\s+(?:" + "|".join(re.escape(member) for member in family_member) + r"))"
+    )
     object_pattern = (
         r"(?:him|her|them|neighbou?r|shopkeeper|company|builder|dealer|seller|"
         r"landlord|tenant|driver|doctor|hospital|police|contractor|employer|[a-z]+)"
@@ -1216,26 +1676,66 @@ def _is_active_accusation_context(q: str) -> bool:
 def _secondary_issues(q: str, primary: str) -> list[str]:
     issues: list[str] = []
     if _has_any(q, ("hospital", "doctor", "wrong leg", "wrong surgery", "medical negligence")):
-        issues.extend(["consumer_compensation", "medical_negligence", "criminal_negligence_possible"])
-    if _has_any(q, ("bank", "hdfc", "sbi", "icici", "otp", "forex transaction", "unauthorized debit", "unauthorised debit")):
+        issues.extend(
+            ["consumer_compensation", "medical_negligence", "criminal_negligence_possible"]
+        )
+    if _has_any(
+        q,
+        (
+            "bank",
+            "hdfc",
+            "sbi",
+            "icici",
+            "otp",
+            "forex transaction",
+            "unauthorized debit",
+            "unauthorised debit",
+        ),
+    ):
         issues.extend(["banking_ombudsman", "consumer", "cyber_if_unauthorized_access"])
-    posh_context = _has_any(q, (
-        "posh", "sexual harassment", "icc", "internal committee",
-        "local committee", "complained about sexual harassment",
-        "complaint about sexual harassment",
-    ))
-    retaliation_context = _has_any(q, (
-        "pip", "performance improvement", "bad rating", "retaliation",
-        "retaliate", "warning",
-    )) and _has_any(q, (
-        "manager", "boss", "hr", "company", "employer", "workplace",
-        "office", "supervisor", "reporting manager",
-    ))
+    posh_context = _has_any(
+        q,
+        (
+            "posh",
+            "sexual harassment",
+            "icc",
+            "internal committee",
+            "local committee",
+            "complained about sexual harassment",
+            "complaint about sexual harassment",
+        ),
+    )
+    retaliation_context = _has_any(
+        q,
+        (
+            "pip",
+            "performance improvement",
+            "bad rating",
+            "retaliation",
+            "retaliate",
+            "warning",
+        ),
+    ) and _has_any(
+        q,
+        (
+            "manager",
+            "boss",
+            "hr",
+            "company",
+            "employer",
+            "workplace",
+            "office",
+            "supervisor",
+            "reporting manager",
+        ),
+    )
     if posh_context:
         issues.append("workplace_sexual_harassment")
         if retaliation_context:
             issues.append("employment_retaliation")
-    elif retaliation_context and _has_any(q, ("complained", "complaint", "grievance", "harassment", "harass")):
+    elif retaliation_context and _has_any(
+        q, ("complained", "complaint", "grievance", "harassment", "harass")
+    ):
         issues.append("employment_retaliation")
     if _has_any(q, ("senior citizen", "maintenance tribunal", "son threw me", "old age")):
         issues.extend(["senior_maintenance", "property_or_welfare_support"])
@@ -1263,12 +1763,14 @@ def _authority_entry(
         act=act_override or _extract_act_name(source),
         section=section_override if act_override else _extract_section(source),
         claim_type=_claim_type(source),
-        priority="must_cite" if date_dependent_regime else (
-            "conditional" if conditional and position > 0 else "must_cite"
-        ),
+        priority="must_cite"
+        if date_dependent_regime
+        else ("conditional" if conditional and position > 0 else "must_cite"),
         must_cite=True if date_dependent_regime else (not conditional or position == 0),
         conditional=conditional,
-        note="date_dependent_regime_choose_by_incident_date" if date_dependent_regime else "derived_from_route_required_sources",
+        note="date_dependent_regime_choose_by_incident_date"
+        if date_dependent_regime
+        else "derived_from_route_required_sources",
     )
 
 
@@ -1276,9 +1778,47 @@ def _plan_owner_authority_entries(
     owner: PlanOwnedAnswerRoute | None,
     retrieval_sources: list[RetrievalSourcePlan],
     route: MatterRoute,
+    query: str,
 ) -> list[AuthorityLedgerEntry]:
     if owner is None:
         return []
+
+    registry = load_authority_registry()
+    workflow = registry.workflow_for_scenario(owner.scenario_id)
+    if workflow is not None:
+        if workflow.owner_token != owner.owner_token:
+            raise ValueError(f"registry workflow owner mismatch for {owner.scenario_id}")
+        entries: list[AuthorityLedgerEntry] = []
+        for requirement in _active_registry_requirements(workflow, query):
+            record = registry.by_key(requirement.registry_key)
+            if record is None:
+                raise ValueError(f"registry workflow authority missing: {requirement.registry_key}")
+            candidates = [
+                source
+                for source in retrieval_sources
+                if record.doc_id in source.doc_ids
+                and record.provision.canonical_anchor in source.anchor_patterns
+            ]
+            source = max(candidates, key=lambda item: item.priority) if candidates else None
+            entries.append(
+                AuthorityLedgerEntry(
+                    source=f"{record.canonical_name} Clause {record.provision.number}",
+                    authority_id=record.authority_id_expected,
+                    registry_key=record.canonical_key,
+                    identity_status="canonical",
+                    canonical_name=_legal_name(record.canonical_name),
+                    act=record.canonical_name,
+                    section=f"Clause {record.provision.number}",
+                    source_pack_id=source.source_pack_id if source is not None else None,
+                    required_anchor_patterns=[record.provision.canonical_anchor],
+                    claim_type=requirement.role,
+                    priority="must_cite" if requirement.required else "conditional",
+                    must_cite=True,
+                    conditional=not requirement.required,
+                    note="registry_workflow_authority",
+                )
+            )
+        return entries
 
     if owner.owner_provider == "authority_graph":
         from .authority_graph import authority_graph_contract_required_source_specs
@@ -1295,9 +1835,7 @@ def _plan_owner_authority_entries(
             common_workflow_contract_required_source_specs,
         )
 
-        specs = common_workflow_contract_required_source_specs(
-            owner.owner_contract_id
-        )
+        specs = common_workflow_contract_required_source_specs(owner.owner_contract_id)
     else:
         raise ValueError(f"unknown plan answer owner provider: {owner.owner_provider}")
 
@@ -1314,10 +1852,7 @@ def _plan_owner_authority_entries(
             )
             and (
                 not anchor_terms
-                or any(
-                    anchor.lower() in anchor_terms
-                    for anchor in source.anchor_patterns
-                )
+                or any(anchor.lower() in anchor_terms for anchor in source.anchor_patterns)
             )
         ]
         source = max(candidates, key=lambda item: item.priority) if candidates else None
@@ -1326,18 +1861,20 @@ def _plan_owner_authority_entries(
             if source is not None and source.title_patterns
             else raw_title_terms[0]
         )
-        entries.append(AuthorityLedgerEntry(
-            source=title,
-            act=title,
-            section=None,
-            source_pack_id=source.source_pack_id if source is not None else None,
-            required_anchor_patterns=list(raw_anchor_terms),
-            claim_type="legal_basis",
-            priority="must_cite",
-            must_cite=True,
-            conditional=False,
-            note="plan_owned_contract_required_source",
-        ))
+        entries.append(
+            AuthorityLedgerEntry(
+                source=title,
+                act=title,
+                section=None,
+                source_pack_id=source.source_pack_id if source is not None else None,
+                required_anchor_patterns=list(raw_anchor_terms),
+                claim_type="legal_basis",
+                priority="must_cite",
+                must_cite=True,
+                conditional=False,
+                note="plan_owned_contract_required_source",
+            )
+        )
     return entries
 
 
@@ -1369,7 +1906,16 @@ def _authority_entries(
         lower = source.lower()
         if route.label == "Caste certificate rejection / appeal":
             if "article 341 / 342" in lower:
-                if _has_any(q, ("st certificate", "st cert", "scheduled tribe", "tribe certificate", "tribal certificate")):
+                if _has_any(
+                    q,
+                    (
+                        "st certificate",
+                        "st cert",
+                        "scheduled tribe",
+                        "tribe certificate",
+                        "tribal certificate",
+                    ),
+                ):
                     normalized_source = "Constitution of India Article 342 for the relevant State-wise Scheduled Tribe list"
                 elif _has_any(q, ("sc certificate", "sc cert", "scheduled caste")):
                     normalized_source = "Constitution of India Article 341 for the relevant State-wise Scheduled Caste list"
@@ -1425,8 +1971,7 @@ def _authority_entries(
 def _criminal_source_regime_family(source: str) -> str | None:
     lower = source.lower()
     has_current = any(
-        re.search(rf"(?<![a-z0-9]){token}(?![a-z0-9])", lower)
-        for token in ("bns", "bnss", "bsa")
+        re.search(rf"(?<![a-z0-9]){token}(?![a-z0-9])", lower) for token in ("bns", "bnss", "bsa")
     )
     has_legacy = any(
         re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", lower)
@@ -1476,12 +2021,14 @@ def _selected_criminal_regime_acts(source: str, legal_regime: str | None) -> lis
     }
     if present_regimes != {"current", "legacy"}:
         return []
-    return _dedupe([
-        act
-        for token, act, regime in _CRIMINAL_REGIME_ACTS
-        if regime == selected_regime
-        and re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", lower)
-    ])
+    return _dedupe(
+        [
+            act
+            for token, act, regime in _CRIMINAL_REGIME_ACTS
+            if regime == selected_regime
+            and re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", lower)
+        ]
+    )
 
 
 def _selected_criminal_sections(source: str, act: str) -> list[str | None]:
@@ -1593,13 +2140,19 @@ def _safety_flags(
 ) -> list[str]:
     flags: list[str] = []
     flags.extend(route.red_flags or [])
-    if incident_date_status in {"needed_for_criminal_regime", "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"}:
+    if incident_date_status in {
+        "needed_for_criminal_regime",
+        "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc",
+    }:
         flags.append("incident_date_needed")
     if jurisdiction.needs_state:
         flags.append("state_or_city_needed")
     if role == "unknown":
         flags.append("user_role_unclear")
-    if _has_any(q, ("chargesheet", "charge sheet", "accused")) and route.category in {"cyber_fraud_or_harassment", "police_fir"}:
+    if _has_any(q, ("chargesheet", "charge sheet", "accused")) and route.category in {
+        "cyber_fraud_or_harassment",
+        "police_fir",
+    }:
         flags.append("accused_framing_guard")
     return _dedupe(flags)
 

@@ -1,0 +1,71 @@
+{
+  "migration_id": "0004_it_act_66e_verbatim_correction",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "information_technology_act_2000_section_66e",
+        "authority_id_expected": "authority_ad90922325a79b902a63",
+        "canonical_name": "Information Technology Act, 2000",
+        "aliases": [
+          "Information Technology Act 2000"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "section",
+          "number": "66E",
+          "heading": "Punishment for violation of privacy",
+          "canonical_anchor": "/sec-66E",
+          "anchor_aliases": []
+        },
+        "effective_from": "2009-10-27",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/13116/1/it_act_2000_updated.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "e71725fa32e892f887308816046c42275fc855b5cbb4ee1063cdbd518f165140",
+          "raw_bytes_size": 832355
+        },
+        "doc_id": "it-2000",
+        "title": "Information Technology Act 2000",
+        "statute": "Information Technology Act 2000",
+        "year": 2000,
+        "subject_area": "cyber",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "it_act_2000_loan_app_private_image",
+          "title_patterns": [
+            "Information Technology Act, 2000",
+            "Information Technology Act 2000"
+          ],
+          "doc_ids": [
+            "it-2000"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Information Technology Act 2000 section 66E punishment for violation of privacy private area image capture publication transmission without consent"
+        },
+        "verbatim_status": "declared",
+        "text": "66E. Punishment for violation of privacy.\nWhoever, intentionally or knowingly captures, publishes or transmits the image of a private area of any person without his or her consent, under circumstances violating the privacy of that person, shall be punished with imprisonment which may extend to three years or with fine not exceeding two lakh rupees, or with both.\nExplanation.-For the purposes of this section-\n(a) transmit means to electronically send a visual image with the intent that it be viewed by a person or persons;\n(b) capture, with respect to an image, means to videotape, photograph, film or record by any means;\n(c) private area means the naked or undergarment clad genitals, public area, buttocks or female breast;\n(d) publishes means reproduction in the printed or electronic form and making it available for public;\n(e) under circumstances violating privacy means circumstances in which a person can have a reasonable expectation that-\n(i) he or she could disrobe in privacy, without being concerned that an image of his private area was being captured; or\n(ii) any part of his or her private area would not be visible to the public, regardless of whether that person is in a public or private place.",
+        "text_sha256": "24957549caaf03e1e8d323c66863d43c7830fd93658cbcd70c74509e89ecde19"
+      },
+      "expected_previous_record_sha256": "694cb197196f5c2b35f5f5097a1b1411dec585a370bcf8aeafb34609db69cf17"
+    }
+  ],
+  "workflow_operations": []
+}

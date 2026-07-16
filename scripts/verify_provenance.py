@@ -300,7 +300,7 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
     stored_text = " ".join(c["text"] for c in chunks)
 
     # Re-fetch
-    if origin == "indiacode" and refetch_acts:
+    if origin in {"indiacode", "rbi"} and refetch_acts:
         data, status, _ = refetch_act_pdf(source_row["url"])
         out["refetch_status"] = status
         if data is None:
@@ -525,7 +525,7 @@ async def main():
             deferred_count += 1
         if i % 5 == 0:
             log(f"  progress: pass={pass_count} fail={fail_count} deferred={deferred_count}")
-        if refetch_acts and src["origin"] == "indiacode":
+        if refetch_acts and src["origin"] in {"indiacode", "rbi"}:
             time.sleep(1.5)  # polite rate-limit
 
     # Persist audit rows

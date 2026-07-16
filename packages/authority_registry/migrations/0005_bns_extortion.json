@@ -1,0 +1,175 @@
+{
+  "migration_id": "0005_bns_extortion",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nyaya_sanhita_2023_section_308",
+        "authority_id_expected": "authority_1377e9f3337ec9d06de0",
+        "canonical_name": "Bharatiya Nyaya Sanhita, 2023",
+        "aliases": [
+          "Bharatiya Nyaya Sanhita 2023",
+          "BNS 2023"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "308",
+          "heading": "Extortion",
+          "canonical_anchor": "/sec-308",
+          "anchor_aliases": []
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/20062/1/a202345.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "ff92dcc72778944011807644b6033b1140ddbe6d7e9f82ac32fd419dae03aa86",
+          "raw_bytes_size": 896392
+        },
+        "doc_id": "bns-2023",
+        "title": "Bharatiya Nyaya Sanhita 2023",
+        "statute": "Bharatiya Nyaya Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bns_2023_loan_app_extortion",
+          "title_patterns": [
+            "Bharatiya Nyaya Sanhita, 2023",
+            "Bharatiya Nyaya Sanhita 2023",
+            "BNS 2023"
+          ],
+          "doc_ids": [
+            "bns-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Bharatiya Nyaya Sanhita 2023 section 308 extortion fear injury threat publish reputation demand payment electronic message"
+        },
+        "verbatim_status": "declared",
+        "text": "308. Extortion.--(1) Whoever intentionally puts any person in fear of any injury to that person, or to any other, and thereby dishonestly induces the person so put in fear to deliver to any person any property, or valuable security or anything signed or sealed which may be converted into a valuable security, commits extortion.\nIllustrations.\n(a) A threatens to publish a defamatory libel concerning Z unless Z gives him money. He thus induces Z to give him money. A has committed extortion.\n(e) A threatens Z by sending a message through an electronic device that \"Your child is in my possession, and will be put to death unless you send me one lakh rupees.\" A thus induces Z to give him money. A has committed extortion.\n(2) Whoever commits extortion shall be punished with imprisonment of either description for a term which may extend to seven years, or with fine, or with both.\n(3) Whoever, in order to the committing of extortion, puts any person in fear, or attempts to put any person in fear, of any injury, shall be punished with imprisonment of either description for a term which may extend to two years, or with fine, or with both.",
+        "text_sha256": "d2f00c576dc63062f966a36335c62c0effd4174dab07e04c6bf2c2bca2ac9618"
+      },
+      "expected_previous_record_sha256": null
+    }
+  ],
+  "workflow_operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "loan_app_harassment",
+        "owner_token": "common_workflow_contracts:loan_app_harassment",
+        "condition_ids": [
+          "loan_app_harassment_facts",
+          "rbi_regulated_entity_check",
+          "private_image_abuse",
+          "loan_app_private_image_extortion_current"
+        ],
+        "authorities": [
+          {
+            "registry_key": "rbi_digital_lending_2025_paragraph_11",
+            "role": "remedy",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "rbi_digital_lending_2025_paragraph_12",
+            "role": "legal_basis",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "rbi_recovery_agents_2022_paragraph_2",
+            "role": "legal_basis",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_1",
+            "role": "scope",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_3",
+            "role": "scope",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_6",
+            "role": "forum",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_9",
+            "role": "legal_basis",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_10",
+            "role": "maintainability",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "information_technology_act_2000_section_66e",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "private_image_abuse"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nyaya_sanhita_2023_section_308",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "loan_app_private_image_extortion_current"
+            ]
+          }
+        ],
+        "forums": [
+          "RBI Complaint Management System / Ombudsman"
+        ],
+        "remedies": [
+          "written grievance to the regulated entity",
+          "RBI Ombudsman complaint for an eligible deficiency in service"
+        ],
+        "deadline_rules": [
+          "wait for rejection or 30 days without a reply before the Ombudsman complaint",
+          "file within one year of the reply, or one year and 30 days from the written complaint if there is no reply"
+        ],
+        "documents": [
+          "written complaint to the regulated entity",
+          "reply or proof that 30 days passed without reply",
+          "transaction/account/loan records and complaint reference"
+        ],
+        "escalation": [
+          "RBI CMS only after confirming the provider is a regulated entity and Clause 10 maintainability"
+        ]
+      },
+      "expected_previous_record_sha256": "715f604b10e9ced071f9ca116eded6f36fab5196a232d32222ab4f2880aa43f0"
+    }
+  ]
+}

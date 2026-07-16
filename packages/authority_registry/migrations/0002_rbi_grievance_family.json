@@ -1,0 +1,650 @@
+{
+  "migration_id": "0002_rbi_grievance_family",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "rbi_integrated_ombudsman_2021_clause_1",
+        "authority_id_expected": "authority_5b4727dfd22d75612af3",
+        "canonical_name": "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+        "aliases": [
+          "Reserve Bank Integrated Ombudsman Scheme 2021"
+        ],
+        "authority_type": "scheme",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "clause",
+          "number": "1",
+          "heading": "Short Title, Commencement, Extent and Application",
+          "canonical_anchor": "/sec-1",
+          "anchor_aliases": [
+            "/clause-1"
+          ]
+        },
+        "effective_from": "2021-11-12",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2022-08-05",
+        "publisher": {
+          "name": "Reserve Bank of India",
+          "kind": "official_regulator"
+        },
+        "canonical_url": "https://systemhealth.rbi.org.in/cms.rbi.org.in/cms/assets/Documents/Ombudsman_Scheme_English.pdf",
+        "source_origin": "rbi",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "26c4931c9de9000757c1643741da59ca6e12330605fb2b13f29e3bc16ad46c12",
+          "raw_bytes_size": 178811
+        },
+        "doc_id": "rbi-integrated-ombudsman-2021",
+        "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "statute": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "year": 2021,
+        "subject_area": "consumer",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "rbi_integrated_ombudsman_2021",
+          "title_patterns": [
+            "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+            "Reserve Bank Integrated Ombudsman Scheme 2021"
+          ],
+          "doc_ids": [
+            "rbi-integrated-ombudsman-2021"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Reserve Bank - Integrated Ombudsman Scheme, 2021 clause 1 Short Title, Commencement, Extent and Application"
+        },
+        "verbatim_status": "declared",
+        "text": "1. Short Title, Commencement, Extent and Application\n(1) This Scheme may be called the Reserve Bank - Integrated Ombudsman Scheme,\n2021.\n(2) It shall come into force on such date as the Reserve Bank may specify.\n(3) It shall extend to the whole of India.\n(4) The Scheme shall apply to the services provided by a Regulated Entity in India to\nits customers under the provisions of the Reserve Bank of India Act, 1934, the Banking\nRegulation Act, 1949, the Payment and Settlement Systems Act, 2007, and the Credit\nInformation Companies (Regulation) Act, 2005 (30 of 2005)2.",
+        "text_sha256": "51e64ac0a3fb315393b6ac298d6ae6215165a3875f045c96c232f6c262b1d216"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "rbi_integrated_ombudsman_2021_clause_3",
+        "authority_id_expected": "authority_90d6b505bf7caaca0be9",
+        "canonical_name": "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+        "aliases": [
+          "Reserve Bank Integrated Ombudsman Scheme 2021"
+        ],
+        "authority_type": "scheme",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "clause",
+          "number": "3",
+          "heading": "Definitions",
+          "canonical_anchor": "/sec-3",
+          "anchor_aliases": [
+            "/clause-3"
+          ]
+        },
+        "effective_from": "2021-11-12",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2022-08-05",
+        "publisher": {
+          "name": "Reserve Bank of India",
+          "kind": "official_regulator"
+        },
+        "canonical_url": "https://systemhealth.rbi.org.in/cms.rbi.org.in/cms/assets/Documents/Ombudsman_Scheme_English.pdf",
+        "source_origin": "rbi",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "26c4931c9de9000757c1643741da59ca6e12330605fb2b13f29e3bc16ad46c12",
+          "raw_bytes_size": 178811
+        },
+        "doc_id": "rbi-integrated-ombudsman-2021",
+        "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "statute": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "year": 2021,
+        "subject_area": "consumer",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "rbi_integrated_ombudsman_2021",
+          "title_patterns": [
+            "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+            "Reserve Bank Integrated Ombudsman Scheme 2021"
+          ],
+          "doc_ids": [
+            "rbi-integrated-ombudsman-2021"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Reserve Bank - Integrated Ombudsman Scheme, 2021 clause 3 Definitions"
+        },
+        "verbatim_status": "declared",
+        "text": "3. Definitions\n(1) In the Scheme, unless the context otherwise requires:\n\n1 Inserted by Notification Ref. CEPD. PRD. No. S544/13.01.001/2022-23 dated August 5, 2022\n2 Inserted by Notification Ref. CEPD. PRD. No. S544/13.01.001/2022-23 dated August 5, 2022\n\n\n\n(a) \u201cAppellate Authority\u201d means the Executive Director in-Charge of the\nDepartment of the Reserve Bank administering the Scheme;\n(b) \u201cAppellate Authority Secretariat\u201d means the Department in the Reserve\nBank which is administering the Scheme;\n(c) \u201cAuthorised Representative\u201d means a person, other than an advocate, duly\nappointed and authorised in writing to represent the complainant in the\nproceedings before the Ombudsman;\n(d) \u201cAward\u201d means an award passed by the Ombudsman in accordance with\nthe Scheme;\n(e) \u201cbank\u201d means a \u2018banking company\u2019, a \u2018corresponding new bank\u2019, a \u2018Regional\nRural Bank\u2019, \u2018State Bank of India\u2019 as defined in the Banking Regulation Act,\n1949, a \u2018co-operative bank\u2019 as defined in Section 56 (c) of the Banking\nRegulation Act, 1949 to the extent not excluded under the Scheme, but does\nnot include a bank in resolution or winding up or under directions or any other\nbank as specified by the Reserve Bank;\n(f) \u201cComplaint\u201d means a representation in writing or through other modes\nalleging deficiency in service on the part of a Regulated Entity, and seeking\nrelief under the Scheme;\n(ff)3 \u201cCredit Information Company\u201d means a company as defined in the\nCompanies Act, 2013 (18 of 2013) and has been granted a certificate of\nregistration under sub-section (2) of section 5 of the Credit Information\nCompanies (Regulation) Act, 2005 (30 of 2005);\n(g)4 \u201cDeficiency in service\u201d means a shortcoming or an inadequacy in any\nfinancial service or such other services related thereto, which the Regulated\nEntity is required to provide statutorily or otherwise, which may or may not result\nin financial loss or damage to the customer;\n(h) \u201cDeputy Ombudsman\u201d means any person appointed by the Reserve Bank\nas such under the Scheme;\n(i) \u201cNon-Banking Financial Company\u201d (NBFC) means an NBFC as defined in\nSection 45-I (f) of the Reserve Bank of India Act, 1934 and registered with the\nReserve Bank, to the extent not excluded under the Scheme, but does not\n\n3 Inserted by Notification Ref. CEPD. PRD. No. S544/13.01.001/2022-23 dated August 5, 2022\n4 Substituted by Notification Ref. CEPD. PRD. No. S544/13.01.001/2022-23 dated August 5, 2022\n\n\n\ninclude a Core Investment Company (CIC), an Infrastructure Debt Fund-Non-\nBanking Financial Company (IDF-NBFC), a Non-Banking Financial Company -\nInfrastructure Finance Company (NBFC-IFC), a company in resolution or\nwinding up/liquidation, or under directions5 of Reserve Bank of India or any\nother NBFC specified by the Reserve Bank;\nExplanation: The terms CIC and IDF-NBFC shall have the same meaning\nassigned to them under the RBI Directions.\n (j) \u201cRegulated Entity\u201d means a bank or a Non-Banking Financial Company, or\na System Participant or a Credit Information Company6 as defined in the\nScheme, or any other entity as may be specified by the Reserve Bank from time\nto time; to the extent not excluded under the Scheme;\n(k) \u201cSettlement\u201d means an agreement reached by the parties to the complaint\nby facilitation or conciliation or mediation, as per the provisions of this Scheme;\n(l) \u201cSystem Participant\u201d means a person other than the Reserve Bank and a\nSystem Provider, participating in a payment system as defined in the Payment\nand Settlement Systems Act, 2007;\n(m) \u201cSystem Provider\u201d means and includes a person who operates an\nauthorised payment system as defined in Section 2 of the Payment and\nSettlement Systems Act, 2007;\n(n) \u201cThe Reserve Bank\u201d means Reserve Bank of India constituted under\nSection 3 of the Reserve Bank of India Act, 1934.\n(2) Words and expressions used and not defined in the Scheme, but defined in the\nReserve Bank of India Act, 1934, or in the Banking Regulation Act, 1949, or in the\nPayment and Settlement Systems Act, 2007 or in the Credit Information Companies\n(Regulation) Act, 20057 or the Regulations or guidelines or Directions issued by the\nReserve Bank in exercise of its powers conferred by the Acts referred to herein above,\nshall have the meanings respectively assigned to them.\n\n\n\n5 Inserted by Notification Ref. CEPD. PRD. No. S544/13.01.001/2022-23 dated August 5, 2022\n6 Inserted by Notification Ref. CEPD. PRD. No. S544/13.01.001/2022-23 dated August 5, 2022\n7 Inserted by Notification Ref. CEPD. PRD. No. S544/13.01.001/2022-23 dated August 5, 2022\n\n\n\nCHAPTER II\n\nOFFICES UNDER THE RESERVE BANK - INTEGRATED OMBUDSMAN\nSCHEME, 2021",
+        "text_sha256": "7c2543e712cf403c210dd280f819a93c25c9f2a7306b78e4760c4577bc6a5bd7"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "rbi_integrated_ombudsman_2021_clause_6",
+        "authority_id_expected": "authority_d669f382a92306fa76a3",
+        "canonical_name": "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+        "aliases": [
+          "Reserve Bank Integrated Ombudsman Scheme 2021"
+        ],
+        "authority_type": "scheme",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "clause",
+          "number": "6",
+          "heading": "Establishment of a Centralised Receipt and Processing Centre",
+          "canonical_anchor": "/sec-6",
+          "anchor_aliases": [
+            "/clause-6"
+          ]
+        },
+        "effective_from": "2021-11-12",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2022-08-05",
+        "publisher": {
+          "name": "Reserve Bank of India",
+          "kind": "official_regulator"
+        },
+        "canonical_url": "https://systemhealth.rbi.org.in/cms.rbi.org.in/cms/assets/Documents/Ombudsman_Scheme_English.pdf",
+        "source_origin": "rbi",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "26c4931c9de9000757c1643741da59ca6e12330605fb2b13f29e3bc16ad46c12",
+          "raw_bytes_size": 178811
+        },
+        "doc_id": "rbi-integrated-ombudsman-2021",
+        "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "statute": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "year": 2021,
+        "subject_area": "consumer",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "rbi_integrated_ombudsman_2021",
+          "title_patterns": [
+            "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+            "Reserve Bank Integrated Ombudsman Scheme 2021"
+          ],
+          "doc_ids": [
+            "rbi-integrated-ombudsman-2021"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Reserve Bank - Integrated Ombudsman Scheme, 2021 clause 6 Establishment of a Centralised Receipt and Processing Centre"
+        },
+        "verbatim_status": "declared",
+        "text": "6. Establishment of a Centralised Receipt and Processing Centre\n(1) The Reserve Bank shall establish the Centralised Receipt and Processing Centre\nat any place as may be decided by it to receive the complaints filed under the Scheme\nand process them.\n(2) The complaints under the Scheme made online shall be registered on the portal\n(https://cms.rbi.org.in). Complaints in electronic mode (E-mail) and physical form,\nincluding postal and hand-delivered complaints, shall be addressed and sent to the\nplace where the Centralised Receipt and Processing Centre of the Reserve Bank is\nestablished, for scrutiny and initial processing.\nProvided that the complaints that are received directly in any of the offices of\nthe Reserve Bank shall be forwarded to the Centralised Receipt and Processing\nCentre for further action.",
+        "text_sha256": "d7a77ea76711d7115c85135559b64fc479da78a0fd7b2a9f0c15091756788be8"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "rbi_integrated_ombudsman_2021_clause_9",
+        "authority_id_expected": "authority_46d05174f2cefb7daa20",
+        "canonical_name": "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+        "aliases": [
+          "Reserve Bank Integrated Ombudsman Scheme 2021"
+        ],
+        "authority_type": "scheme",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "clause",
+          "number": "9",
+          "heading": "Grounds of Complaint",
+          "canonical_anchor": "/sec-9",
+          "anchor_aliases": [
+            "/clause-9"
+          ]
+        },
+        "effective_from": "2021-11-12",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2022-08-05",
+        "publisher": {
+          "name": "Reserve Bank of India",
+          "kind": "official_regulator"
+        },
+        "canonical_url": "https://systemhealth.rbi.org.in/cms.rbi.org.in/cms/assets/Documents/Ombudsman_Scheme_English.pdf",
+        "source_origin": "rbi",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "26c4931c9de9000757c1643741da59ca6e12330605fb2b13f29e3bc16ad46c12",
+          "raw_bytes_size": 178811
+        },
+        "doc_id": "rbi-integrated-ombudsman-2021",
+        "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "statute": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "year": 2021,
+        "subject_area": "consumer",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "rbi_integrated_ombudsman_2021",
+          "title_patterns": [
+            "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+            "Reserve Bank Integrated Ombudsman Scheme 2021"
+          ],
+          "doc_ids": [
+            "rbi-integrated-ombudsman-2021"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Reserve Bank - Integrated Ombudsman Scheme, 2021 clause 9 Grounds of Complaint"
+        },
+        "verbatim_status": "declared",
+        "text": "9. Grounds of Complaint\nAny customer aggrieved by an act or omission of a Regulated Entity resulting in\ndeficiency in service may file a complaint under the Scheme personally or through an\nauthorised representative as defined under clause 3(1)(c).",
+        "text_sha256": "a47abd88dd380329cb75a7f018f34eaba500a639e2c7f2ac21b9cdbefd5481f8"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "rbi_integrated_ombudsman_2021_clause_10",
+        "authority_id_expected": "authority_8584dce173a80302ee86",
+        "canonical_name": "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+        "aliases": [
+          "Reserve Bank Integrated Ombudsman Scheme 2021"
+        ],
+        "authority_type": "scheme",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "clause",
+          "number": "10",
+          "heading": "Grounds for non-maintainability of a Complaint",
+          "canonical_anchor": "/sec-10",
+          "anchor_aliases": [
+            "/clause-10"
+          ]
+        },
+        "effective_from": "2021-11-12",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2022-08-05",
+        "publisher": {
+          "name": "Reserve Bank of India",
+          "kind": "official_regulator"
+        },
+        "canonical_url": "https://systemhealth.rbi.org.in/cms.rbi.org.in/cms/assets/Documents/Ombudsman_Scheme_English.pdf",
+        "source_origin": "rbi",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "26c4931c9de9000757c1643741da59ca6e12330605fb2b13f29e3bc16ad46c12",
+          "raw_bytes_size": 178811
+        },
+        "doc_id": "rbi-integrated-ombudsman-2021",
+        "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "statute": "Reserve Bank Integrated Ombudsman Scheme 2021",
+        "year": 2021,
+        "subject_area": "consumer",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "rbi_integrated_ombudsman_2021",
+          "title_patterns": [
+            "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+            "Reserve Bank Integrated Ombudsman Scheme 2021"
+          ],
+          "doc_ids": [
+            "rbi-integrated-ombudsman-2021"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Reserve Bank - Integrated Ombudsman Scheme, 2021 clause 10 Grounds for non-maintainability of a Complaint"
+        },
+        "verbatim_status": "declared",
+        "text": "10. Grounds for non-maintainability of a Complaint\n(1) No complaint for deficiency in service shall lie under the Scheme in matters\ninvolving:\n(a) commercial judgment/decision of a Regulated Entity;\n(b) a dispute between a vendor and a Regulated Entity relating to an\noutsourcing contract;\n(c) a grievance not addressed to the Ombudsman directly;\n(d) general grievances against Management or Executives of a Regulated\nEntity;\n(e) a dispute in which action is initiated by a Regulated Entity in compliance\nwith the orders of a statutory or law enforcing authority;\n(f) a service not within the regulatory purview of the Reserve Bank;\n(g) a dispute between Regulated Entities;\n(h) a dispute involving the employee-employer relationship of a Regulated\nEntity;\n(i)8 a dispute for which a remedy has been provided in Section 18 of the Credit\nInformation Companies (Regulation) Act, 2005; and\n(j)9 a dispute pertaining to customers of Regulated Entity not included under the\nScheme.\n\n(2) A complaint under the Scheme shall not lie unless:\n(a) the complainant had, before making a complaint under the Scheme, made\na written complaint to the Regulated Entity concerned and -\n\n8 Inserted by Notification Ref. CEPD. PRD. No. S544/13.01.001/2022-23 dated August 5, 2022\n9 Inserted by Notification Ref. CEPD. PRD. No. S544/13.01.001/2022-23 dated August 5, 2022\n\n\n\n(i) the complaint was rejected wholly or partly by the Regulated Entity, and\nthe complainant is not satisfied with the reply; or the complainant had not\nreceived any reply within 30 days after the Regulated Entity received the\ncomplaint; and\n(ii) the complaint is made to the Ombudsman within one year after the\ncomplainant has received the reply from the Regulated Entity to the\ncomplaint or, where no reply is received, within one year and 30 days from\nthe date of the complaint.\n(b) the complaint is not in respect of the same cause of action which is already-\n(i) pending before an Ombudsman or settled or dealt with on merits, by an\nOmbudsman, whether or not received from the same complainant or\nalong with one or more complainants, or one or more of the parties\nconcerned;\n(ii) pending before any Court, Tribunal or Arbitrator or any other Forum or\nAuthority; or, settled or dealt with on merits, by any Court, Tribunal or\nArbitrator or any other Forum or Authority, whether or not received from\nthe same complainant or along with one or more of the\ncomplainants/parties concerned;\n(c) the complaint is not abusive or frivolous or vexatious in nature;\n(d) the complaint to the Regulated Entity was made before the expiry of the\nperiod of limitation prescribed under the Limitation Act, 1963, for such claims;\n(e) the complainant provides complete information as specified in clause 11 of\nthe Scheme;\n(f) the complaint is lodged by the complainant personally or through an\nauthorised representative other than an advocate unless the advocate is the\naggrieved person.\nExplanation 1: For the purposes of sub-clause (2)(a), \u2018written complaint\u2019 shall include\ncomplaints made through other modes where proof of having made a complaint can\nbe produced by the complainant.\nExplanation 2: For the purposes of sub-clause (2)(b)(ii), a complaint in respect of the\nsame cause of action does not include criminal proceedings pending or decided\nbefore a Court or Tribunal or any police investigation initiated in a criminal offence.\n\n\n\n",
+        "text_sha256": "f6a1f4e89cdca39a8f5439de1f7395b25476750eeea68c1cedfd5d628fafb28d"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "rbi_digital_lending_2025_paragraph_11",
+        "authority_id_expected": "authority_ae0578eb2ff0b5ed8c67",
+        "canonical_name": "Reserve Bank of India (Digital Lending) Directions, 2025",
+        "aliases": [
+          "RBI Digital Lending Directions 2025"
+        ],
+        "authority_type": "rule",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "paragraph",
+          "number": "11",
+          "heading": "Grievance redressal",
+          "canonical_anchor": "/para-11",
+          "anchor_aliases": []
+        },
+        "effective_from": "2025-05-08",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Reserve Bank of India",
+          "kind": "official_regulator"
+        },
+        "canonical_url": "https://rbidocs.rbi.org.in/rdocs/notification/PDFs/36NT8C402BE7C2A349E0BFFF3C526668CD7A.PDF",
+        "source_origin": "rbi",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2dd838cf9bcb58f27bec0c0f5485cf1c764ad238454dea8c9041516375d2321b",
+          "raw_bytes_size": 1120752
+        },
+        "doc_id": "rbi-digital-lending-directions-2025",
+        "title": "Reserve Bank of India (Digital Lending) Directions, 2025",
+        "statute": "Reserve Bank of India (Digital Lending) Directions, 2025",
+        "year": 2025,
+        "subject_area": "consumer",
+        "source_type": "guideline",
+        "retrieval": {
+          "source_pack_id": "rbi_digital_lending_directions_2025",
+          "title_patterns": [
+            "Reserve Bank of India (Digital Lending) Directions, 2025",
+            "RBI Digital Lending Directions 2025"
+          ],
+          "doc_ids": [
+            "rbi-digital-lending-directions-2025"
+          ],
+          "source_types": [
+            "guideline"
+          ],
+          "search_query": "Reserve Bank of India (Digital Lending) Directions, 2025 paragraph 11 Grievance redressal"
+        },
+        "verbatim_status": "declared",
+        "text": "11. Grievance redressal\ni. The RE, and the LSP which has an interface with the borrower, shall designate\nnodal grievance redressal officers to deal with digital lending related complaints/\nissues raised by the borrower.\n\n8 In terms of Circular DBR.Dir.BC.No.08/13.03.00/2019-20 \u201cLevy of Foreclosure Charges /Pre-payment Penalty on\nFloating Rate Term Loans\u201d dated August 02, 2019 for banks and Master Direction \u2013 Reserve Bank of India (Non-\nBanking Financial Company \u2013 Scale Based Regulation) Directions, 2023 dated October 19, 2023 for NBFCs, as\namended from time to time, and other relevant instructions as issued from time to time.\n\n\nii. Contact details of the nodal grievance redressal officers shall be prominently\ndisplayed on the websites of the RE, its LSP and on the DLA, as well as in the KFS\nprovided to the borrower.\niii. The facility of lodging complaint shall also be made available on the DLA and on\nthe website as stated above. It is reiterated that responsibility of grievance\nredressal shall continue to remain with the RE.\niv. If any complaint lodged by the borrower against the RE or the LSP engaged by the\nRE is rejected wholly or partly by the RE, or the borrower is not satisfied with the\nreply; or the borrower has not received any reply within 30 days of receipt of\ncomplaint by the RE, the said borrower can lodge a complaint over the Complaint\nManagement System (CMS)9 portal under the Reserve Bank-Integrated\nOmbudsman Scheme (RB-IOS)10 or send a physical complaint to \u201cCentralised\nReceipt and Processing Centre, 4th Floor, Reserve Bank of India, Sector-17,\nCentral Vista, Chandigarh - 160017\u201d as per the grievance redressal mechanism\nprescribed by the Reserve Bank. This information shall be suitably conveyed to\nthe borrower.\nChapter IV: Technology and Data Requirement",
+        "text_sha256": "9f462c0ff9874ed69abab967d463794cb41feba9ab57035d3f3e5e38eea1003a"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "rbi_digital_lending_2025_paragraph_12",
+        "authority_id_expected": "authority_34fc3ef856d3098ffc81",
+        "canonical_name": "Reserve Bank of India (Digital Lending) Directions, 2025",
+        "aliases": [
+          "RBI Digital Lending Directions 2025"
+        ],
+        "authority_type": "rule",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "paragraph",
+          "number": "12",
+          "heading": "Collection, usage and sharing of data with third parties",
+          "canonical_anchor": "/para-12",
+          "anchor_aliases": []
+        },
+        "effective_from": "2025-05-08",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Reserve Bank of India",
+          "kind": "official_regulator"
+        },
+        "canonical_url": "https://rbidocs.rbi.org.in/rdocs/notification/PDFs/36NT8C402BE7C2A349E0BFFF3C526668CD7A.PDF",
+        "source_origin": "rbi",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2dd838cf9bcb58f27bec0c0f5485cf1c764ad238454dea8c9041516375d2321b",
+          "raw_bytes_size": 1120752
+        },
+        "doc_id": "rbi-digital-lending-directions-2025",
+        "title": "Reserve Bank of India (Digital Lending) Directions, 2025",
+        "statute": "Reserve Bank of India (Digital Lending) Directions, 2025",
+        "year": 2025,
+        "subject_area": "consumer",
+        "source_type": "guideline",
+        "retrieval": {
+          "source_pack_id": "rbi_digital_lending_directions_2025",
+          "title_patterns": [
+            "Reserve Bank of India (Digital Lending) Directions, 2025",
+            "RBI Digital Lending Directions 2025"
+          ],
+          "doc_ids": [
+            "rbi-digital-lending-directions-2025"
+          ],
+          "source_types": [
+            "guideline"
+          ],
+          "search_query": "Reserve Bank of India (Digital Lending) Directions, 2025 paragraph 12 Collection, usage and sharing of data with third parties"
+        },
+        "verbatim_status": "declared",
+        "text": "12. Collection, usage and sharing of data with third parties\ni.\nRE shall ensure that any collection of data by their DLA and DLA of their LSP is\nneed-based and with prior and explicit consent of the borrower having audit trail.\nIn any case, RE shall also ensure that DLA of RE/LSP desist from accessing\nmobile phone resources like file and media, contact list, call logs, telephony\nfunctions, etc. A one-time access can be taken for camera, microphone, location\nor any other facility necessary for the purpose of on-boarding/ KYC requirements\nonly, with the explicit consent of the borrower.\n\n9 https://cms.rbi.org.in/\n10 Issued vide Notification CEPD. PRD. No.S873/13.01.001/2021-22 dated November 12, 2021\n\n\nii.\nThe borrower shall be provided with an option to give or deny consent for use of\nspecific data, restrict disclosure to third parties, data retention, revoke consent\nalready granted to collect personal data and if required, make the RE/LSP delete/\nforget the data.\niii.\nThe purpose of obtaining borrowers\u2019 consent needs to be disclosed at each stage\nof interface with the borrowers.\niv.\nExplicit consent of the borrower shall be taken before sharing personal information\nwith any third party, except for cases where such sharing is required as per\nstatutory or regulatory requirement.",
+        "text_sha256": "835f12bb558d33a70a37ff8907970e5bff5d000e7e89a3f962bf2fc774974da6"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "rbi_recovery_agents_2022_paragraph_2",
+        "authority_id_expected": "authority_d0b353b9acb62fc98d37",
+        "canonical_name": "Outsourcing of Financial Services - Responsibilities of regulated entities employing Recovery Agents",
+        "aliases": [
+          "RBI Recovery Agents Circular 2022"
+        ],
+        "authority_type": "circular",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national"
+        },
+        "provision": {
+          "kind": "paragraph",
+          "number": "2",
+          "heading": "Prohibition on intimidation, harassment and privacy intrusion",
+          "canonical_anchor": "/para-2",
+          "anchor_aliases": []
+        },
+        "effective_from": "2022-08-12",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Reserve Bank of India",
+          "kind": "official_regulator"
+        },
+        "canonical_url": "https://rbidocs.rbi.org.in/rdocs/notification/PDFs/NT1085404663A577943BBB344A37057621C17.PDF",
+        "source_origin": "rbi",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "cc5242ff92976d44db58d77485a795f48031f20da39473d5b44cfdd4abeac84c",
+          "raw_bytes_size": 884691
+        },
+        "doc_id": "rbi-recovery-agents-2022",
+        "title": "Outsourcing of Financial Services - Responsibilities of regulated entities employing Recovery Agents",
+        "statute": "Outsourcing of Financial Services - Responsibilities of regulated entities employing Recovery Agents",
+        "year": 2022,
+        "subject_area": "consumer",
+        "source_type": "circular",
+        "retrieval": {
+          "source_pack_id": "rbi_recovery_agents_2022",
+          "title_patterns": [
+            "Outsourcing of Financial Services - Responsibilities of regulated entities employing Recovery Agents",
+            "RBI Recovery Agents Circular 2022"
+          ],
+          "doc_ids": [
+            "rbi-recovery-agents-2022"
+          ],
+          "source_types": [
+            "circular"
+          ],
+          "search_query": "Outsourcing of Financial Services - Responsibilities of regulated entities employing Recovery Agents paragraph 2 Prohibition on intimidation, harassment and privacy intrusion"
+        },
+        "verbatim_status": "declared",
+        "text": "2. It has been observed that the agents employed by REs have been deviating from the\nextant instructions governing the outsourcing of financial services. In view of concerns\narising from the activities of these agents, it is advised that the REs shall strictly ensure\nthat they or their agents do not resort to intimidation or harassment of any kind, either\nverbal or physical, against any person in their debt collection efforts, including acts\nintended to humiliate publicly or intrude upon the privacy of the debtors' family members,\nreferees and friends, sending inappropriate messages either on mobile or through social\nmedia, making threatening and/ or anonymous calls, persistently1 calling the borrower\nand/ or calling the borrower before 8:00 a.m. and after 7:00 p.m. for recovery of overdue\nloans, making false and misleading representations, etc.\n1 For example- calling repeatedly\n",
+        "text_sha256": "c596e2ccad0e3f155fa75b81fcef35cdf44c9109a8a7c530f9543596b82e722b"
+      },
+      "expected_previous_record_sha256": null
+    }
+  ],
+  "workflow_operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "wrong_bank_debit",
+        "owner_token": "authority_graph:wrong_bank_debit",
+        "condition_ids": [
+          "wrong_bank_debit_facts",
+          "rbi_regulated_entity_check"
+        ],
+        "authorities": [
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_1",
+            "role": "scope"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_3",
+            "role": "scope"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_6",
+            "role": "forum"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_9",
+            "role": "legal_basis"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_10",
+            "role": "maintainability"
+          }
+        ],
+        "forums": [
+          "RBI Complaint Management System / Ombudsman"
+        ],
+        "remedies": [
+          "written grievance to the regulated entity",
+          "RBI Ombudsman complaint for an eligible deficiency in service"
+        ],
+        "deadline_rules": [
+          "wait for rejection or 30 days without a reply before the Ombudsman complaint",
+          "file within one year of the reply, or one year and 30 days from the written complaint if there is no reply"
+        ],
+        "documents": [
+          "written complaint to the regulated entity",
+          "reply or proof that 30 days passed without reply",
+          "transaction/account/loan records and complaint reference"
+        ],
+        "escalation": [
+          "RBI CMS only after confirming the provider is a regulated entity and Clause 10 maintainability"
+        ]
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "loan_app_harassment",
+        "owner_token": "common_workflow_contracts:loan_app_harassment",
+        "condition_ids": [
+          "loan_app_harassment_facts",
+          "rbi_regulated_entity_check"
+        ],
+        "authorities": [
+          {
+            "registry_key": "rbi_digital_lending_2025_paragraph_11",
+            "role": "remedy"
+          },
+          {
+            "registry_key": "rbi_digital_lending_2025_paragraph_12",
+            "role": "legal_basis"
+          },
+          {
+            "registry_key": "rbi_recovery_agents_2022_paragraph_2",
+            "role": "legal_basis"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_1",
+            "role": "scope"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_3",
+            "role": "scope"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_6",
+            "role": "forum"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_9",
+            "role": "legal_basis"
+          },
+          {
+            "registry_key": "rbi_integrated_ombudsman_2021_clause_10",
+            "role": "maintainability"
+          }
+        ],
+        "forums": [
+          "RBI Complaint Management System / Ombudsman"
+        ],
+        "remedies": [
+          "written grievance to the regulated entity",
+          "RBI Ombudsman complaint for an eligible deficiency in service"
+        ],
+        "deadline_rules": [
+          "wait for rejection or 30 days without a reply before the Ombudsman complaint",
+          "file within one year of the reply, or one year and 30 days from the written complaint if there is no reply"
+        ],
+        "documents": [
+          "written complaint to the regulated entity",
+          "reply or proof that 30 days passed without reply",
+          "transaction/account/loan records and complaint reference"
+        ],
+        "escalation": [
+          "RBI CMS only after confirming the provider is a regulated entity and Clause 10 maintainability"
+        ]
+      },
+      "expected_previous_record_sha256": null
+    }
+  ]
+}

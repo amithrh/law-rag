@@ -1491,10 +1491,10 @@ def route_matter(query: str) -> MatterRoute:
                 "Digital Personal Data Protection Act / Information Technology Act where contacts or phone data are misused",
                 "BNS/BNSS or IPC/CrPC only where threats, extortion, obscene messages, or police complaint facts are alleged",
             ],
-            forums=["lender or loan-app grievance officer", "RBI Ombudsman where the lender/RE is covered", "cyber police/local police for threats or contact-data abuse", "District Legal Services Authority"],
+            forums=_loan_app_harassment_forums(q),
             missing_facts=["loan app/lender name", "amount and repayment status", "messages/call logs sent to contacts", "permissions/screenshots", "complaint number", "whether threats/extortion/private-image abuse occurred"],
             red_flags=_red_flags(q),
-            action_pack=_loan_app_harassment_pack(),
+            action_pack=_loan_app_harassment_pack(q),
             legal_regime=_criminal_regime(q),
         )
 
@@ -3564,10 +3564,10 @@ def _specific_high_risk_surface_route(q: str) -> MatterRoute | None:
                 "Digital Personal Data Protection Act / Information Technology Act where contacts or phone data are misused",
                 "BNS/BNSS or IPC/CrPC only where threats, extortion, obscene messages, or police complaint facts are alleged",
             ],
-            forums=["lender or loan-app grievance officer", "RBI Ombudsman where the lender/RE is covered", "cyber police/local police for threats or contact-data abuse", "District Legal Services Authority"],
+            forums=_loan_app_harassment_forums(q),
             missing_facts=["loan app/lender name", "amount and repayment status", "messages/call logs sent to contacts", "permissions/screenshots", "complaint number", "whether threats/extortion/private-image abuse occurred"],
             red_flags=_red_flags(q),
-            action_pack=_loan_app_harassment_pack(),
+            action_pack=_loan_app_harassment_pack(q),
             legal_regime=_criminal_regime(q),
         )
 
@@ -8925,7 +8925,8 @@ def _is_loan_app_harassment_issue(q: str) -> bool:
         "harassing contacts", "sent message to contacts", "messages to contacts",
         "contact list", "abusing contacts", "threatening contacts",
         "recovery calls", "threatened", "threatening cibil", "threaten cibil",
-        "morphed photo", "abusive message", "blackmail", "contacts",
+        "morphed", "morphed photo", "fake nude", "nude", "private image",
+        "abusive message", "blackmail", "contacts",
         "relatives", "family", "calling my relatives", "abusing me",
         "abusing my relatives", "sending my photo", "photo to contacts",
         "took photo", "took photos", "photos of my house", "photo of my house",
@@ -11920,8 +11921,8 @@ def _red_flags(q: str) -> list[str]:
     if _has_any(q, (
         "threw me out", "homeless", "not giving food", "beating", "locked",
         "hit me", "hitting me", "unsafe", "threatens", "threatened",
-        "threatening", "harassing contacts", "harassing my contacts",
-        "loan app is harassing",
+        "threatening", "stalking", "came to my home", "coming to my home",
+        "physical recovery visit",
     )):
         flags.append("Shelter or personal safety concern")
     return flags
@@ -11931,6 +11932,11 @@ def _criminal_regime(q: str) -> str:
     if _mentions_before_july_2024(q):
         return "legacy_ipc_crpc_evidence_for_pre_2024_incident"
     if _mentions_after_july_2024(q):
+        return "current_bns_bnss_bsa_for_post_2024_incident"
+    if _has_any(q, (
+        "today", "tonight", "just now", "this morning",
+        "this afternoon", "this evening",
+    )):
         return "current_bns_bnss_bsa_for_post_2024_incident"
     years = _extract_incident_years(q)
     if len(years) > 1 and any(y < 2024 for y in years) and any(y > 2024 for y in years):
@@ -12516,18 +12522,46 @@ def _bank_account_freeze_pack() -> ActionPack:
     )
 
 
-def _loan_app_harassment_pack() -> ActionPack:
+def _loan_app_needs_criminal_escalation(q: str) -> bool:
+    return _has_any(q, (
+        "threat", "blackmail", "extort", "morphed", "nude", "obscene",
+        "impersonat", "violence", "assault", "kill", "kidnap",
+    ))
+
+
+def _loan_app_harassment_forums(q: str) -> list[str]:
+    forums = [
+        "lender or loan-app grievance officer",
+        "RBI Ombudsman where the lender/RE is covered",
+    ]
+    if _loan_app_needs_criminal_escalation(q):
+        forums.append("cyber police/local police for threats, extortion, or private-image abuse")
+    forums.append("District Legal Services Authority")
+    return forums
+
+
+def _loan_app_harassment_pack(q: str) -> ActionPack:
+    criminal_escalation = _loan_app_needs_criminal_escalation(q)
+    next_steps = [
+        "Preserve call logs, WhatsApp/SMS screenshots, messages sent to contacts, app permissions, loan agreement, and repayment proof.",
+        "File a written grievance with the lender/app and ask for the regulated entity/NBFC details.",
+        "Escalate to RBI Ombudsman where the regulated lender is covered.",
+    ]
+    portals = ["lender grievance portal", "cms.rbi.org.in"]
+    escalation = ["lender grievance officer", "RBI Ombudsman", "DLSA"]
+    if criminal_escalation:
+        next_steps.append(
+            "Use cyber police/local police for explicit threats, extortion, obscene messages, or private-image abuse."
+        )
+        portals.append("cybercrime.gov.in for explicit cyber-offence facts")
+        escalation.insert(2, "cyber police/local police")
     return ActionPack(
         id="loan_app_harassment",
         title="Loan-app harassment path",
-        next_steps=[
-            "Preserve call logs, WhatsApp/SMS screenshots, messages sent to contacts, app permissions, loan agreement, and repayment proof.",
-            "File a written grievance with the lender/app and ask for the regulated entity/NBFC details.",
-            "Escalate to RBI Ombudsman where covered; use cyber police/local police if threats, extortion, obscene messages, or contact-data abuse continue.",
-        ],
+        next_steps=next_steps,
         documents=["loan app/lender name", "loan agreement", "repayment proof", "call logs", "contact messages", "screenshots", "app permissions", "complaint number"],
-        portals=["lender grievance portal", "cms.rbi.org.in", "cybercrime.gov.in for threats/contact-data misuse"],
-        escalation=["lender grievance officer", "RBI Ombudsman", "cyber police/local police", "DLSA"],
+        portals=portals,
+        escalation=escalation,
         cautions=["Keep repayment/default facts separate from illegal recovery harassment; do not delete the app or messages before preserving evidence."],
     )
 

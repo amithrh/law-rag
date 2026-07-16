@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from apps.api.matter_router import route_matter
 from apps.api.source_packs import source_packs_for_route
 from pydantic import ValidationError
 
+from authority_registry.ingest import build_projection
 from authority_registry.loader import (
     build_authority_registry,
     load_authority_migrations,
@@ -80,21 +82,207 @@ def test_registry_rejects_text_hash_or_identity_drift():
 def test_registry_migration_hash_and_order_are_deterministic():
     migrations = load_authority_migrations()
     registry = build_authority_registry(migrations)
-    assert [item.manifest.migration_id for item in migrations] == ["0001_crpc_436a"]
-    assert len(migrations[0].manifest_sha256) == 64
-    assert [record.canonical_key for record in registry.records] == ["crpc_1973_section_436a"]
+    assert [item.manifest.migration_id for item in migrations] == [
+        "0001_crpc_436a",
+        "0002_rbi_grievance_family",
+        "0003_it_act_private_image",
+        "0004_it_act_66e_verbatim_correction",
+        "0005_bns_extortion",
+    ]
+    assert all(len(item.manifest_sha256) == 64 for item in migrations)
+    assert len(registry.records) == 11
+    assert {workflow.scenario_id for workflow in registry.workflows} == {
+        "wrong_bank_debit",
+        "loan_app_harassment",
+    }
 
 
 def test_applied_migrations_must_be_exact_hash_matched_prefix():
     migrations = load_authority_migrations()
     assert reconcile_applied_migrations(migrations, []) == migrations
     applied = [(migrations[0].manifest.migration_id, migrations[0].manifest_sha256)]
-    assert reconcile_applied_migrations(migrations, applied) == ()
+    assert reconcile_applied_migrations(migrations, applied) == migrations[1:]
     with pytest.raises(ValueError, match="exact hash-matched prefix"):
         reconcile_applied_migrations(
             migrations,
             [(migrations[0].manifest.migration_id, "0" * 64)],
         )
+
+
+@pytest.mark.parametrize(
+    "query,scenario_id",
+    [
+        ("Bank deducted money wrongly and customer care is not helping", "wrong_bank_debit"),
+        ("Loan app is harassing my contacts", "loan_app_harassment"),
+    ],
+)
+def test_rbi_workflows_make_plan_authorities_and_actions_canonical(query, scenario_id):
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    rbi_entries = [
+        entry
+        for entry in plan.authority_ledger
+        if entry.registry_key and entry.registry_key.startswith("rbi_integrated_ombudsman")
+    ]
+    assert len(rbi_entries) == 5
+    assert all(entry.authority_id for entry in rbi_entries)
+    assert all(entry.identity_status == "canonical" for entry in rbi_entries)
+    assert all(
+        entry.section in {"Clause 1", "Clause 3", "Clause 6", "Clause 9", "Clause 10"}
+        for entry in rbi_entries
+    )
+    assert "RBI Complaint Management System / Ombudsman" in plan.forums
+    assert plan.remedies
+    assert len(plan.deadlines) == 2
+    assert plan.documents
+    assert plan.escalation
+    workflow = load_authority_registry().workflow_for_scenario(scenario_id)
+    assert workflow is not None
+    expected_authority_ids = {
+        load_authority_registry().by_key(requirement.registry_key).authority_id_expected
+        for requirement in workflow.authorities
+        if requirement.required
+    }
+    assert {
+        authority_id
+        for source in plan.retrieval_sources
+        for authority_id in source.authority_ids
+    } == expected_authority_ids
+    assert all(source.authority_ids for source in plan.retrieval_sources)
+    assert "consumer_protection_2019" not in {
+        source.source_pack_id for source in plan.retrieval_sources
+    }
+
+
+def test_rbi_registry_uses_current_official_consolidation_and_correct_clauses():
+    registry = load_authority_registry()
+    records = [
+        record
+        for record in registry.records
+        if record.canonical_key.startswith("rbi_integrated_ombudsman_2021_clause_")
+    ]
+    assert [
+        record.provision.number
+        for record in sorted(records, key=lambda item: int(item.provision.number))
+    ] == [
+        "1",
+        "3",
+        "6",
+        "9",
+        "10",
+    ]
+    assert all(record.authority_type == "scheme" for record in records)
+    assert all(record.source_origin == "rbi" for record in records)
+    assert all(record.publisher.kind == "official_regulator" for record in records)
+    assert all(
+        record.provenance.raw_sha256
+        == "26c4931c9de9000757c1643741da59ca6e12330605fb2b13f29e3bc16ad46c12"
+        for record in records
+    )
+    assert all(record.provenance.raw_bytes_size == 178811 for record in records)
+    assert registry.by_key("rbi_integrated_ombudsman_2021_clause_2") is None
+
+
+def test_rbi_loan_app_registry_owns_current_conduct_and_data_provisions():
+    registry = load_authority_registry()
+    digital_11 = registry.by_key("rbi_digital_lending_2025_paragraph_11")
+    digital_12 = registry.by_key("rbi_digital_lending_2025_paragraph_12")
+    recovery_2 = registry.by_key("rbi_recovery_agents_2022_paragraph_2")
+
+    assert digital_11 is not None and digital_11.effective_from == date(2025, 5, 8)
+    assert digital_12 is not None and "contact list" in digital_12.text
+    assert recovery_2 is not None and "family members" in recovery_2.text
+    assert digital_12.provenance.raw_sha256 == (
+        "2dd838cf9bcb58f27bec0c0f5485cf1c764ad238454dea8c9041516375d2321b"
+    )
+    assert recovery_2.provenance.raw_sha256 == (
+        "cc5242ff92976d44db58d77485a795f48031f20da39473d5b44cfdd4abeac84c"
+    )
+
+    workflow = registry.workflow_for_scenario("loan_app_harassment")
+    assert workflow is not None
+    assert {item.registry_key for item in workflow.authorities} >= {
+        "rbi_digital_lending_2025_paragraph_11",
+        "rbi_digital_lending_2025_paragraph_12",
+        "rbi_recovery_agents_2022_paragraph_2",
+        "information_technology_act_2000_section_66e",
+    }
+
+
+def test_private_image_authority_is_canonical_and_conditionally_activated():
+    registry = load_authority_registry()
+    section_66e = registry.by_key("information_technology_act_2000_section_66e")
+    assert section_66e is not None
+    assert section_66e.authority_id_expected == "authority_ad90922325a79b902a63"
+    assert section_66e.provenance.raw_sha256 == (
+        "e71725fa32e892f887308816046c42275fc855b5cbb4ee1063cdbd518f165140"
+    )
+    assert section_66e.provenance.raw_bytes_size == 832355
+
+    generic_query = "Loan app is harassing my contacts and calling my boss"
+    generic_plan = build_matter_plan(generic_query, route_matter(generic_query))
+    assert all(
+        entry.registry_key != "information_technology_act_2000_section_66e"
+        for entry in generic_plan.authority_ledger
+    )
+    assert "it_act_2000_loan_app_private_image" not in {
+        source.source_pack_id for source in generic_plan.retrieval_sources
+    }
+
+    image_query = (
+        "Unregistered loan app is blackmailing me with a morphed nude photo "
+        "if I do not pay tonight"
+    )
+    image_plan = build_matter_plan(image_query, route_matter(image_query))
+    image_entry = next(
+        entry
+        for entry in image_plan.authority_ledger
+        if entry.registry_key == "information_technology_act_2000_section_66e"
+    )
+    assert image_entry.authority_id == section_66e.authority_id_expected
+    assert image_entry.must_cite is True
+    assert image_entry.conditional is True
+    image_source = next(
+        source
+        for source in image_plan.retrieval_sources
+        if source.source_pack_id == "it_act_2000_loan_app_private_image"
+    )
+    assert image_source.authority_ids == [section_66e.authority_id_expected]
+    assert image_source.anchor_patterns == ["/sec-66E"]
+
+    extortion = registry.by_key("bharatiya_nyaya_sanhita_2023_section_308")
+    assert extortion is not None
+    assert extortion.authority_id_expected == "authority_1377e9f3337ec9d06de0"
+    extortion_entry = next(
+        entry
+        for entry in image_plan.authority_ledger
+        if entry.registry_key == "bharatiya_nyaya_sanhita_2023_section_308"
+    )
+    assert extortion_entry.must_cite is True
+    assert extortion_entry.conditional is True
+    assert any(
+        source.source_pack_id == "bns_2023_loan_app_extortion"
+        and source.authority_ids == [extortion.authority_id_expected]
+        and source.anchor_patterns == ["/sec-308"]
+        for source in image_plan.retrieval_sources
+    )
+
+
+def test_optional_consolidation_field_preserves_existing_crpc_record_hash():
+    record = load_authority_registry().by_key("crpc_1973_section_436a")
+    assert record is not None
+    assert record.consolidation_as_at is None
+    assert record.record_sha256 == (
+        "fd65becc36609e42e4d2aab77344911fbc2d2e196fe3d207a55b049391947e5d"
+    )
+
+
+def test_rbi_projection_carries_consolidation_date_at_document_and_chunk_scope():
+    record = load_authority_registry().by_key("rbi_integrated_ombudsman_2021_clause_3")
+    assert record is not None
+    projection = build_projection(record)
+    assert projection.document_metadata["consolidation_as_at"] == "2022-08-05"
+    assert projection.chunk_metadata["consolidation_as_at"] == "2022-08-05"
 
 
 def test_matter_plan_and_source_pack_consume_the_registry_record():
@@ -138,9 +326,28 @@ def test_neighboring_section_cannot_satisfy_registry_authority():
     )
 
 
+def test_rbi_clause_passage_maps_only_to_its_exact_registry_authority():
+    query = "Bank deducted money wrongly and customer care is not helping"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    clause_9 = next(
+        entry
+        for entry in plan.authority_ledger
+        if entry.registry_key == "rbi_integrated_ombudsman_2021_clause_9"
+    )
+    assert authority_ids_for_passage(
+        plan,
+        title="Reserve Bank - Integrated Ombudsman Scheme, 2021",
+        anchor="rbi-integrated-ombudsman-2021/sec-9",
+        source_pack_id="rbi_integrated_ombudsman_2021",
+        source_type="bare_act",
+    ) == [clause_9.authority_id]
+
+
 def test_manifest_is_data_only_and_contains_no_local_path():
-    path = Path("packages/authority_registry/migrations/0001_crpc_436a.json")
-    payload = json.loads(path.read_text())
-    text = json.dumps(payload)
-    assert "file:///" not in text
-    assert "/Users/" not in text
+    for path in Path("packages/authority_registry/migrations").glob("*.json"):
+        payload = json.loads(path.read_text())
+        text = json.dumps(payload)
+        assert "file:///" not in text
+        assert "/Users/" not in text

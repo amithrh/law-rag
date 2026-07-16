@@ -7,8 +7,13 @@ from pathlib import Path
 import pytest
 
 from apps.api.config import Settings
+from apps.api.legal_issue_plan import build_matter_plan
 from apps.api.matter_router import route_matter
-from apps.api.retrieval import _anchor_boundary_regexes, _fetch_source_pack_candidates, _section_numbers_from_anchor_patterns
+from apps.api.retrieval import (
+    _anchor_boundary_regexes,
+    _fetch_source_pack_candidates,
+    _section_numbers_from_anchor_patterns,
+)
 from apps.api.source_packs import source_packs_for_route
 
 
@@ -29,7 +34,9 @@ def test_scst_atrocity_route_gets_exact_bare_act_pack():
 
 
 def test_mental_health_confinement_gets_protection_and_emergency_sections():
-    packs = _packs_by_id("my brother mentally ill family kept him in chains how to admit in hospital legally")
+    packs = _packs_by_id(
+        "my brother mentally ill family kept him in chains how to admit in hospital legally"
+    )
 
     expected = {
         "mental_healthcare_2017_confinement_dignity": "/sec-20",
@@ -107,7 +114,9 @@ def test_fake_whatsapp_sim_harassment_gets_it_bns_and_telecom_packs():
     packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("ex husband created fake whatsapp using my new sim number harassing my family"),
+            route_matter(
+                "ex husband created fake whatsapp using my new sim number harassing my family"
+            ),
             "ex husband created fake whatsapp using my new sim number harassing my family",
         )
     }
@@ -115,7 +124,9 @@ def test_fake_whatsapp_sim_harassment_gets_it_bns_and_telecom_packs():
     assert "it_act_2000" in packs
     assert {"/sec-66C", "/sec-66D"} <= set(packs["it_act_2000"].anchor_patterns)
     assert "bns_2023_sim_harassment" in packs
-    assert {"/sec-78", "/sec-351", "/sec-319"} <= set(packs["bns_2023_sim_harassment"].anchor_patterns)
+    assert {"/sec-78", "/sec-351", "/sec-319"} <= set(
+        packs["bns_2023_sim_harassment"].anchor_patterns
+    )
     assert "telecommunications_2023" in packs
 
 
@@ -123,7 +134,9 @@ def test_bumble_unsolicited_sexual_image_gets_bns75_not_rape_pack():
     packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("bumble match sent me unsolicited sexual image after i said no what can i do"),
+            route_matter(
+                "bumble match sent me unsolicited sexual image after i said no what can i do"
+            ),
             "bumble match sent me unsolicited sexual image after i said no what can i do",
         )
     }
@@ -147,16 +160,15 @@ def test_therapist_chat_privacy_gets_it72_pack():
     assert {"/sec-72", "/sec-72A"} <= set(packs["it_act_2000"].anchor_patterns)
     assert packs["it_act_2000"].priority >= 1.24
     assert "mental_healthcare_2017" in packs
-    assert {"/sec-23", "/sec-24", "/sec-25", "/sec-43"} <= set(packs["mental_healthcare_2017"].anchor_patterns)
+    assert {"/sec-23", "/sec-24", "/sec-25", "/sec-43"} <= set(
+        packs["mental_healthcare_2017"].anchor_patterns
+    )
 
 
 def test_criminal_bail_cheque_bounce_gets_ni_act_pack():
     query = "how much surety amount typically required for bail in cheque bounce case"
     route = route_matter(query)
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route, query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route, query)}
 
     assert route.category == "criminal_defence_bail"
     assert "ni_act_1881" in packs
@@ -165,10 +177,7 @@ def test_criminal_bail_cheque_bounce_gets_ni_act_pack():
 
 def test_false_nbfc_loan_signature_gets_credit_and_rbi_packs():
     query = "nbfc loan showing on my documents but signature not mine; family says ignore but i am scared, safe legal route?"
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert "credit_information_companies_2005" in packs
     assert "rbi_integrated_ombudsman_2021" in packs
@@ -183,7 +192,9 @@ def test_target_failure_source_packs_retrieve_procedural_and_state_authorities()
     cyber = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("stalker on insta sending dm daily even after blocking how to file complaint"),
+            route_matter(
+                "stalker on insta sending dm daily even after blocking how to file complaint"
+            ),
             "stalker on insta sending dm daily even after blocking how to file complaint",
         )
     }
@@ -226,7 +237,9 @@ def test_target_failure_source_packs_retrieve_procedural_and_state_authorities()
     survivor = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("visually impaired sister was raped by caretaker police says case is weak"),
+            route_matter(
+                "visually impaired sister was raped by caretaker police says case is weak"
+            ),
             "visually impaired sister was raped by caretaker police says case is weak",
         )
     }
@@ -270,7 +283,9 @@ def test_target_failure_source_packs_retrieve_procedural_and_state_authorities()
     minor_interfaith = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("daughter is 17 ran away with boy of different religion police saying love jihad"),
+            route_matter(
+                "daughter is 17 ran away with boy of different religion police saying love jihad"
+            ),
             "daughter is 17 ran away with boy of different religion police saying love jihad",
         )
     }
@@ -295,7 +310,9 @@ def test_carceral_safety_precedence_source_packs_are_official_and_specific():
     prison_records = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("family sent money order to jail canteen but prisoner not getting account detail, what record can ask"),
+            route_matter(
+                "family sent money order to jail canteen but prisoner not getting account detail, what record can ask"
+            ),
             "family sent money order to jail canteen but prisoner not getting account detail, what record can ask",
         )
     }
@@ -306,17 +323,23 @@ def test_carceral_safety_precedence_source_packs_are_official_and_specific():
     custody_medical = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("arthur road jail tb medicine missed for 2 weeks, jail doctor not giving report, what urgent legal step"),
+            route_matter(
+                "arthur road jail tb medicine missed for 2 weeks, jail doctor not giving report, what urgent legal step"
+            ),
             "arthur road jail tb medicine missed for 2 weeks, jail doctor not giving report, what urgent legal step",
         )
     }
-    assert {"constitution_article_21", "bnss_2023_medical_bail", "prisons_1894"} <= set(custody_medical)
+    assert {"constitution_article_21", "bnss_2023_medical_bail", "prisons_1894"} <= set(
+        custody_medical
+    )
     assert {"/sec-13", "/sec-37", "/sec-38"} & set(custody_medical["prisons_1894"].anchor_patterns)
 
     insulin_medical = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("puzhal prisoner insulin stopped and cannot walk, jail says wait what urgent court step"),
+            route_matter(
+                "puzhal prisoner insulin stopped and cannot walk, jail says wait what urgent court step"
+            ),
             "puzhal prisoner insulin stopped and cannot walk, jail says wait what urgent court step",
         )
     }
@@ -325,28 +348,44 @@ def test_carceral_safety_precedence_source_packs_are_official_and_specific():
     juvenile = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("minor boy picked by police and kept in station with adults, school id says age 16"),
+            route_matter(
+                "minor boy picked by police and kept in station with adults, school id says age 16"
+            ),
             "minor boy picked by police and kept in station with adults, school id says age 16",
         )
     }
-    assert {"jj_2015", "jj_2015_age_claim_court", "jj_2015_age_documents", "jj_2015_bail_board"} <= set(juvenile)
+    assert {
+        "jj_2015",
+        "jj_2015_age_claim_court",
+        "jj_2015_age_documents",
+        "jj_2015_bail_board",
+    } <= set(juvenile)
     assert "pocso_2012" not in juvenile
 
     undertrial = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("undertrial review committee never considered brother though jail custody is 3 years trial not moving"),
+            route_matter(
+                "undertrial review committee never considered brother though jail custody is 3 years trial not moving"
+            ),
             "undertrial review committee never considered brother though jail custody is 3 years trial not moving",
         )
     }
-    assert {"constitution_article_21", "bnss_2023", "crpc_1973", "legal_services_authorities_1987"} <= set(undertrial)
+    assert {
+        "constitution_article_21",
+        "bnss_2023",
+        "crpc_1973",
+        "legal_services_authorities_1987",
+    } <= set(undertrial)
     assert "/sec-479" in undertrial["bnss_2023"].anchor_patterns
     assert {"/sec-436A", "/sec-436-a", "/sec-436a"} & set(undertrial["crpc_1973"].anchor_patterns)
 
     notice = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("police gave 35(3) notice in new case and asking phone, can they arrest me if i go alone"),
+            route_matter(
+                "police gave 35(3) notice in new case and asking phone, can they arrest me if i go alone"
+            ),
             "police gave 35(3) notice in new case and asking phone, can they arrest me if i go alone",
         )
     }
@@ -358,7 +397,9 @@ def test_carceral_safety_precedence_source_packs_are_official_and_specific():
     hybrid_notice = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("i received 35 notice but police also says bring all chats and don't tell lawyer"),
+            route_matter(
+                "i received 35 notice but police also says bring all chats and don't tell lawyer"
+            ),
             "i received 35 notice but police also says bring all chats and don't tell lawyer",
         )
     }
@@ -369,18 +410,24 @@ def test_carceral_safety_precedence_source_packs_are_official_and_specific():
     bail_release = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("high court granted bail but jail e-copy not received and still not releasing"),
+            route_matter(
+                "high court granted bail but jail e-copy not received and still not releasing"
+            ),
             "high court granted bail but jail e-copy not received and still not releasing",
         )
     }
-    assert {"constitution_article_21", "bnss_2023_bail_release", "crpc_1973_bail_release"} <= set(bail_release)
+    assert {"constitution_article_21", "bnss_2023_bail_release", "crpc_1973_bail_release"} <= set(
+        bail_release
+    )
     assert "/sec-480" in bail_release["bnss_2023_bail_release"].anchor_patterns
     assert "/sec-439" in bail_release["crpc_1973_bail_release"].anchor_patterns
 
     arrest = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("husband picked by crime branch, 24 hours passed no production in court, family not informed"),
+            route_matter(
+                "husband picked by crime branch, 24 hours passed no production in court, family not informed"
+            ),
             "husband picked by crime branch, 24 hours passed no production in court, family not informed",
         )
     }
@@ -389,9 +436,9 @@ def test_carceral_safety_precedence_source_packs_are_official_and_specific():
 
 
 def test_safety_regression_source_packs_cover_real_authority_gaps():
-    elderly_fraud_ids = set(_pack_ids(
-        "fake call from sbi pension office took 2 lakh from my account 75 yr father"
-    ))
+    elderly_fraud_ids = set(
+        _pack_ids("fake call from sbi pension office took 2 lakh from my account 75 yr father")
+    )
     assert {
         "it_act_2000",
         "senior_citizens_2007_cyber_support",
@@ -400,7 +447,9 @@ def test_safety_regression_source_packs_cover_real_authority_gaps():
     will_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("father made will in 1998 not registered now after death sons fighting is unregistered will valid"),
+            route_matter(
+                "father made will in 1998 not registered now after death sons fighting is unregistered will valid"
+            ),
             "father made will in 1998 not registered now after death sons fighting is unregistered will valid",
         )
     }
@@ -411,7 +460,9 @@ def test_safety_regression_source_packs_cover_real_authority_gaps():
     ndps_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("brother in NDPS case arrested 110 days no chargesheet default bail possible"),
+            route_matter(
+                "brother in NDPS case arrested 110 days no chargesheet default bail possible"
+            ),
             "brother in NDPS case arrested 110 days no chargesheet default bail possible",
         )
     }
@@ -429,9 +480,13 @@ def test_domestic_safety_prompts_pin_pwdva_safety_anchors():
     assert {"/sec-3", "/sec-18", "/sec-12"} <= set(physical_packs["pwdva_2005"].anchor_patterns)
     assert "bns_2023" in physical_packs
     assert "bnss_2023_domestic_violence_fir" in physical_packs
-    assert {"/sec-173", "/sec-175"} <= set(physical_packs["bnss_2023_domestic_violence_fir"].anchor_patterns)
+    assert {"/sec-173", "/sec-175"} <= set(
+        physical_packs["bnss_2023_domestic_violence_fir"].anchor_patterns
+    )
 
-    residence_query = "sasural waale mujhe ghar se nikal diya raat ko bina kuch diye kya main wapis ja sakti hoon"
+    residence_query = (
+        "sasural waale mujhe ghar se nikal diya raat ko bina kuch diye kya main wapis ja sakti hoon"
+    )
     residence_packs = {
         pack.id: pack
         for pack in source_packs_for_route(route_matter(residence_query), residence_query)
@@ -440,9 +495,16 @@ def test_domestic_safety_prompts_pin_pwdva_safety_anchors():
     assert "pwdva_2005" in residence_packs
     assert {"/sec-17", "/sec-19", "/sec-12"} <= set(residence_packs["pwdva_2005"].anchor_patterns)
 
-    assault_residence_query = "spouse assaulted me today and keeps saying he will evict me from matrimonial home"
+    assault_residence_query = (
+        "spouse assaulted me today and keeps saying he will evict me from matrimonial home"
+    )
     assault_residence_ids = set(_pack_ids(assault_residence_query))
-    assert {"pwdva_2005", "bns_2023", "bnss_2023", "bnss_2023_domestic_violence_fir"} <= assault_residence_ids
+    assert {
+        "pwdva_2005",
+        "bns_2023",
+        "bnss_2023",
+        "bnss_2023_domestic_violence_fir",
+    } <= assault_residence_ids
 
 
 def test_wife_as_aggressor_prompts_do_not_pin_pwdva_pack():
@@ -457,10 +519,7 @@ def test_wife_as_aggressor_prompts_do_not_pin_pwdva_pack():
         "my wife forced sex without consent what to do",
         "my wife sexually assaulted me what to do",
     ):
-        packs = {
-            pack.id: pack
-            for pack in source_packs_for_route(route_matter(query), query)
-        }
+        packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
         assert "pwdva_2005" not in packs
         assert "bnss_2023" in packs
@@ -529,9 +588,7 @@ def test_builder_occupancy_certificate_gets_rera_source_pack():
 
     packs = {pack.id: pack for pack in source_packs_for_route(route, query)}
     assert "rera_2016" in packs
-    assert {"/sec-18", "/sec-31", "/sec-34", "/sec-71"} <= set(
-        packs["rera_2016"].anchor_patterns
-    )
+    assert {"/sec-18", "/sec-31", "/sec-34", "/sec-71"} <= set(packs["rera_2016"].anchor_patterns)
     assert "consumer_protection_2019" in packs
 
 
@@ -542,16 +599,18 @@ def test_common_composite_failures_get_required_source_packs():
         for pack in source_packs_for_route(route_matter(intimate_query), intimate_query)
     }
     assert "it_act_2000" in intimate_packs
-    assert {"/sec-66E", "/sec-67", "/sec-67A"} <= set(
-        intimate_packs["it_act_2000"].anchor_patterns
-    )
+    assert {"/sec-66E", "/sec-67", "/sec-67A"} <= set(intimate_packs["it_act_2000"].anchor_patterns)
     assert "bns_2023_intimate_image_blackmail" in intimate_packs
     assert intimate_packs["bns_2023_intimate_image_blackmail"].anchor_patterns == ("/sec-308",)
 
-    intimate_threat_query = "morphed nude photo of my sister is being shared in college telegram group"
+    intimate_threat_query = (
+        "morphed nude photo of my sister is being shared in college telegram group"
+    )
     intimate_threat_packs = {
         pack.id: pack
-        for pack in source_packs_for_route(route_matter(intimate_threat_query), intimate_threat_query)
+        for pack in source_packs_for_route(
+            route_matter(intimate_threat_query), intimate_threat_query
+        )
     }
     assert "bns_2023_intimate_image_blackmail" in intimate_threat_packs
     assert {"/sec-77", "/sec-351", "/sec-356"} <= set(
@@ -560,13 +619,14 @@ def test_common_composite_failures_get_required_source_packs():
 
     cab_query = "uber cancelled ride but deducted money and not refunding"
     cab_packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(cab_query), cab_query)
+        pack.id: pack for pack in source_packs_for_route(route_matter(cab_query), cab_query)
     }
     assert route_matter(cab_query).category == "consumer"
     assert "consumer_protection_2019" in cab_packs
     assert "motor_vehicle_aggregator_guidelines_2020_passenger_grievance" in cab_packs
-    assert cab_packs["motor_vehicle_aggregator_guidelines_2020_passenger_grievance"].source_types == ("guideline",)
+    assert cab_packs[
+        "motor_vehicle_aggregator_guidelines_2020_passenger_grievance"
+    ].source_types == ("guideline",)
 
     recovery_query = "nbfc recovery people abusing me on phone and visiting office"
     recovery_packs = {
@@ -577,10 +637,14 @@ def test_common_composite_failures_get_required_source_packs():
     assert "bns_2023_recovery_harassment" in recovery_packs
     assert "/sec-351" in recovery_packs["bns_2023_recovery_harassment"].anchor_patterns
 
-    workplace_recovery_query = "finance company caller says they will tell my office and neighbours about loan"
+    workplace_recovery_query = (
+        "finance company caller says they will tell my office and neighbours about loan"
+    )
     workplace_recovery_packs = {
         pack.id: pack
-        for pack in source_packs_for_route(route_matter(workplace_recovery_query), workplace_recovery_query)
+        for pack in source_packs_for_route(
+            route_matter(workplace_recovery_query), workplace_recovery_query
+        )
     }
     assert route_matter(workplace_recovery_query).category == "banking_credit_dispute"
     assert "rbi_integrated_ombudsman_2021" in workplace_recovery_packs
@@ -605,12 +669,18 @@ def test_common_composite_failures_get_required_source_packs():
             route_matter(private_image_recovery_query), private_image_recovery_query
         )
     }
-    assert private_image_recovery_packs["it_act_2000_loan_app_private_image"].anchor_patterns == ("/sec-66E",)
+    assert private_image_recovery_packs["it_act_2000_loan_app_private_image"].anchor_patterns == (
+        "/sec-66E",
+    )
 
-    video_blackmail_query = "someone recorded video call and says he will send to my relatives if i dont pay"
+    video_blackmail_query = (
+        "someone recorded video call and says he will send to my relatives if i dont pay"
+    )
     video_blackmail_packs = {
         pack.id: pack
-        for pack in source_packs_for_route(route_matter(video_blackmail_query), video_blackmail_query)
+        for pack in source_packs_for_route(
+            route_matter(video_blackmail_query), video_blackmail_query
+        )
     }
     assert route_matter(video_blackmail_query).category == "cyber_fraud_or_harassment"
     assert "it_act_2000" in video_blackmail_packs
@@ -641,10 +711,14 @@ def test_common_composite_failures_get_required_source_packs():
     assert "bnss_2023_bank_account_legal_hold" in cyber_routed_lien_packs
     assert "it_act_2000_bank_freeze_cyber_hold" in cyber_routed_lien_packs
 
-    order_copy_lien_query = "my salary account has lien after cyber complaint but bank is not giving order copy"
+    order_copy_lien_query = (
+        "my salary account has lien after cyber complaint but bank is not giving order copy"
+    )
     order_copy_lien_packs = {
         pack.id: pack
-        for pack in source_packs_for_route(route_matter(order_copy_lien_query), order_copy_lien_query)
+        for pack in source_packs_for_route(
+            route_matter(order_copy_lien_query), order_copy_lien_query
+        )
     }
     assert route_matter(order_copy_lien_query).category == "banking_credit_dispute"
     assert "bnss_2023_bank_account_legal_hold" in order_copy_lien_packs
@@ -653,32 +727,26 @@ def test_common_composite_failures_get_required_source_packs():
 
 
 def test_stage2_failed_family_source_packs_cover_operational_authorities():
-    mgnrega_ids = set(_pack_ids(
-        "gram panchayat not giving work under mgnrega after application"
-    ))
+    mgnrega_ids = set(_pack_ids("gram panchayat not giving work under mgnrega after application"))
     assert {"mgnrega_2005", "rti_2005"} <= mgnrega_ids
 
-    false_nbfc_loan_ids = set(_pack_ids(
-        "nbfc loan showing on my documents but signature not mine"
-    ))
+    false_nbfc_loan_ids = set(_pack_ids("nbfc loan showing on my documents but signature not mine"))
     assert {
         "credit_information_companies_2005",
         "it_act_2000_identity_loan_documents",
         "rbi_integrated_ombudsman_2021",
     } <= false_nbfc_loan_ids
 
-    upi_freeze_ids = set(_pack_ids(
-        "my upi account frozen and branch not giving complaint number"
-    ))
+    upi_freeze_ids = set(_pack_ids("my upi account frozen and branch not giving complaint number"))
     assert {
         "rbi_integrated_ombudsman_2021",
         "banking_regulation_1949",
     } <= upi_freeze_ids
     assert "bnss_2023" not in upi_freeze_ids
 
-    recovery_photo_ids = set(_pack_ids(
-        "bank recovery agent took photos of my house can i complain"
-    ))
+    recovery_photo_ids = set(
+        _pack_ids("bank recovery agent took photos of my house can i complain")
+    )
     assert {
         "rbi_integrated_ombudsman_2021",
         "bns_2023_recovery_harassment",
@@ -699,8 +767,7 @@ def test_stage11_remaining_common_prompts_get_workflow_sources():
 
     crypto_query = "crypto exchange froze my wallet and support not replying"
     crypto_packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(crypto_query), crypto_query)
+        pack.id: pack for pack in source_packs_for_route(route_matter(crypto_query), crypto_query)
     }
     assert route_matter(crypto_query).category == "digital_platform_account"
     assert "consumer_protection_2019" in crypto_packs
@@ -785,10 +852,7 @@ def test_stage_e9_repeated_criminal_source_gap_prompts_get_exact_packs():
 
 def test_fake_bank_call_gets_bnss_information_not_generic_bail_pack():
     query = "fake call from sbi pension office took 2 lakh from my account 75 yr father"
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert "bnss_2023" in packs
     assert packs["bnss_2023"].anchor_patterns == ("/sec-173", "/sec-175")
@@ -796,10 +860,7 @@ def test_fake_bank_call_gets_bnss_information_not_generic_bail_pack():
 
 def test_fake_cbi_parcel_scam_gets_impersonation_and_fir_packs():
     query = "got call from cbi saying parcel has drugs send 5 lakh is this scam"
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert packs["it_act_2000"].anchor_patterns[:2] == ("/sec-66D", "/sec-66C")
     assert packs["bnss_2023"].anchor_patterns == ("/sec-173", "/sec-175")
@@ -809,10 +870,7 @@ def test_fake_cbi_parcel_scam_gets_impersonation_and_fir_packs():
 
 def test_dating_app_blackmail_gets_bnss_fir_pack():
     query = "tinder match is blackmailing with screenshots and asking money"
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert "it_act_2000" in packs
     assert "bnss_2023_cyber_blackmail_fir" in packs
@@ -821,10 +879,7 @@ def test_dating_app_blackmail_gets_bnss_fir_pack():
 
 def test_family_court_summons_gets_family_court_and_cpc_packs():
     query = "received family court summons divorce case what next before lawyer"
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert "family_courts_1984" in packs
     assert "cpc_1908" in packs
@@ -951,12 +1006,34 @@ def test_street_vendor_gets_bare_act_pack():
 
 def test_stage33_hard_failure_queries_get_required_source_packs():
     expectations = {
-        "iron ore mine displaced our 12 villages no rehabilitation given keonjhar": {"rfctlarr_2013", "rfctlarr_2013_scheduled_area_rr", "mmdr_1957"},
-        "non tribal sahukar took my land in mortgage 15 years now refusing return jharkhand": {"chota_nagpur_tenancy_1908_transfer_restriction", "chota_nagpur_tenancy_1908_restoration", "constitution_scheduled_areas"},
-        "cab driver mumbai uber deactivated rating low because customer racist hindi speaker": {"motor_vehicle_aggregator_guidelines_2020_contract", "motor_vehicle_aggregator_guidelines_2020_grievance", "motor_vehicle_aggregator_guidelines_2020_nondiscrimination", "constitution_article_14"},
-        "I want to change my gender on aadhar and 10th certificate I have not had surgery is it possible": {"transgender_2019", "aadhaar_2016"},
-        "construction company retrenched 40 of us bengali workers kept the gujaratis next day same site": {"industrial_disputes_1947", "constitution_article_14"},
-        "my neighbor is parking his car blocking my dedicated parking slot in apartment, security guard says he cant do anything": {"consumer_protection_2019", "housing_parking_case_law"},
+        "iron ore mine displaced our 12 villages no rehabilitation given keonjhar": {
+            "rfctlarr_2013",
+            "rfctlarr_2013_scheduled_area_rr",
+            "mmdr_1957",
+        },
+        "non tribal sahukar took my land in mortgage 15 years now refusing return jharkhand": {
+            "chota_nagpur_tenancy_1908_transfer_restriction",
+            "chota_nagpur_tenancy_1908_restoration",
+            "constitution_scheduled_areas",
+        },
+        "cab driver mumbai uber deactivated rating low because customer racist hindi speaker": {
+            "motor_vehicle_aggregator_guidelines_2020_contract",
+            "motor_vehicle_aggregator_guidelines_2020_grievance",
+            "motor_vehicle_aggregator_guidelines_2020_nondiscrimination",
+            "constitution_article_14",
+        },
+        "I want to change my gender on aadhar and 10th certificate I have not had surgery is it possible": {
+            "transgender_2019",
+            "aadhaar_2016",
+        },
+        "construction company retrenched 40 of us bengali workers kept the gujaratis next day same site": {
+            "industrial_disputes_1947",
+            "constitution_article_14",
+        },
+        "my neighbor is parking his car blocking my dedicated parking slot in apartment, security guard says he cant do anything": {
+            "consumer_protection_2019",
+            "housing_parking_case_law",
+        },
     }
     for query, expected_ids in expectations.items():
         ids = set(_pack_ids(query))
@@ -965,17 +1042,45 @@ def test_stage33_hard_failure_queries_get_required_source_packs():
 
 def test_stage34_final100_gap_prompts_get_required_source_packs():
     expectations = {
-        "my father wants to know if registered gift deed to son can be cancelled if son not caring": {"senior_citizens_2007", "transfer_property_1882"},
-        "I gave my house to son in gift deed now he wants to throw me out can I cancel": {"senior_citizens_2007", "transfer_property_1882"},
-        "mother in delhi son refuses to pay maintenance how much can tribunal order maximum": {"senior_citizens_2007"},
+        "my father wants to know if registered gift deed to son can be cancelled if son not caring": {
+            "senior_citizens_2007",
+            "transfer_property_1882",
+        },
+        "I gave my house to son in gift deed now he wants to throw me out can I cancel": {
+            "senior_citizens_2007",
+            "transfer_property_1882",
+        },
+        "mother in delhi son refuses to pay maintenance how much can tribunal order maximum": {
+            "senior_citizens_2007"
+        },
         "cops at delhi airport found my vape with thc oil what is the punishment": {"ndps_1985"},
-        "llp partner refusing to sign form 11 annual return 2 years pending strike off threat": {"llp_2008"},
-        "telegram channel leaked my onlyfans content without permission what to do": {"copyright_1957", "it_act_2000_intermediary"},
-        "got porn video featuring lookalike of me 2 lakh views not me but face same": {"it_act_2000", "dpdp_2023_deepfake", "bns_2023"},
-        "fake porn video with my face on website how to remove and complain": {"it_act_2000", "dpdp_2023_deepfake", "bns_2023"},
-        "company building dam will submerge 4 tribal villages no consent gram sabha odisha": {"pesa_1996", "rfctlarr_2013"},
-        "how is court fee calculated for civil suit valuation 25 lakh recovery": {"court_fees_1870"},
-        "drug inspector picked up samples from my medical store schedule h sale without prescription jaipur": {"drugs_cosmetics_1940"},
+        "llp partner refusing to sign form 11 annual return 2 years pending strike off threat": {
+            "llp_2008"
+        },
+        "telegram channel leaked my onlyfans content without permission what to do": {
+            "copyright_1957",
+            "it_act_2000_intermediary",
+        },
+        "got porn video featuring lookalike of me 2 lakh views not me but face same": {
+            "it_act_2000",
+            "dpdp_2023_deepfake",
+            "bns_2023",
+        },
+        "fake porn video with my face on website how to remove and complain": {
+            "it_act_2000",
+            "dpdp_2023_deepfake",
+            "bns_2023",
+        },
+        "company building dam will submerge 4 tribal villages no consent gram sabha odisha": {
+            "pesa_1996",
+            "rfctlarr_2013",
+        },
+        "how is court fee calculated for civil suit valuation 25 lakh recovery": {
+            "court_fees_1870"
+        },
+        "drug inspector picked up samples from my medical store schedule h sale without prescription jaipur": {
+            "drugs_cosmetics_1940"
+        },
     }
     for query, expected_ids in expectations.items():
         ids = set(_pack_ids(query))
@@ -984,17 +1089,32 @@ def test_stage34_final100_gap_prompts_get_required_source_packs():
 
 def test_oracle_failure_cluster_prompts_get_required_source_packs():
     expectations = {
-        "pregnant woman undertrial byculla not getting hospital checkup where to go": {"constitution_article_21", "bnss_2023", "bnss_2023_medical_bail", "prisons_1894"},
-        "court asked two local sureties we are migrants what to do": {"constitution_article_21", "bnss_2023"},
-        "health department not paying covid duty incentive to asha what can i do": {"nhm_asha_incentives_2025"},
+        "pregnant woman undertrial byculla not getting hospital checkup where to go": {
+            "constitution_article_21",
+            "bnss_2023",
+            "bnss_2023_medical_bail",
+            "prisons_1894",
+        },
+        "court asked two local sureties we are migrants what to do": {
+            "constitution_article_21",
+            "bnss_2023",
+        },
+        "health department not paying covid duty incentive to asha what can i do": {
+            "nhm_asha_incentives_2025"
+        },
         "anganwadi helper honorarium pending how to complain": {"anganwadi_honorarium_case_law"},
-        "wife family hid her earlier marriage before wedding remedy": {"hindu_marriage_1955_voidable", "family_courts_1984"},
+        "wife family hid her earlier marriage before wedding remedy": {
+            "hindu_marriage_1955_voidable",
+            "family_courts_1984",
+        },
     }
     for query, expected_ids in expectations.items():
         ids = set(_pack_ids(query))
         assert expected_ids <= ids, query
 
-    asha_ids = set(_pack_ids("health department not paying covid duty incentive to asha what can i do"))
+    asha_ids = set(
+        _pack_ids("health department not paying covid duty incentive to asha what can i do")
+    )
     assert "anganwadi_honorarium_case_law" not in asha_ids
     assert "code_on_wages_2019" not in asha_ids
 
@@ -1009,7 +1129,11 @@ def test_stage33_near_misses_do_not_get_hard_route_source_packs():
     assert "motor_vehicle_aggregator_guidelines_2020_grievance" not in passenger_ids
     assert "motor_vehicle_aggregator_guidelines_2020_nondiscrimination" not in passenger_ids
     assert "motor_vehicles_1988" not in passenger_ids
-    customer_account_ids = set(_pack_ids("uber driver gave me low rating and my customer account deactivated, i am a customer"))
+    customer_account_ids = set(
+        _pack_ids(
+            "uber driver gave me low rating and my customer account deactivated, i am a customer"
+        )
+    )
     assert "motor_vehicle_aggregator_guidelines_2020_contract" not in customer_account_ids
     assert "motor_vehicle_aggregator_guidelines_2020_grievance" not in customer_account_ids
     assert "motor_vehicle_aggregator_guidelines_2020_nondiscrimination" not in customer_account_ids
@@ -1027,7 +1151,9 @@ def test_stage33_near_misses_do_not_get_hard_route_source_packs():
     assert "motor_vehicle_aggregator_guidelines_2020_contract" not in cab_double_charge_ids
     assert "code_on_wages_2019" not in cab_double_charge_ids
 
-    campus_ids = set(_pack_ids("my mining engineering college displaced my hostel room no rehabilitation"))
+    campus_ids = set(
+        _pack_ids("my mining engineering college displaced my hostel room no rehabilitation")
+    )
     assert "rfctlarr_2013" not in campus_ids
     assert "rfctlarr_2013_scheduled_area_rr" not in campus_ids
     assert "mmdr_1957" not in campus_ids
@@ -1050,13 +1176,17 @@ def test_adult_offspring_intimate_image_does_not_get_pocso_pack():
 
 
 def test_school_caste_violence_gets_scst_pack_not_rte():
-    ids = _pack_ids("sarpanch from upper caste beat my son outside school called him untouchable name bastar")
+    ids = _pack_ids(
+        "sarpanch from upper caste beat my son outside school called him untouchable name bastar"
+    )
     assert "scst_poa_1989" in ids
     assert "rte_2009" not in ids
 
 
 def test_munda_land_grab_gets_tribal_atrocity_fallback_pack():
-    ids = _pack_ids("munda land grabbed by upper caste in our agency village how to get back chaibasa")
+    ids = _pack_ids(
+        "munda land grabbed by upper caste in our agency village how to get back chaibasa"
+    )
     assert "scst_poa_1989" in ids
 
 
@@ -1083,7 +1213,11 @@ def test_retrenchment_caste_group_gets_lifo_and_equality_not_poa_by_default():
     ids = {pack.id for pack in packs}
     industrial = next(pack for pack in packs if pack.id == "industrial_disputes_1947")
     assert industrial.anchor_patterns == ("/sec-25F", "/sec-25G", "/sec-25H")
-    assert {"industrial_disputes_1947_lifo", "industrial_disputes_1947_reemployment", "constitution_article_14"} <= ids
+    assert {
+        "industrial_disputes_1947_lifo",
+        "industrial_disputes_1947_reemployment",
+        "constitution_article_14",
+    } <= ids
     assert "scst_poa_1989" not in ids
 
 
@@ -1211,11 +1345,17 @@ def test_school_caste_assault_gets_bnss_complaint_pack():
 
 def test_child_papers_without_adoption_do_not_get_jj_adoption_pack():
     child_passport_query = "child passport papers are stuck with father for travel"
-    child_passport_ids = {pack.id for pack in source_packs_for_route(route_matter(child_passport_query), child_passport_query)}
+    child_passport_ids = {
+        pack.id
+        for pack in source_packs_for_route(route_matter(child_passport_query), child_passport_query)
+    }
     assert "jj_2015" not in child_passport_ids
 
     school_papers_query = "school papers for my son are not released by principal"
-    school_papers_ids = {pack.id for pack in source_packs_for_route(route_matter(school_papers_query), school_papers_query)}
+    school_papers_ids = {
+        pack.id
+        for pack in source_packs_for_route(route_matter(school_papers_query), school_papers_query)
+    }
     assert "jj_2015" not in school_papers_ids
 
 
@@ -1319,7 +1459,9 @@ def test_udyam_payment_delay_gets_msmed_pack_without_invoice_wording():
 
 
 def test_msme_quality_deduction_gets_sale_of_goods_and_msmed_sources():
-    query = "buyer deducting payment saying quality issue but no formal rejection given 9 lakh stuck"
+    query = (
+        "buyer deducting payment saying quality issue but no formal rejection given 9 lakh stuck"
+    )
     ids = [pack.id for pack in source_packs_for_route(route_matter(query), query)]
     assert "msmed_2006" in ids
     assert "sale_of_goods_1930" in ids
@@ -1380,12 +1522,8 @@ def test_tamil_nadu_coimbatore_shop_license_route_gets_official_local_sources():
     assert {"/sec-42", "/sec-43", "/sec-45", "/sec-46A"} <= set(
         by_id["tamil_nadu_shops_establishments_1947"].anchor_patterns
     )
-    assert by_id["coimbatore_trade_license_2026"].doc_ids == (
-        "coimbatore-trade-license-2026",
-    )
-    assert by_id["coimbatore_trade_license_2026"].anchor_patterns == (
-        "/d-and-o-renewal-penalty",
-    )
+    assert by_id["coimbatore_trade_license_2026"].doc_ids == ("coimbatore-trade-license-2026",)
+    assert by_id["coimbatore_trade_license_2026"].anchor_patterns == ("/d-and-o-renewal-penalty",)
     assert "guideline" in by_id["coimbatore_trade_license_2026"].source_types
 
 
@@ -1474,7 +1612,9 @@ def test_identity_police_threat_gets_constitution_and_bns_packs():
 
 
 def test_honour_threat_gets_bnss_173_not_bnss_216_fallback_pack():
-    query = "my daughter eloped with boy of other religion family threatening her with khap panchayat"
+    query = (
+        "my daughter eloped with boy of other religion family threatening her with khap panchayat"
+    )
     route = route_matter(query)
     packs = source_packs_for_route(route, query)
     by_id = {pack.id: pack for pack in packs}
@@ -1545,19 +1685,25 @@ def test_project_displacement_gets_rfctlarr_pack_not_migrant_wage_packs():
     assert "code_on_wages_2019" not in ids
     assert "rfctlarr_2013" in _pack_ids("displacement compensation not paid after highway project")
     assert "rfctlarr_2013" not in _pack_ids("environment damage from blasting")
-    assert "rfctlarr_2013" not in _pack_ids("rehabilitation centre project grant not paid by government")
+    assert "rfctlarr_2013" not in _pack_ids(
+        "rehabilitation centre project grant not paid by government"
+    )
 
 
 def test_joint_name_property_gets_transfer_of_property_pack():
     query = "father bought house in joint name with son in 2010 son now claims half share Kerala"
     route = route_matter(query)
     assert route.category == "property_tenancy"
-    tpa = next(pack for pack in source_packs_for_route(route, query) if pack.id == "transfer_property_1882")
+    tpa = next(
+        pack for pack in source_packs_for_route(route, query) if pack.id == "transfer_property_1882"
+    )
     assert "/sec-45" in tpa.anchor_patterns
 
 
 def test_common_user_smoke_prompts_get_precise_source_packs():
-    coowner_query = "brother and i bought a plot together 10 years back, now he has sold it, what can i do"
+    coowner_query = (
+        "brother and i bought a plot together 10 years back, now he has sold it, what can i do"
+    )
     coowner_packs = source_packs_for_route(route_matter(coowner_query), coowner_query)
     coowner_by_id = {pack.id: pack for pack in coowner_packs}
     assert coowner_by_id["transfer_property_1882"].anchor_patterns == ("/sec-44", "/sec-45")
@@ -1572,7 +1718,9 @@ def test_common_user_smoke_prompts_get_precise_source_packs():
     assert "/sec-122" not in tenant_tpa.anchor_patterns
     assert "specific_relief_1963" not in tenant_by_id
 
-    oral_gift_query = "mother gave land to younger son verbally now older son disputing after 20 years"
+    oral_gift_query = (
+        "mother gave land to younger son verbally now older son disputing after 20 years"
+    )
     oral_gift_by_id = {
         pack.id: pack
         for pack in source_packs_for_route(route_matter(oral_gift_query), oral_gift_query)
@@ -1581,7 +1729,9 @@ def test_common_user_smoke_prompts_get_precise_source_packs():
     assert {"/sec-17", "/sec-49"} <= set(oral_gift_by_id["registration_1908"].anchor_patterns)
     assert oral_gift_by_id["registration_1908"].priority >= 1.14
 
-    engagement_query = "my fiance lied about salary before marriage but we are not married yet what can i do"
+    engagement_query = (
+        "my fiance lied about salary before marriage but we are not married yet what can i do"
+    )
     engagement_ids = _pack_ids(engagement_query)
     assert "hindu_marriage_1955_voidable" not in engagement_ids
     assert "family_courts_1984" not in engagement_ids
@@ -1591,21 +1741,30 @@ def test_common_user_smoke_prompts_get_precise_source_packs():
     assert "specific_relief_1963" not in solo_sale_tax_ids
 
     school_query = "my daughter school admission is denied, despite her clearing admission exam"
-    rte = next(pack for pack in source_packs_for_route(route_matter(school_query), school_query) if pack.id == "rte_2009")
+    rte = next(
+        pack
+        for pack in source_packs_for_route(route_matter(school_query), school_query)
+        if pack.id == "rte_2009"
+    )
     assert "/sec-13" in rte.anchor_patterns
     assert "/sec-12" in rte.anchor_patterns
 
-    college_query = "engineering college is holding my original certificates after I left the course"
+    college_query = (
+        "engineering college is holding my original certificates after I left the course"
+    )
     college_by_id = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(college_query), college_query)
+        pack.id: pack for pack in source_packs_for_route(route_matter(college_query), college_query)
     }
     assert college_by_id["aicte_certificate_return_guideline"].source_types == ("guideline",)
-    assert "original-documents" in college_by_id["aicte_certificate_return_guideline"].anchor_patterns
+    assert (
+        "original-documents" in college_by_id["aicte_certificate_return_guideline"].anchor_patterns
+    )
     assert "rti_2005" in college_by_id
     assert "consumer_protection_2019_education_service" in college_by_id
 
-    college_marksheets_query = "polytechnic college is not returning my original marksheets after I discontinued"
+    college_marksheets_query = (
+        "polytechnic college is not returning my original marksheets after I discontinued"
+    )
     college_marksheets_ids = _pack_ids(college_marksheets_query)
     assert "aicte_certificate_return_guideline" in college_marksheets_ids
     assert "consumer_protection_2019_education_service" in college_marksheets_ids
@@ -1639,26 +1798,48 @@ def test_common_user_smoke_prompts_get_precise_source_packs():
         assert "consumer_protection_2019" in _pack_ids(consumer_query)
 
     bike_query = "My bike is stolen, police is not filing FIR"
-    bike_by_id = {pack.id: pack for pack in source_packs_for_route(route_matter(bike_query), bike_query)}
+    bike_by_id = {
+        pack.id: pack for pack in source_packs_for_route(route_matter(bike_query), bike_query)
+    }
     assert "/sec-173" in bike_by_id["bnss_2023"].anchor_patterns
     assert "/sec-303" in bike_by_id["bns_2023"].anchor_patterns
 
     arrest_query = "police has picked my son from my home in the night, i have not got FIR copy"
-    arrest_by_id = {pack.id: pack for pack in source_packs_for_route(route_matter(arrest_query), arrest_query)}
+    arrest_by_id = {
+        pack.id: pack for pack in source_packs_for_route(route_matter(arrest_query), arrest_query)
+    }
     assert arrest_by_id["constitution_article_22"].anchor_patterns == ("/sec-22",)
-    assert arrest_by_id["bnss_2023"].anchor_patterns == ("/sec-47", "/sec-48", "/sec-57", "/sec-58", "/sec-173")
+    assert arrest_by_id["bnss_2023"].anchor_patterns == (
+        "/sec-47",
+        "/sec-48",
+        "/sec-57",
+        "/sec-58",
+        "/sec-173",
+    )
     pickup_query = "police took my brother at midnight and not telling station or case; screenshots/witness names and phone numbers are with me"
-    pickup_by_id = {pack.id: pack for pack in source_packs_for_route(route_matter(pickup_query), pickup_query)}
+    pickup_by_id = {
+        pack.id: pack for pack in source_packs_for_route(route_matter(pickup_query), pickup_query)
+    }
     assert pickup_by_id["constitution_article_22"].anchor_patterns == ("/sec-22",)
-    assert pickup_by_id["bnss_2023"].anchor_patterns == ("/sec-47", "/sec-48", "/sec-57", "/sec-58", "/sec-173")
+    assert pickup_by_id["bnss_2023"].anchor_patterns == (
+        "/sec-47",
+        "/sec-48",
+        "/sec-57",
+        "/sec-58",
+        "/sec-173",
+    )
 
     misrep_query = "My husband told lies before marriage about his job and his salary, what to do"
-    misrep_ids = {pack.id for pack in source_packs_for_route(route_matter(misrep_query), misrep_query)}
+    misrep_ids = {
+        pack.id for pack in source_packs_for_route(route_matter(misrep_query), misrep_query)
+    }
     assert {"hindu_marriage_1955_voidable", "family_courts_1984"} <= misrep_ids
     assert "bnss_2023" not in misrep_ids
 
     breakdown_query = "My wife is denying sex since many years, what to do"
-    breakdown_ids = {pack.id for pack in source_packs_for_route(route_matter(breakdown_query), breakdown_query)}
+    breakdown_ids = {
+        pack.id for pack in source_packs_for_route(route_matter(breakdown_query), breakdown_query)
+    }
     assert {"family_courts_1984", "hindu_marriage_1955_divorce"} <= breakdown_ids
     assert "bnss_2023" not in breakdown_ids
 
@@ -1727,7 +1908,9 @@ def test_parsi_succession_gets_indian_succession_pack():
     query = "parsi mother passed away in mumbai how property divided among us three sisters"
     packs = source_packs_for_route(route_matter(query), query)
     assert "indian_succession_1925" in [pack.id for pack in packs]
-    assert any("/sec-50" in pack.anchor_patterns and "/sec-54" in pack.anchor_patterns for pack in packs)
+    assert any(
+        "/sec-50" in pack.anchor_patterns and "/sec-54" in pack.anchor_patterns for pack in packs
+    )
 
 
 def test_testamentary_will_queries_get_succession_and_registration_packs():
@@ -1793,7 +1976,12 @@ def test_candidate_election_route_gets_rpa_1951_pack():
         route_matter("returning officer rejected my nomination for MLA election what remedy"),
         "returning officer rejected my nomination for MLA election what remedy",
     )
-    assert any(pack.id == "rpa_1951" and "/sec-33" in pack.anchor_patterns and "/sec-36" in pack.anchor_patterns for pack in packs)
+    assert any(
+        pack.id == "rpa_1951"
+        and "/sec-33" in pack.anchor_patterns
+        and "/sec-36" in pack.anchor_patterns
+        for pack in packs
+    )
 
     conviction = source_packs_for_route(
         route_matter("candidate convicted for two years can he contest Lok Sabha election"),
@@ -1805,14 +1993,21 @@ def test_candidate_election_route_gets_rpa_1951_pack():
         route_matter("booth capturing corrupt practice election petition to set aside result"),
         "booth capturing corrupt practice election petition to set aside result",
     )
-    assert any(pack.id == "rpa_1951" and "/sec-123" in pack.anchor_patterns and "/sec-100@" in pack.anchor_patterns for pack in corrupt)
+    assert any(
+        pack.id == "rpa_1951"
+        and "/sec-123" in pack.anchor_patterns
+        and "/sec-100@" in pack.anchor_patterns
+        for pack in corrupt
+    )
 
     false_affidavit_corrupt = source_packs_for_route(
         route_matter("candidate affidavit false assets corrupt practice election petition"),
         "candidate affidavit false assets corrupt practice election petition",
     )
     assert any(
-        pack.id == "rpa_1951" and "/sec-123" in pack.anchor_patterns and "/sec-100@" in pack.anchor_patterns
+        pack.id == "rpa_1951"
+        and "/sec-123" in pack.anchor_patterns
+        and "/sec-100@" in pack.anchor_patterns
         for pack in false_affidavit_corrupt
     )
 
@@ -1886,34 +2081,68 @@ def test_stage3_employment_survival_money_source_packs():
 
 def test_eval_general_spillover_routes_get_required_source_packs():
     cases = {
-        "domestic worker bangalore madam not paying 3 months said i broke vase wants 8000": ("code_on_wages_2019",),
-        "factory deducted 800 every month for shoes uniform never given orissa worker tiruppur knitwear": ("code_on_wages_2019",),
-        "muster roll fake entries BDO putting my name without me working khunti how complain": ("mgnrega_2005",),
-        "thana refused to file complaint against zamindar who burnt our hut latehar": ("bnss_2023", "bns_2023"),
-        "I am hearing impaired my employer is not providing interpreter for HR sessions and now they say I missed important update": ("rpwd_2016",),
-        "my startup co founder is trying to dilute my equity using ESOP pool without my consent, i have 30 percent": ("companies_2013", "indian_contract_1872"),
-        "ola driver took longer route and charged extra fare, customer support is closing complaint without resolution": ("consumer_protection_2019",),
-        "zomato rider here met with accident on bike no insurance from company": ("social_security_code_2020", "motor_vehicles_1988"),
-        "swiggy delivery partner accident no insurance from company": ("social_security_code_2020", "motor_vehicles_1988"),
-        "agent took my goods worth 7 lakh and absconded gujarat principal agent relationship": ("indian_contract_1872",),
+        "domestic worker bangalore madam not paying 3 months said i broke vase wants 8000": (
+            "code_on_wages_2019",
+        ),
+        "factory deducted 800 every month for shoes uniform never given orissa worker tiruppur knitwear": (
+            "code_on_wages_2019",
+        ),
+        "muster roll fake entries BDO putting my name without me working khunti how complain": (
+            "mgnrega_2005",
+        ),
+        "thana refused to file complaint against zamindar who burnt our hut latehar": (
+            "bnss_2023",
+            "bns_2023",
+        ),
+        "I am hearing impaired my employer is not providing interpreter for HR sessions and now they say I missed important update": (
+            "rpwd_2016",
+        ),
+        "my startup co founder is trying to dilute my equity using ESOP pool without my consent, i have 30 percent": (
+            "companies_2013",
+            "indian_contract_1872",
+        ),
+        "ola driver took longer route and charged extra fare, customer support is closing complaint without resolution": (
+            "consumer_protection_2019",
+        ),
+        "zomato rider here met with accident on bike no insurance from company": (
+            "social_security_code_2020",
+            "motor_vehicles_1988",
+        ),
+        "swiggy delivery partner accident no insurance from company": (
+            "social_security_code_2020",
+            "motor_vehicles_1988",
+        ),
+        "agent took my goods worth 7 lakh and absconded gujarat principal agent relationship": (
+            "indian_contract_1872",
+        ),
     }
     for query, expected_ids in cases.items():
         ids = _pack_ids(query)
         for expected_id in expected_ids:
             assert expected_id in ids, query
     mgnrega = source_packs_for_route(
-        route_matter("muster roll fake entries BDO putting my name without me working khunti how complain"),
+        route_matter(
+            "muster roll fake entries BDO putting my name without me working khunti how complain"
+        ),
         "muster roll fake entries BDO putting my name without me working khunti how complain",
     )
     assert any(pack.id == "mgnrega_2005" and "/sec-17@" in pack.anchor_patterns for pack in mgnrega)
     assert any(pack.id == "mgnrega_2005" and "/sec-19@" in pack.anchor_patterns for pack in mgnrega)
-    assert all("/sec-3" not in pack.anchor_patterns for pack in mgnrega if pack.id == "mgnrega_2005")
+    assert all(
+        "/sec-3" not in pack.anchor_patterns for pack in mgnrega if pack.id == "mgnrega_2005"
+    )
 
-    street_fine_ids = set(_pack_ids("fish market vendor cochin license panchayat only kerala municipal saying pay 5000 fine illegal"))
+    street_fine_ids = set(
+        _pack_ids(
+            "fish market vendor cochin license panchayat only kerala municipal saying pay 5000 fine illegal"
+        )
+    )
     assert "street_vendors_2014" in street_fine_ids
     assert "prevention_corruption_1988" not in street_fine_ids
     street_fine_packs = source_packs_for_route(
-        route_matter("fish market vendor cochin license panchayat only kerala municipal saying pay 5000 fine illegal"),
+        route_matter(
+            "fish market vendor cochin license panchayat only kerala municipal saying pay 5000 fine illegal"
+        ),
         "fish market vendor cochin license panchayat only kerala municipal saying pay 5000 fine illegal",
     )
     street_pack = next(pack for pack in street_fine_packs if pack.id == "street_vendors_2014")
@@ -1925,16 +2154,28 @@ def test_eval_general_spillover_routes_get_required_source_packs():
     assert "/sec-31" not in street_pack.anchor_patterns
     assert "/sec-39" not in street_pack.anchor_patterns
 
-    street_bribe_ids = set(_pack_ids("vendor zone bhopal allotted me 2018 now hawker inspector saying pay 2000 every month otherwise remove"))
+    street_bribe_ids = set(
+        _pack_ids(
+            "vendor zone bhopal allotted me 2018 now hawker inspector saying pay 2000 every month otherwise remove"
+        )
+    )
     assert {"street_vendors_2014", "prevention_corruption_1988"} <= street_bribe_ids
 
-    assert "code_on_wages_2019" in _pack_ids("hotel waiter minimum wage paid below state rate what can I do")
-    welfare_ids = set(_pack_ids("contractor put fake names in construction welfare board register and took worker benefit money"))
+    assert "code_on_wages_2019" in _pack_ids(
+        "hotel waiter minimum wage paid below state rate what can I do"
+    )
+    welfare_ids = set(
+        _pack_ids(
+            "contractor put fake names in construction welfare board register and took worker benefit money"
+        )
+    )
     assert {"bocw_1996", "bocw_cess_1996"} <= welfare_ids
     dead_people_ids = set(_pack_ids("MGNREGA fake muster roll names of dead people how complain"))
     assert {"mgnrega_2005", "rti_2005"} <= dead_people_ids
 
-    challan_vendor_ids = set(_pack_ids("street vendor paid challan fine but inspector asking cash bribe every month"))
+    challan_vendor_ids = set(
+        _pack_ids("street vendor paid challan fine but inspector asking cash bribe every month")
+    )
     assert {"street_vendors_2014", "prevention_corruption_1988"} <= challan_vendor_ids
 
     pending_hearing_packs = {
@@ -1945,37 +2186,56 @@ def test_eval_general_spillover_routes_get_required_source_packs():
         )
     }
     assert "street_vendors_2014" in pending_hearing_packs
-    assert {"/sec-18", "/sec-19", "/sec-20"} <= set(pending_hearing_packs["street_vendors_2014"].anchor_patterns)
+    assert {"/sec-18", "/sec-19", "/sec-20"} <= set(
+        pending_hearing_packs["street_vendors_2014"].anchor_patterns
+    )
 
 
 def test_final_eval_gap_routes_get_required_source_packs():
     cases = {
         "husband in arthur road tb test not done jail doctor 4 months waiting": (
-            "constitution_article_21", "bnss_2023", "crpc_1973"
+            "constitution_article_21",
+            "bnss_2023",
+            "crpc_1973",
         ),
         "my 14 year old girlfriend's father filed pocso on me I am 17 we were in relationship": (
-            "pocso_2012", "jj_2015", "bnss_2023", "crpc_1973"
+            "pocso_2012",
+            "jj_2015",
+            "bnss_2023",
+            "crpc_1973",
         ),
         "my wife filed 498A on whole family even my old mother how to defend": (
-            "bnss_2023", "bns_2023", "crpc_1973"
+            "bnss_2023",
+            "bns_2023",
+            "crpc_1973",
         ),
         "private limited mgt 7 aoc 4 not filed 3 years director disqualified can revive": (
-            "companies_2013", "ibc_2016"
+            "companies_2013",
+            "ibc_2016",
         ),
         "binance froze my usdt wallet 4 lakh saying suspicious trade is it legal": (
-            "it_act_2000", "consumer_protection_2019"
+            "it_act_2000",
+            "consumer_protection_2019",
         ),
         "private cooperative bank fd of grandfather not honoured nominee facing harassment": (
-            "banking_regulation_1949", "consumer_protection_2019", "rbi_integrated_ombudsman_2021",
+            "banking_regulation_1949",
+            "consumer_protection_2019",
+            "rbi_integrated_ombudsman_2021",
         ),
         "someone leaked my chat with therapist on twitter mental health privacy": (
-            "it_act_2000", "dpdp_2023", "mental_healthcare_2017"
+            "it_act_2000",
+            "dpdp_2023",
+            "mental_healthcare_2017",
         ),
         "I work at a place in malad they call it spa but customers want extra and owner makes us do it if we refuse no salary how": (
-            "bnss_2023", "bns_2023", "itpa_1956"
+            "bnss_2023",
+            "bns_2023",
+            "itpa_1956",
         ),
         "garment unit jharkhand girl 15 working with us factory says she is 18 no proof": (
-            "child_labour_1986", "jj_2015", "code_on_wages_2019"
+            "child_labour_1986",
+            "jj_2015",
+            "code_on_wages_2019",
         ),
         "how to get bocw card mumbai i work construction 8 years no card no benefit": (
             "bocw_1996",
@@ -1993,7 +2253,8 @@ def test_final_eval_gap_routes_get_required_source_packs():
             "code_on_wages_2019",
         ),
         "my husband died 2024 i am 78 mutation of land in my name jharkhand process": (
-            "hindu_succession_1956", "rti_2005"
+            "hindu_succession_1956",
+            "rti_2005",
         ),
     }
     for query, expected_ids in cases.items():
@@ -2001,14 +2262,18 @@ def test_final_eval_gap_routes_get_required_source_packs():
         for expected_id in expected_ids:
             assert expected_id in ids, query
 
-    fd_ids = _pack_ids("private cooperative bank fd of grandfather not honoured nominee facing harassment")
+    fd_ids = _pack_ids(
+        "private cooperative bank fd of grandfather not honoured nominee facing harassment"
+    )
     assert "cooperative_bank_recovery_case_law" not in fd_ids
     assert "sarfaesi_2002" not in fd_ids
     nbfc_recovery_ids = _pack_ids("bajaj finserv recovery agent calling my office for emi dues")
     assert "cooperative_bank_recovery_case_law" not in nbfc_recovery_ids
     assert "sarfaesi_2002" not in nbfc_recovery_ids
     fd_packs = source_packs_for_route(
-        route_matter("private cooperative bank fd of grandfather not honoured nominee facing harassment"),
+        route_matter(
+            "private cooperative bank fd of grandfather not honoured nominee facing harassment"
+        ),
         "private cooperative bank fd of grandfather not honoured nominee facing harassment",
     )
     fd_banking = next(pack for pack in fd_packs if pack.id == "banking_regulation_1949")
@@ -2018,19 +2283,23 @@ def test_final_eval_gap_routes_get_required_source_packs():
 def test_stage5_hard_fail_routes_get_required_source_packs():
     cases = {
         "thekedar gave 8 of us same name on register only 2 names real cheating bocw he gets cess": (
-            "bocw_1996", "bocw_cess_1996", "bns_2023", "bnss_2023"
+            "bocw_1996",
+            "bocw_cess_1996",
+            "bns_2023",
+            "bnss_2023",
         ),
         "ex boyfriend follows my scooty everyday from office to home he doesn't talk just follows what section is this": (
-            "bns_2023", "bnss_2023"
+            "bns_2023",
+            "bnss_2023",
         ),
         "stalker on insta sending dm daily even after blocking how to file complaint": (
-            "it_act_2000", "bns_2023"
+            "it_act_2000",
+            "bns_2023",
         ),
-        "he stalks me on insta and sends dm daily after blocking": (
-            "it_act_2000", "bns_2023"
-        ),
+        "he stalks me on insta and sends dm daily after blocking": ("it_act_2000", "bns_2023"),
         "I shared my ex girlfriend's photo angry on whatsapp group not nude just normal selfie now she filed 67 case": (
-            "it_act_2000", "bnss_2023"
+            "it_act_2000",
+            "bnss_2023",
         ),
         "auto permit chennai expired in lockdown how to renew tamil nadu i came from cuddalore": (
             "motor_vehicles_1988",
@@ -2039,22 +2308,29 @@ def test_stage5_hard_fail_routes_get_required_source_packs():
             "sarfaesi_2002",
         ),
         "buyer deducting payment saying quality issue but no formal rejection given 9 lakh stuck": (
-            "msmed_2006", "indian_contract_1872",
+            "msmed_2006",
+            "indian_contract_1872",
         ),
         "ismw registration who does it i never heard about it 15 years in surat textile": (
-            "ismw_1979", "code_on_wages_2019",
+            "ismw_1979",
+            "code_on_wages_2019",
         ),
         "i undertrial 3 yrs in puzhal lawyer not coming hearings when can complain": (
-            "legal_services_authorities_1987", "constitution_article_21", "bnss_2023"
+            "legal_services_authorities_1987",
+            "constitution_article_21",
+            "bnss_2023",
         ),
         "husband took my salary atm card and gives me only 2000 per month for groceries is this legal he says he is breadwinner": (
             "pwdva_2005",
         ),
         "my daughter is 17 she ran away with boy of different religion police is saying it is love jihad and she will come back what is law": (
-            "pocso_2012", "bns_2023", "bnss_2023"
+            "pocso_2012",
+            "bns_2023",
+            "bnss_2023",
         ),
         "sister died at in laws house they say suicide but body had marks dowry case": (
-            "bns_2023", "bnss_2023"
+            "bns_2023",
+            "bnss_2023",
         ),
     }
     for query, expected_ids in cases.items():
@@ -2067,7 +2343,9 @@ def test_stage5_hard_fail_routes_get_required_source_packs():
         "thekedar gave same name on register cheating bocw gets cess",
     )
     assert any(pack.id == "bocw_1996" and "/sec-13" in pack.anchor_patterns for pack in bocw_packs)
-    assert any(pack.id == "bocw_cess_1996" and "/sec-3" in pack.anchor_patterns for pack in bocw_packs)
+    assert any(
+        pack.id == "bocw_cess_1996" and "/sec-3" in pack.anchor_patterns for pack in bocw_packs
+    )
 
 
 def test_milestone_b_common_failures_get_required_source_packs():
@@ -2079,16 +2357,22 @@ def test_milestone_b_common_failures_get_required_source_packs():
             "posh_2013",
         ),
         "PITA case only talking on phone with paying clients not meeting anyone take bookings": (
-            "itpa_1956", "bnss_2023", "crpc_1973",
+            "itpa_1956",
+            "bnss_2023",
+            "crpc_1973",
         ),
         "HDFC bank wrongly debited forex transaction no response what to do": (
-            "rbi_integrated_ombudsman_2021", "consumer_protection_2019",
+            "rbi_integrated_ombudsman_2021",
+            "consumer_protection_2019",
         ),
         "vit student caught with bhang lassi in mahabaleshwar holi is it ndps": (
-            "ndps_1985", "bnss_2023", "crpc_1973",
+            "ndps_1985",
+            "bnss_2023",
+            "crpc_1973",
         ),
         "ration card cancelled due aadhaar mismatch BDO says renew what to do": (
-            "national_food_security_2013", "aadhaar_2016",
+            "national_food_security_2013",
+            "aadhaar_2016",
         ),
     }
     for query, expected_ids in cases.items():
@@ -2097,14 +2381,18 @@ def test_milestone_b_common_failures_get_required_source_packs():
             assert expected_id in ids, query
 
     itpa_packs = source_packs_for_route(
-        route_matter("PITA case only talking on phone with paying clients not meeting anyone take bookings"),
+        route_matter(
+            "PITA case only talking on phone with paying clients not meeting anyone take bookings"
+        ),
         "PITA case only talking on phone with paying clients not meeting anyone take bookings",
     )
     itpa = next(pack for pack in itpa_packs if pack.id == "itpa_1956")
     assert {"/sec-4", "/sec-5", "/sec-7", "/sec-8"} <= set(itpa.anchor_patterns)
 
     posh_packs = source_packs_for_route(
-        route_matter("complained about sexual harassment by my manager to HR and now he gave PIP bad rating"),
+        route_matter(
+            "complained about sexual harassment by my manager to HR and now he gave PIP bad rating"
+        ),
         "complained about sexual harassment by my manager to HR and now he gave PIP bad rating",
     )
     posh = next(pack for pack in posh_packs if pack.id == "posh_2013")
@@ -2142,7 +2430,11 @@ def test_senior_gift_transfer_gets_section_23_preference():
 
     pressure_query = "my uncle made my old father sign gift deed under pressure"
     pressure_ids = set(_pack_ids(pressure_query))
-    assert {"senior_citizens_2007", "transfer_property_1882", "specific_relief_1963"} <= pressure_ids
+    assert {
+        "senior_citizens_2007",
+        "transfer_property_1882",
+        "specific_relief_1963",
+    } <= pressure_ids
 
 
 def test_wage_query_gets_code_on_wages_pack():
@@ -2247,7 +2539,10 @@ def test_temple_entry_caste_access_prioritizes_article17_and_pcr_sources():
     assert "protection_civil_rights_1955_religious_access" in by_id
     assert "protection_civil_rights_1955" in by_id
     assert by_id["constitution_article_17"].priority > by_id["bns_2023_religious_insult"].priority
-    assert by_id["protection_civil_rights_1955_religious_access"].priority > by_id["bns_2023_religious_insult"].priority
+    assert (
+        by_id["protection_civil_rights_1955_religious_access"].priority
+        > by_id["bns_2023_religious_insult"].priority
+    )
 
 
 def test_ndps_default_bail_gets_ndps_pack():
@@ -2263,10 +2558,7 @@ def test_ndps_default_bail_gets_ndps_pack():
 
 def test_stage_goal_ppirp_gets_rules_and_regulations_source_packs():
     query = "msme pre pack insolvency how to use against my own company 1.4 cr debt avoiding nclt full process"
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert "ibc_2016" in packs
     assert "ibc_ppirp_rules_2021" in packs
@@ -2281,13 +2573,17 @@ def test_ndps_default_bail_pack_fetches_focused_section_36a_from_runtime_chunks(
         asyncpg = pytest.importorskip("asyncpg")
         settings = Settings()
         try:
-            pool = await asyncpg.create_pool(dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1)
+            pool = await asyncpg.create_pool(
+                dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1
+            )
         except Exception as exc:
             pytest.fail(f"runtime DB unavailable for NDPS source-pack validation: {exc}")
         try:
             query = "brother in NDPS case arrested 110 days no chargesheet default bail possible"
             route = route_matter(query)
-            ndps_pack = next(pack for pack in source_packs_for_route(route, query) if pack.id == "ndps_1985")
+            ndps_pack = next(
+                pack for pack in source_packs_for_route(route, query) if pack.id == "ndps_1985"
+            )
             chunks = await _fetch_source_pack_candidates(
                 pool,
                 query,
@@ -2315,9 +2611,13 @@ def test_stage3_nonverbatim_state_gap_chunks_stay_quarantined():
         asyncpg = pytest.importorskip("asyncpg")
         settings = Settings()
         try:
-            pool = await asyncpg.create_pool(dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1)
+            pool = await asyncpg.create_pool(
+                dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1
+            )
         except Exception as exc:
-            pytest.fail(f"runtime DB unavailable for Stage 3 state-law source-pack validation: {exc}")
+            pytest.fail(
+                f"runtime DB unavailable for Stage 3 state-law source-pack validation: {exc}"
+            )
         try:
             async with pool.acquire() as conn:
                 rows = await conn.fetch(
@@ -2346,7 +2646,10 @@ def test_stage3_nonverbatim_state_gap_chunks_stay_quarantined():
             ]:
                 assert doc_id in by_doc
                 assert all(row["quarantined"] for row in by_doc[doc_id])
-                assert all(row["source_type"] in {"official_summary", "secondary_reference"} for row in by_doc[doc_id])
+                assert all(
+                    row["source_type"] in {"official_summary", "secondary_reference"}
+                    for row in by_doc[doc_id]
+                )
             jharkhand_rows = by_doc.get("jharkhand-prevention-witch-daain-practices-2001", [])
             assert jharkhand_rows
             assert any(
@@ -2388,7 +2691,8 @@ def test_stage3_nonverbatim_state_gap_chunks_stay_quarantined():
                     limit_per_pack=4,
                 )
                 mis_tagged = [
-                    chunk for chunk in all_chunks
+                    chunk
+                    for chunk in all_chunks
                     if chunk.metadata.get("_required_source_pack") == pack_id
                     and chunk.anchor != expected_anchor
                 ]
@@ -2405,14 +2709,17 @@ def test_stage34_official_packs_fetch_focused_runtime_chunks_without_sparse_vect
         asyncpg = pytest.importorskip("asyncpg")
         settings = Settings()
         try:
-            pool = await asyncpg.create_pool(dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1)
+            pool = await asyncpg.create_pool(
+                dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1
+            )
         except Exception as exc:
             pytest.fail(f"runtime DB unavailable for Stage34 source-pack validation: {exc}")
         try:
             court_query = "how is court fee calculated for civil suit valuation 25 lakh recovery"
             court_route = route_matter(court_query)
             court_pack = next(
-                pack for pack in source_packs_for_route(court_route, court_query)
+                pack
+                for pack in source_packs_for_route(court_route, court_query)
                 if pack.id == "court_fees_1870"
             )
             court_chunks = await _fetch_source_pack_candidates(
@@ -2423,12 +2730,15 @@ def test_stage34_official_packs_fetch_focused_runtime_chunks_without_sparse_vect
             )
             assert court_chunks
             assert any(chunk.anchor.startswith("court-fees-1870/sec-7") for chunk in court_chunks)
-            assert any("computation of fees payable" in chunk.text.lower() for chunk in court_chunks)
+            assert any(
+                "computation of fees payable" in chunk.text.lower() for chunk in court_chunks
+            )
 
             drugs_query = "drug inspector picked up samples from my medical store schedule h sale without prescription jaipur"
             drugs_route = route_matter(drugs_query)
             drugs_pack = next(
-                pack for pack in source_packs_for_route(drugs_route, drugs_query)
+                pack
+                for pack in source_packs_for_route(drugs_route, drugs_query)
                 if pack.id == "drugs_cosmetics_1940"
             )
             drugs_chunks = await _fetch_source_pack_candidates(
@@ -2438,9 +2748,15 @@ def test_stage34_official_packs_fetch_focused_runtime_chunks_without_sparse_vect
                 limit_per_pack=4,
             )
             assert drugs_chunks
-            assert any(chunk.anchor.startswith("drugs-cosmetics-1940/sec-18") for chunk in drugs_chunks)
-            assert any(chunk.anchor.startswith("drugs-cosmetics-1940/sec-22") for chunk in drugs_chunks)
-            assert any(chunk.anchor.startswith("drugs-cosmetics-1940/sec-23") for chunk in drugs_chunks)
+            assert any(
+                chunk.anchor.startswith("drugs-cosmetics-1940/sec-18") for chunk in drugs_chunks
+            )
+            assert any(
+                chunk.anchor.startswith("drugs-cosmetics-1940/sec-22") for chunk in drugs_chunks
+            )
+            assert any(
+                chunk.anchor.startswith("drugs-cosmetics-1940/sec-23") for chunk in drugs_chunks
+            )
             assert any("powers of inspectors" in chunk.text.lower() for chunk in drugs_chunks)
         finally:
             await pool.close()
@@ -2454,13 +2770,19 @@ def test_sc_scholarship_pack_fetches_focused_constitution_article_46_from_runtim
         asyncpg = pytest.importorskip("asyncpg")
         settings = Settings()
         try:
-            pool = await asyncpg.create_pool(dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1)
+            pool = await asyncpg.create_pool(
+                dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1
+            )
         except Exception as exc:
             pytest.fail(f"runtime DB unavailable for Article 46 source-pack validation: {exc}")
         try:
             query = "school principal not giving SC scholarship saying papers wrong since 2 years vidarbha"
             route = route_matter(query)
-            pack = next(pack for pack in source_packs_for_route(route, query) if pack.id == "constitution_article_46")
+            pack = next(
+                pack
+                for pack in source_packs_for_route(route, query)
+                if pack.id == "constitution_article_46"
+            )
             chunks = await _fetch_source_pack_candidates(
                 pool,
                 query,
@@ -2483,13 +2805,17 @@ def test_jj_adoption_pack_fetches_focused_runtime_adoption_sections():
         asyncpg = pytest.importorskip("asyncpg")
         settings = Settings()
         try:
-            pool = await asyncpg.create_pool(dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1)
+            pool = await asyncpg.create_pool(
+                dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1
+            )
         except Exception as exc:
             pytest.fail(f"runtime DB unavailable for JJ source-pack validation: {exc}")
         try:
             query = "we are not a hindu family adopted child from sister no papers now real parents want him back"
             route = route_matter(query)
-            jj_pack = next(pack for pack in source_packs_for_route(route, query) if pack.id == "jj_2015")
+            jj_pack = next(
+                pack for pack in source_packs_for_route(route, query) if pack.id == "jj_2015"
+            )
             chunks = await _fetch_source_pack_candidates(
                 pool,
                 query,
@@ -2497,7 +2823,14 @@ def test_jj_adoption_pack_fetches_focused_runtime_adoption_sections():
                 limit_per_pack=4,
             )
             assert chunks
-            assert {chunk.metadata.get("section_no") for chunk in chunks} <= {"56", "57", "58", "59", "62", "63"}
+            assert {chunk.metadata.get("section_no") for chunk in chunks} <= {
+                "56",
+                "57",
+                "58",
+                "59",
+                "62",
+                "63",
+            }
             assert any(chunk.anchor == "jj-2015/sec-56" for chunk in chunks)
         finally:
             await pool.close()
@@ -2511,7 +2844,9 @@ def test_jj_age_pack_fetches_focused_runtime_age_sections():
         asyncpg = pytest.importorskip("asyncpg")
         settings = Settings()
         try:
-            pool = await asyncpg.create_pool(dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1)
+            pool = await asyncpg.create_pool(
+                dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1
+            )
         except Exception as exc:
             pytest.fail(f"runtime DB unavailable for JJ age source-pack validation: {exc}")
         try:
@@ -2531,8 +2866,13 @@ def test_jj_age_pack_fetches_focused_runtime_age_sections():
             assert "jj-2015/sec-9" in anchors
             assert "jj-2015/sec-94" in anchors
             normalized_texts = [" ".join(chunk.text.lower().split()) for chunk in chunks]
-            assert any("claims before a court other than a board" in text for text in normalized_texts)
-            assert any("date of birth certificate from the school" in chunk.text.lower() for chunk in chunks)
+            assert any(
+                "claims before a court other than a board" in text for text in normalized_texts
+            )
+            assert any(
+                "date of birth certificate from the school" in chunk.text.lower()
+                for chunk in chunks
+            )
         finally:
             await pool.close()
 
@@ -2572,11 +2912,18 @@ def test_mixed_date_default_bail_gets_dual_procedure_packs():
     packs = source_packs_for_route(route, query)
     by_id = {pack.id: pack for pack in packs}
     assert by_id["bnss_2023"].anchor_patterns == ("/sec-187",)
-    assert by_id["crpc_1973"].anchor_patterns[:4] == ("/sec-161-j", "/sec-161-k", "/sec-161-l", "/sec-161-m")
+    assert by_id["crpc_1973"].anchor_patterns[:4] == (
+        "/sec-161-j",
+        "/sec-161-k",
+        "/sec-161-l",
+        "/sec-161-m",
+    )
 
 
 def test_default_bail_variants_pin_remand_and_offence_sources():
-    no_final_report = "police filed only extension request no final report after 75 days ipc cheating"
+    no_final_report = (
+        "police filed only extension request no final report after 75 days ipc cheating"
+    )
     no_final_packs = {
         pack.id: pack
         for pack in source_packs_for_route(route_matter(no_final_report), no_final_report)
@@ -2586,10 +2933,7 @@ def test_default_bail_variants_pin_remand_and_offence_sources():
     assert no_final_packs["ipc_1860_cheating"].anchor_patterns == ("/sec-420", "/sec-415")
 
     bns_318 = "bns 318 remand 72 days no chargesheet should it be 60 or 90"
-    bns_packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(bns_318), bns_318)
-    }
+    bns_packs = {pack.id: pack for pack in source_packs_for_route(route_matter(bns_318), bns_318)}
     assert bns_packs["bnss_2023"].anchor_patterns == ("/sec-187",)
     assert bns_packs["bns_2023"].anchor_patterns == ("/sec-318",)
     assert "/sec-167" in bns_packs["crpc_1973"].anchor_patterns
@@ -2606,7 +2950,9 @@ def test_legal_aid_query_gets_legal_services_pack():
 
 
 def test_bpl_legal_aid_query_gets_lsa_not_nfsa():
-    ids = _pack_ids("urgent bPL card holder eligibility for free legal aid from DLSA SLSA how to complain")
+    ids = _pack_ids(
+        "urgent bPL card holder eligibility for free legal aid from DLSA SLSA how to complain"
+    )
     assert "legal_services_authorities_1987" in ids
     assert "national_food_security_2013" not in ids
 
@@ -2686,24 +3032,51 @@ def test_bank_legal_hold_source_pack_follows_incident_regime(
     required_pack: str,
     forbidden_pack: str,
 ):
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert required_pack in packs
     assert forbidden_pack not in packs
     assert packs["rbi_integrated_ombudsman_2021"].anchor_patterns == (
-        "/sec-2", "/sec-3", "/sec-9", "/sec-10",
+        "/sec-2",
+        "/sec-3",
+        "/sec-9",
+        "/sec-10",
     )
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Bank deducted money wrongly and customer care is not helping",
+        "Loan app is harassing my contacts",
+    ],
+)
+def test_released_rbi_workflows_use_plan_scoped_registry_owned_clauses(query):
+    route = route_matter(query)
+    route_packs = {pack.id: pack for pack in source_packs_for_route(route, query)}
+    plan = build_matter_plan(query, route)
+    plan_packs = {pack.source_pack_id: pack for pack in plan.retrieval_sources}
+    pack = plan_packs["rbi_integrated_ombudsman_2021"]
+    assert pack.anchor_patterns == [
+        "/sec-1",
+        "/sec-3",
+        "/sec-6",
+        "/sec-9",
+        "/sec-10",
+    ]
+    assert pack.doc_ids == ["rbi-integrated-ombudsman-2021"]
+    if "Loan app" in query:
+        assert "rbi_integrated_ombudsman_2021_loan_app_cyber" in route_packs
+        assert "rbi_integrated_ombudsman_2021_loan_app_cyber" not in plan_packs
+        assert plan_packs["rbi_digital_lending_directions_2025"].anchor_patterns == [
+            "/para-11", "/para-12"
+        ]
+        assert plan_packs["rbi_recovery_agents_2022"].anchor_patterns == ["/para-2"]
 
 
 def test_unknown_date_bank_legal_hold_retrieves_both_procedure_regimes():
     query = "Cyber police froze my bank account"
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert packs["bnss_2023_bank_account_legal_hold"].anchor_patterns == ("/sec-106",)
     assert packs["crpc_1973_bank_account_legal_hold"].anchor_patterns == ("/sec-102",)
@@ -2746,16 +3119,32 @@ def test_tribal_witch_branding_gets_poa_and_criminal_sources():
 
 
 def test_tribal_religious_and_school_caste_prompts_get_required_authority_packs():
-    sarna_ids = set(_pack_ids("mob attacked our pahan during sarna puja calling adivasi non hindu jharkhand"))
+    sarna_ids = set(
+        _pack_ids("mob attacked our pahan during sarna puja calling adivasi non hindu jharkhand")
+    )
     assert {"scst_poa_1989", "bns_2023_religious_insult"} <= sarna_ids
 
-    school_ids = set(_pack_ids("girl beaten in school by teacher calling caste name principal not acting maharashtra"))
+    school_ids = set(
+        _pack_ids(
+            "girl beaten in school by teacher calling caste name principal not acting maharashtra"
+        )
+    )
     assert {"scst_poa_1989", "rte_2009_school_punishment"} <= school_ids
 
 
 def test_labour_chowk_police_begging_prompt_gets_detention_and_labour_packs():
-    ids = set(_pack_ids("delhi labour chowk police picking us morning saying nautanki begging not work how to stop"))
-    assert {"bnss_2023_labour_chowk_detention", "ismw_1979_labour_chowk", "code_on_wages_2019_labour_chowk", "constitution_article_21", "constitution_article_22"} <= ids
+    ids = set(
+        _pack_ids(
+            "delhi labour chowk police picking us morning saying nautanki begging not work how to stop"
+        )
+    )
+    assert {
+        "bnss_2023_labour_chowk_detention",
+        "ismw_1979_labour_chowk",
+        "code_on_wages_2019_labour_chowk",
+        "constitution_article_21",
+        "constitution_article_22",
+    } <= ids
 
 
 def test_wage_theft_false_fir_prompt_gets_wage_and_criminal_packs():
@@ -2771,7 +3160,11 @@ def test_digital_arrest_and_cyber_notice_get_bnss_workflow_packs():
             "digital arrest people made me transfer 5 lakh on video call",
         )
     }
-    assert {"it_act_2000", "bns_2023_digital_arrest_impersonation", "bnss_2023_digital_arrest"} <= set(digital_packs)
+    assert {
+        "it_act_2000",
+        "bns_2023_digital_arrest_impersonation",
+        "bnss_2023_digital_arrest",
+    } <= set(digital_packs)
     assert "/sec-173" in digital_packs["bnss_2023_digital_arrest"].anchor_patterns
 
     notice_packs = {
@@ -2782,7 +3175,9 @@ def test_digital_arrest_and_cyber_notice_get_bnss_workflow_packs():
         )
     }
     assert "bnss_2023_cyber_notice" in notice_packs
-    assert {"/sec-35", "/sec-173", "/sec-175"} <= set(notice_packs["bnss_2023_cyber_notice"].anchor_patterns)
+    assert {"/sec-35", "/sec-173", "/sec-175"} <= set(
+        notice_packs["bnss_2023_cyber_notice"].anchor_patterns
+    )
 
 
 def test_stage5_money_cyber_identity_source_packs_cover_exact_variants():
@@ -2793,7 +3188,11 @@ def test_stage5_money_cyber_identity_source_packs_cover_exact_variants():
             "courier says parcel has drugs fake cbi made me pay money what to do",
         )
     }
-    assert {"it_act_2000", "bns_2023_digital_arrest_impersonation", "bnss_2023_digital_arrest"} <= set(fake_cbi_packs)
+    assert {
+        "it_act_2000",
+        "bns_2023_digital_arrest_impersonation",
+        "bnss_2023_digital_arrest",
+    } <= set(fake_cbi_packs)
 
     loan_app_packs = {
         pack.id: pack
@@ -2804,14 +3203,19 @@ def test_stage5_money_cyber_identity_source_packs_cover_exact_variants():
     }
     assert {
         "rbi_integrated_ombudsman_2021_loan_app_cyber",
-        "it_act_2000",
-        "bns_2023_intimate_image_blackmail",
+        "it_act_2000_loan_app_private_image",
+        "bns_2023_recovery_harassment",
     } <= set(loan_app_packs)
+    assert "/sec-308" in loan_app_packs[
+        "bns_2023_recovery_harassment"
+    ].anchor_patterns
 
     upi_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("UPI failed but amount debited bank and app blaming each other what to do"),
+            route_matter(
+                "UPI failed but amount debited bank and app blaming each other what to do"
+            ),
             "UPI failed but amount debited bank and app blaming each other what to do",
         )
     }
@@ -2821,7 +3225,9 @@ def test_stage5_money_cyber_identity_source_packs_cover_exact_variants():
     maintenance_charge_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("bank deducted maintenance charge twice and branch is not giving complaint number"),
+            route_matter(
+                "bank deducted maintenance charge twice and branch is not giving complaint number"
+            ),
             "bank deducted maintenance charge twice and branch is not giving complaint number",
         )
     }
@@ -2831,7 +3237,9 @@ def test_stage5_money_cyber_identity_source_packs_cover_exact_variants():
     merchant_upi_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("Amazon refund failed, UPI shows success but seller says payment not received"),
+            route_matter(
+                "Amazon refund failed, UPI shows success but seller says payment not received"
+            ),
             "Amazon refund failed, UPI shows success but seller says payment not received",
         )
     }
@@ -2851,11 +3259,17 @@ def test_stage5_money_cyber_identity_source_packs_cover_exact_variants():
     political_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("deepfake of modi pm circulating my friend made it bjp it cell threatening"),
+            route_matter(
+                "deepfake of modi pm circulating my friend made it bjp it cell threatening"
+            ),
             "deepfake of modi pm circulating my friend made it bjp it cell threatening",
         )
     }
-    assert {"it_act_2000_political_deepfake_personation", "bns_2023_public_political_deepfake", "rpa_1951"} <= set(political_packs)
+    assert {
+        "it_act_2000_political_deepfake_personation",
+        "bns_2023_public_political_deepfake",
+        "rpa_1951",
+    } <= set(political_packs)
     assert political_packs["rpa_1951"].priority >= 1.2
 
     political_notice_packs = {
@@ -2875,7 +3289,9 @@ def test_bank_freeze_cyber_complaint_gets_legal_hold_pack():
     packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("salary account blocked by lien after cyber complaint i dont know the case"),
+            route_matter(
+                "salary account blocked by lien after cyber complaint i dont know the case"
+            ),
             "salary account blocked by lien after cyber complaint i dont know the case",
         )
     }
@@ -2886,28 +3302,33 @@ def test_bank_freeze_cyber_complaint_gets_legal_hold_pack():
 
 
 def test_shops_register_and_prohibition_variants_get_route_packs():
-    pune_ids = _pack_ids("pune cafe got notice for not keeping employee register under shops act what remedy")
+    pune_ids = _pack_ids(
+        "pune cafe got notice for not keeping employee register under shops act what remedy"
+    )
     assert "maharashtra_shops_establishments_2017" in pune_ids
 
-    bangalore_ids = _pack_ids("bangalore store labour officer demanding maharashtra shops register is that right")
+    bangalore_ids = _pack_ids(
+        "bangalore store labour officer demanding maharashtra shops register is that right"
+    )
     assert "maharashtra_shops_establishments_2017" not in bangalore_ids
     assert "rti_2005" in bangalore_ids
 
-    patna_ids = _pack_ids("patna thana says section 37 bihar prohibition on me for liquor what can I do")
+    patna_ids = _pack_ids(
+        "patna thana says section 37 bihar prohibition on me for liquor what can I do"
+    )
     assert "bihar_prohibition_excise_2016" in patna_ids
     assert "bnss_2023" in patna_ids
 
-    noida_ids = _pack_ids("police caught me with alcohol in noida but source showing bihar law what applies")
+    noida_ids = _pack_ids(
+        "police caught me with alcohol in noida but source showing bihar law what applies"
+    )
     assert "bihar_prohibition_excise_2016" not in noida_ids
     assert "bnss_2023" in noida_ids
 
 
 def test_gst_registration_threshold_pack_uses_registration_sections():
     query = "freelance designer 18 lakh income should i register gst or no"
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert "cgst_2017" in packs
     assert {"/sec-22", "/sec-24"} <= set(packs["cgst_2017"].anchor_patterns)
@@ -2940,49 +3361,65 @@ def test_caste_public_service_denial_gets_article17_and_pcr_packs():
 
 
 def test_forest_and_pesa_queries_get_tribal_source_packs():
-    forest_ids = _pack_ids(
-        "forest officer stopped us collecting tendu leaves in community forest"
-    )
+    forest_ids = _pack_ids("forest officer stopped us collecting tendu leaves in community forest")
     assert "fra_2006" in forest_ids
     assert "scst_poa_1989" not in forest_ids
     ids = _pack_ids("mining company started blasting without gram sabha consent in scheduled area")
     assert "pesa_1996" in ids
 
-    tribal_mining_ids = set(_pack_ids("tribal village land taken for mining without consent gram sabha"))
+    tribal_mining_ids = set(
+        _pack_ids("tribal village land taken for mining without consent gram sabha")
+    )
     assert {"fra_2006_cfr", "pesa_1996", "rfctlarr_2013_scheduled_area_rr"} <= tribal_mining_ids
 
 
 def test_fra_bamboo_patta_gets_forest_rights_pack():
-    ids = _pack_ids("patta given under FRA but forest guards still cutting our bamboo saying it is reserved bastar")
+    ids = _pack_ids(
+        "patta given under FRA but forest guards still cutting our bamboo saying it is reserved bastar"
+    )
     assert "fra_2006" in ids
 
 
 def test_reserved_forest_long_occupation_gets_fra_source_pack():
-    ids = _pack_ids("sir forest department saying our land is reserve we have been farming since grandfather time where to go")
+    ids = _pack_ids(
+        "sir forest department saying our land is reserve we have been farming since grandfather time where to go"
+    )
     assert "fra_2006" in ids
     assert "scst_poa_1989" not in ids
 
 
 def test_cfr_mining_gets_fra_mmdr_and_forest_conservation_packs():
-    ids = set(_pack_ids("gram sabha got community forest rights but mining company started digging inside forest can we stop it"))
+    ids = set(
+        _pack_ids(
+            "gram sabha got community forest rights but mining company started digging inside forest can we stop it"
+        )
+    )
     assert {"fra_2006_cfr", "mmdr_1957", "forest_conservation_1980"} <= ids
 
 
 def test_recent_forest_encroachment_notice_gets_fca_not_fra_pack():
-    ids = set(_pack_ids("forest guard says I recently encroached forest land last month and gave notice what forum should I approach"))
+    ids = set(
+        _pack_ids(
+            "forest guard says I recently encroached forest land last month and gave notice what forum should I approach"
+        )
+    )
     assert "forest_conservation_1980" in ids
     assert "fra_2006_cfr" not in ids
 
 
 def test_fra_claim_rejection_gets_fra_not_poa_by_default():
-    ids = _pack_ids("i am adivasi woman my IFR claim form rejected because no signature of husband bastar what can i do")
+    ids = _pack_ids(
+        "i am adivasi woman my IFR claim form rejected because no signature of husband bastar what can i do"
+    )
     assert "fra_2006" in ids
     assert "fra_2006_arrangement_procedure" in ids
     assert "scst_poa_1989" not in ids
 
 
 def test_tribal_mutation_land_transfer_gets_scheduled_area_sources():
-    ids = _pack_ids("can u tell patwari changed mutation record giving my dadaji land to non tribal buyer nuapada odisha what can i do")
+    ids = _pack_ids(
+        "can u tell patwari changed mutation record giving my dadaji land to non tribal buyer nuapada odisha what can i do"
+    )
     assert "constitution_scheduled_areas" in ids
     assert "odisha_scheduled_area_framework_sc" in ids
 
@@ -2999,10 +3436,13 @@ def test_palli_sabha_coal_block_gets_pesa_larr_mining_sources():
     assert "/sec-41" in larr.anchor_patterns
 
 
-@pytest.mark.parametrize("query", [
-    "sand mining lease given without gram sabha consent in scheduled area",
-    "stone quarry lease without palli sabha recommendation scheduled area",
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "sand mining lease given without gram sabha consent in scheduled area",
+        "stone quarry lease without palli sabha recommendation scheduled area",
+    ],
+)
 def test_minor_mineral_pesa_queries_prefer_section_4c_not_land_acquisition(query):
     packs = source_packs_for_route(route_matter(query), query)
     pesa = next(pack for pack in packs if pack.id == "pesa_1996")
@@ -3011,9 +3451,9 @@ def test_minor_mineral_pesa_queries_prefer_section_4c_not_land_acquisition(query
 
 
 def test_silicosis_quarry_gets_occupational_disease_source_packs():
-    ids = set(_pack_ids(
-        "rajasthan stone quarry silicosis lungs gone cough compensation what to do"
-    ))
+    ids = set(
+        _pack_ids("rajasthan stone quarry silicosis lungs gone cough compensation what to do")
+    )
     assert "employees_compensation_1923_occupational_disease" in ids
     assert "factories_1948_silicosis_safety" in ids
 
@@ -3023,13 +3463,19 @@ def test_hard_fail_router_repairs_get_required_source_packs():
         _pack_ids("16 yr boy detained adult jail 2 weeks already how to transfer observation home")
     )
     assert {"pwdva_2005", "bns_2023", "bnss_2023"} <= set(
-        _pack_ids("my mother in law is threatening to throw acid on me if I don't get more money from my parents")
+        _pack_ids(
+            "my mother in law is threatening to throw acid on me if I don't get more money from my parents"
+        )
     )
-    education_loan_ids = _pack_ids("bank not giving education loan to my daughter even though we have scholarship paper")
+    education_loan_ids = _pack_ids(
+        "bank not giving education loan to my daughter even though we have scholarship paper"
+    )
     assert {"rbi_integrated_ombudsman_2021", "consumer_protection_2019"} <= set(education_loan_ids)
     assert "rte_2009" not in education_loan_ids
     assert {"constitution_article_21", "bnss_2023", "bnss_2023_medical_bail"} <= set(
-        _pack_ids("paralegal volunteer 4 women undertrials byculla pregnant where rule postpone trial bail")
+        _pack_ids(
+            "paralegal volunteer 4 women undertrials byculla pregnant where rule postpone trial bail"
+        )
     )
     security_ids = _pack_ids(
         "i issued post dated cheques as security to my landlord, he is now misusing them after i vacated, what to do"
@@ -3041,7 +3487,9 @@ def test_hard_fail_router_repairs_get_required_source_packs():
 
 
 def test_undertrial_review_gets_bnss_479_crpc_436a_and_legal_aid_packs():
-    query = "i am paralegal volunteer in tihar undertrial 70 yrs ipc 302 how to apply 479 BNSS review"
+    query = (
+        "i am paralegal volunteer in tihar undertrial 70 yrs ipc 302 how to apply 479 BNSS review"
+    )
     packs = source_packs_for_route(route_matter(query), query)
     by_id = {pack.id: pack for pack in packs}
     assert by_id["constitution_article_21"].anchor_patterns == ("/sec-21",)
@@ -3062,7 +3510,9 @@ def test_cpc_procedure_queries_get_cpc_pack():
         route_matter("second appeal high court substantial question of law procedure"),
         "second appeal high court substantial question of law procedure",
     )
-    assert any(pack.id == "cpc_1908" and pack.anchor_patterns == ("/sec-100",) for pack in second_appeal)
+    assert any(
+        pack.id == "cpc_1908" and pack.anchor_patterns == ("/sec-100",) for pack in second_appeal
+    )
 
 
 def test_customs_and_itat_tax_queries_get_exact_tax_packs():
@@ -3081,7 +3531,9 @@ def test_customs_and_itat_tax_queries_get_exact_tax_packs():
     assert "cgst_2017" not in customs_no_gst_ids
 
     tcs_no_gst = source_packs_for_route(
-        route_matter("TCS deducted on foreign remittance for education abroad no GST issue how claim refund"),
+        route_matter(
+            "TCS deducted on foreign remittance for education abroad no GST issue how claim refund"
+        ),
         "TCS deducted on foreign remittance for education abroad no GST issue how claim refund",
     )
     tcs_no_gst_ids = [pack.id for pack in tcs_no_gst]
@@ -3096,7 +3548,9 @@ def test_customs_and_itat_tax_queries_get_exact_tax_packs():
     assert "income_tax_1961" in income_tax_no_gst_ids
     assert "cgst_2017" not in income_tax_no_gst_ids
     income_tax_no_gst_by_id = {pack.id: pack for pack in income_tax_no_gst}
-    assert {"/sec-147", "/sec-148"} <= set(income_tax_no_gst_by_id["income_tax_1961"].anchor_patterns)
+    assert {"/sec-147", "/sec-148"} <= set(
+        income_tax_no_gst_by_id["income_tax_1961"].anchor_patterns
+    )
 
     itat = source_packs_for_route(
         route_matter("ITAT appeal delay after income tax assessment order what is limitation"),
@@ -3133,9 +3587,7 @@ def test_non_hindu_and_special_marriage_divorce_do_not_get_hma():
         "we are christian couple want mutual consent divorce both agree"
     )
 
-    special_ids = _pack_ids(
-        "special marriage couple mutual consent divorce both agree section 28"
-    )
+    special_ids = _pack_ids("special marriage couple mutual consent divorce both agree section 28")
     assert "special_marriage_1954" in special_ids
     assert "hindu_marriage_1955" not in special_ids
 
@@ -3154,7 +3606,9 @@ def test_triple_talaq_whatsapp_gets_muslim_women_pack_not_it_act():
 def test_rti_second_appeal_and_consumer_delay_do_not_get_cpc_pack():
     assert "rti_2005" in _pack_ids("RTI second appeal no reply from PIO for ration records")
     assert "cpc_1908" not in _pack_ids("RTI second appeal no reply from PIO for ration records")
-    assert "consumer_protection_2019" in _pack_ids("condonation of delay consumer complaint limitation")
+    assert "consumer_protection_2019" in _pack_ids(
+        "condonation of delay consumer complaint limitation"
+    )
     assert "cpc_1908" not in _pack_ids("condonation of delay consumer complaint limitation")
 
 
@@ -3186,14 +3640,22 @@ def test_tax_subissue_packs_use_correct_anchors():
         route_matter("income tax refund stuck ITR processed no refund"),
         "income tax refund stuck ITR processed no refund",
     )
-    assert any(pack.id == "income_tax_1961" and "/sec-237" in pack.anchor_patterns for pack in income_refund)
+    assert any(
+        pack.id == "income_tax_1961" and "/sec-237" in pack.anchor_patterns
+        for pack in income_refund
+    )
     assert not any("/sec-234F" in pack.anchor_patterns for pack in income_refund)
 
     custom_refund = source_packs_for_route(
         route_matter("customs refund rejected drawback appeal importer"),
         "customs refund rejected drawback appeal importer",
     )
-    assert any(pack.id == "customs_1962" and "/sec-27" in pack.anchor_patterns and "/sec-75" in pack.anchor_patterns for pack in custom_refund)
+    assert any(
+        pack.id == "customs_1962"
+        and "/sec-27" in pack.anchor_patterns
+        and "/sec-75" in pack.anchor_patterns
+        for pack in custom_refund
+    )
 
     gst_appeal_ids = _pack_ids("company assessment order under GST can appeal")
     assert "cgst_2017" in gst_appeal_ids
@@ -3203,10 +3665,14 @@ def test_tax_subissue_packs_use_correct_anchors():
         route_matter("CIT(A) appeal against 143(3) assessment order limitation"),
         "CIT(A) appeal against 143(3) assessment order limitation",
     )
-    assert any(pack.id == "income_tax_1961" and "/sec-249" in pack.anchor_patterns for pack in cit_packs)
+    assert any(
+        pack.id == "income_tax_1961" and "/sec-249" in pack.anchor_patterns for pack in cit_packs
+    )
 
     first_appeal = source_packs_for_route(
-        route_matter("district court dismissed my civil suit how to file first appeal CPC limitation"),
+        route_matter(
+            "district court dismissed my civil suit how to file first appeal CPC limitation"
+        ),
         "district court dismissed my civil suit how to file first appeal CPC limitation",
     )
     assert any(pack.id == "cpc_1908" and "/sec-96" in pack.anchor_patterns for pack in first_appeal)
@@ -3218,7 +3684,10 @@ def test_surrogacy_route_gets_indexed_source_pack():
     route = route_matter(query)
     assert route.category == "surrogacy_parenthood"
     packs = source_packs_for_route(route, query)
-    assert any(pack.id == "surrogacy_2021" and "surrogacy-2021/sec-4-" in pack.anchor_patterns for pack in packs)
+    assert any(
+        pack.id == "surrogacy_2021" and "surrogacy-2021/sec-4-" in pack.anchor_patterns
+        for pack in packs
+    )
 
 
 def test_surrogacy_abortion_gets_surrogacy_section_10_and_mtp_pack():
@@ -3439,7 +3908,9 @@ def test_new_official_law_packs_have_runtime_db_chunks_and_anchors():
                         """,
                         list(pack.doc_ids),
                     )
-                    assert sparse_null_count == 0, f"{pack.id} has runtime DB chunks without sparse vectors"
+                    assert sparse_null_count == 0, (
+                        f"{pack.id} has runtime DB chunks without sparse vectors"
+                    )
                     section_nos = _section_numbers_from_anchor_patterns(pack.anchor_patterns)
                     anchor_regexes = _anchor_boundary_regexes(section_nos)
                     for section_no, anchor_regex in zip(section_nos, anchor_regexes, strict=True):
@@ -3459,7 +3930,9 @@ def test_new_official_law_packs_have_runtime_db_chunks_and_anchors():
                             section_no,
                             anchor_regex,
                         )
-                        assert anchor_count > 0, f"{pack.id} section {section_no} has no exact DB match"
+                        assert anchor_count > 0, (
+                            f"{pack.id} section {section_no} has no exact DB match"
+                        )
             assert seen_pack_ids == required_pack_ids
         finally:
             await conn.close()
@@ -3477,16 +3950,42 @@ def test_source_pack_config_defaults():
 
 def test_stage24_hard_fail_prompts_get_required_source_packs():
     expected = {
-        "thekedar took 18000 advance from me darbhanga not letting leave bangalore site": {"bonded_labour_1976", "ismw_1979"},
-        "fell from 5th floor site whitefield bangalore leg broken thekedar saying no insurance no bocw card": {"bocw_1996", "employees_compensation_1923"},
+        "thekedar took 18000 advance from me darbhanga not letting leave bangalore site": {
+            "bonded_labour_1976",
+            "ismw_1979",
+        },
+        "fell from 5th floor site whitefield bangalore leg broken thekedar saying no insurance no bocw card": {
+            "bocw_1996",
+            "employees_compensation_1923",
+        },
         "how to file complaint before NGT for illegal construction near wetland": {"ngt_2010"},
-        "received summons under section 91 bnss for my deleted insta posts is it serious": {"bnss_2023", "it_act_2000"},
-        "my company laptop has been seized by police as part of investigation against my colleague, what are my rights": {"bnss_2023", "it_act_2000"},
-        "i am poor brother arrested can court give free lawyer nalsa kya hota hai": {"legal_services_authorities_1987", "constitution_legal_aid"},
-        "my husband's brother has been making me uncomfortable saying things and now grabbed my hand whom to tell I cant tell husband": {"pwdva_2005", "bns_2023"},
-        "vendor at my office sends me whatsapp emojis and asks for date I told him no but he keeps": {"posh_2013"},
-        "we adopted child from sister but no papers now real parents want him back": {"hindu_adoptions_maintenance_1956", "jj_2015"},
-        "panchayat secretary not giving me birth certificate of my child born at home": {"births_deaths_registration_1969", "rti_2005"},
+        "received summons under section 91 bnss for my deleted insta posts is it serious": {
+            "bnss_2023",
+            "it_act_2000",
+        },
+        "my company laptop has been seized by police as part of investigation against my colleague, what are my rights": {
+            "bnss_2023",
+            "it_act_2000",
+        },
+        "i am poor brother arrested can court give free lawyer nalsa kya hota hai": {
+            "legal_services_authorities_1987",
+            "constitution_legal_aid",
+        },
+        "my husband's brother has been making me uncomfortable saying things and now grabbed my hand whom to tell I cant tell husband": {
+            "pwdva_2005",
+            "bns_2023",
+        },
+        "vendor at my office sends me whatsapp emojis and asks for date I told him no but he keeps": {
+            "posh_2013"
+        },
+        "we adopted child from sister but no papers now real parents want him back": {
+            "hindu_adoptions_maintenance_1956",
+            "jj_2015",
+        },
+        "panchayat secretary not giving me birth certificate of my child born at home": {
+            "births_deaths_registration_1969",
+            "rti_2005",
+        },
     }
     for query, required_ids in expected.items():
         assert required_ids <= set(_pack_ids(query)), query
@@ -3499,7 +3998,9 @@ def test_civil_registration_and_ration_source_packs_have_stage_iic1_anchors():
     birth_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("panchayat secretary not giving me birth certificate of my child born at home"),
+            route_matter(
+                "panchayat secretary not giving me birth certificate of my child born at home"
+            ),
             "panchayat secretary not giving me birth certificate of my child born at home",
         )
     }
@@ -3522,26 +4023,44 @@ def test_civil_registration_and_ration_source_packs_have_stage_iic1_anchors():
 
 
 def test_stage24_review_fix_source_pack_false_positive_guards():
-    ismw_near_miss = "thekedar took advance from me to buy tools and not letting leave bangalore site"
+    ismw_near_miss = (
+        "thekedar took advance from me to buy tools and not letting leave bangalore site"
+    )
     assert "ismw_1979" not in _pack_ids(ismw_near_miss)
 
-    muslim_adoption_ids = set(_pack_ids("muslim family adopted child from sister no papers now real parents want him back"))
+    muslim_adoption_ids = set(
+        _pack_ids(
+            "muslim family adopted child from sister no papers now real parents want him back"
+        )
+    )
     assert {"guardians_wards_1890", "jj_2015", "family_courts_1984"} <= muslim_adoption_ids
     assert "hindu_adoptions_maintenance_1956" not in muslim_adoption_ids
     assert "hindu_minority_guardianship_1956" not in muslim_adoption_ids
 
-    catholic_adoption_ids = set(_pack_ids("catholic family adopted child from sister no papers now real parents want him back"))
+    catholic_adoption_ids = set(
+        _pack_ids(
+            "catholic family adopted child from sister no papers now real parents want him back"
+        )
+    )
     assert {"guardians_wards_1890", "jj_2015", "family_courts_1984"} <= catholic_adoption_ids
     assert "hindu_adoptions_maintenance_1956" not in catholic_adoption_ids
     assert "hindu_minority_guardianship_1956" not in catholic_adoption_ids
 
-    not_hindu_adoption_ids = set(_pack_ids("we are not hindu adopted child from sister no papers now real parents want him back"))
+    not_hindu_adoption_ids = set(
+        _pack_ids(
+            "we are not hindu adopted child from sister no papers now real parents want him back"
+        )
+    )
     assert {"guardians_wards_1890", "jj_2015", "family_courts_1984"} <= not_hindu_adoption_ids
     assert "hindu_adoptions_maintenance_1956" not in not_hindu_adoption_ids
     assert "hindu_minority_guardianship_1956" not in not_hindu_adoption_ids
     assert "hindu_marriage_1955" not in not_hindu_adoption_ids
 
-    not_a_hindu_adoption_ids = set(_pack_ids("we are not a hindu family adopted child from sister no papers now real parents want him back"))
+    not_a_hindu_adoption_ids = set(
+        _pack_ids(
+            "we are not a hindu family adopted child from sister no papers now real parents want him back"
+        )
+    )
     assert {"guardians_wards_1890", "jj_2015", "family_courts_1984"} <= not_a_hindu_adoption_ids
     assert "hindu_adoptions_maintenance_1956" not in not_a_hindu_adoption_ids
     assert "hindu_minority_guardianship_1956" not in not_a_hindu_adoption_ids
@@ -3550,19 +4069,67 @@ def test_stage24_review_fix_source_pack_false_positive_guards():
 
 def test_stage25_final100_hard_fail_prompts_get_required_source_packs():
     expected = {
-        "guy from telegram crypto group rugpulled me 3 lakh whom to complain": {"it_act_2000", "bns_2023", "bnss_2023", "pmla_2002"},
-        "telegram channel leaked my onlyfans content without permission what to do": {"it_act_2000", "copyright_1957", "bns_2023", "bnss_2023"},
-        "ndps bail rejected 6 times by session court husband 3 yrs in tihar option": {"ndps_1985", "constitution_article_21", "bnss_2023"},
-        "my husband lost hand in brick kiln no compensation owner saying he was careless": {"employees_compensation_1923", "factories_1948"},
-        "upper caste people beat my husband called us by caste name FIR not registered": {"scst_poa_1989", "bnss_2023", "constitution_article_21"},
-        "school principal not giving SC scholarship saying papers wrong since 2 years vidarbha": {"constitution_article_46", "rti_2005"},
-        "fake call from sbi pension office took 2 lakh from my account 75 yr father": {"it_act_2000", "bns_2023", "bnss_2023"},
-        "code on wages applicable to me minimum wage notification gujarat for unskilled worker": {"code_on_wages_2019"},
-        "construction site delhi 14 hour work no overtime contractor laughing when i ask": {"code_on_wages_2019"},
-        "husband forces me at night even when I say no I am tired or unwell is there any law for this in india now": {"pwdva_2005", "bns_2023", "bnss_2023"},
-        "i complained against my manager for harassment to HR and now they are putting me on PIP, is this retaliation": {"industrial_disputes_1947", "code_on_wages_2019", "posh_2013"},
-        "fanvue payment frozen 2400 usd indian creator how to release fund": {"fema_1999", "income_tax_1961", "indian_contract_1872"},
-        "in-laws not giving back my jewellery streedhan after husband died": {"dowry_prohibition_1961", "hindu_succession_1956", "pwdva_2005"},
+        "guy from telegram crypto group rugpulled me 3 lakh whom to complain": {
+            "it_act_2000",
+            "bns_2023",
+            "bnss_2023",
+            "pmla_2002",
+        },
+        "telegram channel leaked my onlyfans content without permission what to do": {
+            "it_act_2000",
+            "copyright_1957",
+            "bns_2023",
+            "bnss_2023",
+        },
+        "ndps bail rejected 6 times by session court husband 3 yrs in tihar option": {
+            "ndps_1985",
+            "constitution_article_21",
+            "bnss_2023",
+        },
+        "my husband lost hand in brick kiln no compensation owner saying he was careless": {
+            "employees_compensation_1923",
+            "factories_1948",
+        },
+        "upper caste people beat my husband called us by caste name FIR not registered": {
+            "scst_poa_1989",
+            "bnss_2023",
+            "constitution_article_21",
+        },
+        "school principal not giving SC scholarship saying papers wrong since 2 years vidarbha": {
+            "constitution_article_46",
+            "rti_2005",
+        },
+        "fake call from sbi pension office took 2 lakh from my account 75 yr father": {
+            "it_act_2000",
+            "bns_2023",
+            "bnss_2023",
+        },
+        "code on wages applicable to me minimum wage notification gujarat for unskilled worker": {
+            "code_on_wages_2019"
+        },
+        "construction site delhi 14 hour work no overtime contractor laughing when i ask": {
+            "code_on_wages_2019"
+        },
+        "husband forces me at night even when I say no I am tired or unwell is there any law for this in india now": {
+            "pwdva_2005",
+            "bns_2023",
+            "bnss_2023",
+        },
+        "i complained against my manager for harassment to HR and now they are putting me on PIP, is this retaliation": {
+            "industrial_disputes_1947",
+            "code_on_wages_2019",
+            "posh_2013",
+        },
+        "fanvue payment frozen 2400 usd indian creator how to release fund": {
+            "fema_1999",
+            "income_tax_1961",
+            "indian_contract_1872",
+        },
+        "in-laws not giving back my jewellery streedhan after husband died": {
+            "dowry_prohibition_1961",
+            "hindu_succession_1956",
+            "pwdva_2005",
+        },
     }
     for query, required_ids in expected.items():
         assert required_ids <= set(_pack_ids(query)), query
@@ -3606,39 +4173,102 @@ def test_ration_aadhaar_cancellation_gets_nfsa_aadhaar_dpdp_sources():
 
 def test_stage27_final100_hard_fail_prompts_get_required_source_packs():
     expected = {
-        "company hiding behind section 43B disallowance threat to delay my msme payment": {"msmed_2006", "income_tax_2025_transition_faq", "income_tax_43b_h", "indian_contract_1872"},
-        "data breach at byjus my pan and aadhaar leaked, can i claim compensation under DPDP act": {"dpdp_2023", "it_act_2000"},
-        "cooperative bank seized my buffalo for crop loan default can they take livestock": {"cooperative_bank_recovery_case_law", "sarfaesi_2002", "banking_regulation_1949"},
-        "false dacoity case lodged on my brother by forest guard for collecting tendu leaves dindori": {"fra_2006", "bns_2023", "bnss_2023"},
-        "the spa was raided last week and police took me and other girls to station I just do massage I am scared what will happen now": {"itpa_1956", "bns_2023", "bnss_2023"},
-        "site mukadam beat me head injury 8 stitches when i asked for old wages mumbai": {"bns_2023", "employees_compensation_1923", "code_on_wages_2019"},
-        "daughter in law took my jewellery worth 12 lakh saying for safe keeping not returning agra": {"bns_2023", "bnss_2023", "pwdva_2005"},
-        "my dad signed property to son under pressure when he was in icu can challenge": {"transfer_property_1882", "indian_contract_1872", "specific_relief_1963"},
-        "son 17 yrs in adult jail puzhal pocso case age proof school certificate where to file": {"jj_2015", "bnss_2023"},
-        "i was undertrial 5 yrs released last week need help to file police torture case": {"constitution_article_21", "protection_human_rights_1993", "bns_2023"},
+        "company hiding behind section 43B disallowance threat to delay my msme payment": {
+            "msmed_2006",
+            "income_tax_2025_transition_faq",
+            "income_tax_43b_h",
+            "indian_contract_1872",
+        },
+        "data breach at byjus my pan and aadhaar leaked, can i claim compensation under DPDP act": {
+            "dpdp_2023",
+            "it_act_2000",
+        },
+        "cooperative bank seized my buffalo for crop loan default can they take livestock": {
+            "cooperative_bank_recovery_case_law",
+            "sarfaesi_2002",
+            "banking_regulation_1949",
+        },
+        "false dacoity case lodged on my brother by forest guard for collecting tendu leaves dindori": {
+            "fra_2006",
+            "bns_2023",
+            "bnss_2023",
+        },
+        "the spa was raided last week and police took me and other girls to station I just do massage I am scared what will happen now": {
+            "itpa_1956",
+            "bns_2023",
+            "bnss_2023",
+        },
+        "site mukadam beat me head injury 8 stitches when i asked for old wages mumbai": {
+            "bns_2023",
+            "employees_compensation_1923",
+            "code_on_wages_2019",
+        },
+        "daughter in law took my jewellery worth 12 lakh saying for safe keeping not returning agra": {
+            "bns_2023",
+            "bnss_2023",
+            "pwdva_2005",
+        },
+        "my dad signed property to son under pressure when he was in icu can challenge": {
+            "transfer_property_1882",
+            "indian_contract_1872",
+            "specific_relief_1963",
+        },
+        "son 17 yrs in adult jail puzhal pocso case age proof school certificate where to file": {
+            "jj_2015",
+            "bnss_2023",
+        },
+        "i was undertrial 5 yrs released last week need help to file police torture case": {
+            "constitution_article_21",
+            "protection_human_rights_1993",
+            "bns_2023",
+        },
         "how to legally change my surname after marriage, do i need to publish in gazette": {
             "deptpub_name_change_adult_formalities",
             "deptpub_name_change_adult_required_documents",
             "deptpub_name_change_adult_egazette_download",
             "name_change_case_law",
         },
-        "sarpanch giving common village land to his brother no panchayat meeting was held": {"constitution_panchayats_part_ix", "panchayat_common_land_case_law", "rti_2005"},
-        "society management has put a fine of 25000 on me for keeping a pet without prior approval, is this legal": {"bmc_pet_guidelines_ban", "bmc_pet_guidelines_bylaws", "cooperative_housing_society_case_law"},
+        "sarpanch giving common village land to his brother no panchayat meeting was held": {
+            "constitution_panchayats_part_ix",
+            "panchayat_common_land_case_law",
+            "rti_2005",
+        },
+        "society management has put a fine of 25000 on me for keeping a pet without prior approval, is this legal": {
+            "bmc_pet_guidelines_ban",
+            "bmc_pet_guidelines_bylaws",
+            "cooperative_housing_society_case_law",
+        },
     }
     for query, required_ids in expected.items():
         assert required_ids <= set(_pack_ids(query)), query
-    assert "bns_2023" not in _pack_ids("data breach at byjus my pan and aadhaar leaked can i claim compensation under DPDP act")
-    assert "bnss_2023" not in _pack_ids("how to legally change my surname after marriage do i need to publish in gazette")
-    criminal_data_route = route_matter("pan aadhaar leaked identity misuse fake loan fraud dpdp complaint")
-    criminal_data_pack = next(pack for pack in source_packs_for_route(criminal_data_route, "pan aadhaar leaked identity misuse fake loan fraud dpdp complaint") if pack.id == "bns_2023")
+    assert "bns_2023" not in _pack_ids(
+        "data breach at byjus my pan and aadhaar leaked can i claim compensation under DPDP act"
+    )
+    assert "bnss_2023" not in _pack_ids(
+        "how to legally change my surname after marriage do i need to publish in gazette"
+    )
+    criminal_data_route = route_matter(
+        "pan aadhaar leaked identity misuse fake loan fraud dpdp complaint"
+    )
+    criminal_data_pack = next(
+        pack
+        for pack in source_packs_for_route(
+            criminal_data_route, "pan aadhaar leaked identity misuse fake loan fraud dpdp complaint"
+        )
+        if pack.id == "bns_2023"
+    )
     assert {"/sec-318", "/sec-336"} <= set(criminal_data_pack.anchor_patterns)
-    assert {"bns_2023", "bnss_2023"} <= set(_pack_ids("pan aadhaar leaked fake loan in my name dpdp complaint"))
+    assert {"bns_2023", "bnss_2023"} <= set(
+        _pack_ids("pan aadhaar leaked fake loan in my name dpdp complaint")
+    )
 
 
 def test_adult_age_record_correction_does_not_inject_jj_source_packs():
-    ids = set(_pack_ids(
-        "police picked my 20 year old brother but FIR says minor because old school certificate wrong, how to correct age and bail"
-    ))
+    ids = set(
+        _pack_ids(
+            "police picked my 20 year old brother but FIR says minor because old school certificate wrong, how to correct age and bail"
+        )
+    )
 
     assert "bnss_2023" in ids
     assert "jj_2015" not in ids
@@ -3647,9 +4277,11 @@ def test_adult_age_record_correction_does_not_inject_jj_source_packs():
 
 
 def test_diabetic_prisoner_medical_pack_includes_article21():
-    ids = set(_pack_ids(
-        "diabetic prisoner insulin stopped after transfer, family needs urgent hospital direction"
-    ))
+    ids = set(
+        _pack_ids(
+            "diabetic prisoner insulin stopped after transfer, family needs urgent hospital direction"
+        )
+    )
 
     assert "constitution_article_21" in ids
     assert "prisons_1894" in ids
@@ -3661,7 +4293,9 @@ def test_cattle_transport_accused_gets_judgment_context_without_hiding_state_gap
     route = route_matter(query)
     packs = source_packs_for_route(route, query)
     ids = {pack.id for pack in packs}
-    cattle_pack = next(pack for pack in packs if pack.id == "cattle_animal_transport_judgment_context")
+    cattle_pack = next(
+        pack for pack in packs if pack.id == "cattle_animal_transport_judgment_context"
+    )
 
     assert route.label == "State cattle / animal-transport accused procedure"
     assert "cattle_animal_transport_judgment_context" in ids
@@ -3674,19 +4308,39 @@ def test_cattle_transport_accused_gets_judgment_context_without_hiding_state_gap
 
 def test_stage25_source_pack_false_positive_guards():
     assert "pmla_2002" not in _pack_ids("telegram group discussing crypto tax in india")
-    assert "pmla_2002" not in _pack_ids("telegram group discussing crypto tax in india whom to complain to for wrong tax advice")
-    assert "pmla_2002" not in _pack_ids("telegram crypto group tax advice about my money where complain")
-    assert "pmla_2002" not in _pack_ids("telegram crypto group how much money should i invest for tax planning")
-    assert "pmla_2002" not in _pack_ids("telegram crypto investment group says this is not scam only tax discussion")
+    assert "pmla_2002" not in _pack_ids(
+        "telegram group discussing crypto tax in india whom to complain to for wrong tax advice"
+    )
+    assert "pmla_2002" not in _pack_ids(
+        "telegram crypto group tax advice about my money where complain"
+    )
+    assert "pmla_2002" not in _pack_ids(
+        "telegram crypto group how much money should i invest for tax planning"
+    )
+    assert "pmla_2002" not in _pack_ids(
+        "telegram crypto investment group says this is not scam only tax discussion"
+    )
     assert "pmla_2002" in _pack_ids("telegram crypto group said not scam then took my money")
-    assert "pmla_2002" in _pack_ids("telegram crypto admin said not scam asked for otp then vanished with money")
-    assert "pmla_2002" in _pack_ids("telegram crypto group said not scam connect wallet and drained my account")
+    assert "pmla_2002" in _pack_ids(
+        "telegram crypto admin said not scam asked for otp then vanished with money"
+    )
+    assert "pmla_2002" in _pack_ids(
+        "telegram crypto group said not scam connect wallet and drained my account"
+    )
     assert "pmla_2002" in _pack_ids("crypto telegram admin asked seed phrase and stole my crypto")
     assert "copyright_1957" not in _pack_ids("onlyfans creator asking about income tax on payouts")
-    assert "copyright_1957" not in _pack_ids("telegram channel for onlyfans creator promotion income tax on payouts")
-    assert "employees_compensation_1923" not in _pack_ids("construction site delhi 14 hour work no overtime contractor laughing when i ask")
-    assert "senior_citizens_2007" not in _pack_ids("father is 45 fake call from sbi pension office took 2 lakh from my account")
-    assert "constitution_article_46" not in _pack_ids("private school merit scholarship not released for sports quota")
+    assert "copyright_1957" not in _pack_ids(
+        "telegram channel for onlyfans creator promotion income tax on payouts"
+    )
+    assert "employees_compensation_1923" not in _pack_ids(
+        "construction site delhi 14 hour work no overtime contractor laughing when i ask"
+    )
+    assert "senior_citizens_2007" not in _pack_ids(
+        "father is 45 fake call from sbi pension office took 2 lakh from my account"
+    )
+    assert "constitution_article_46" not in _pack_ids(
+        "private school merit scholarship not released for sports quota"
+    )
     assert "bns_2023" not in _pack_ids("husband does not force sex but we need divorce advice")
 
     hama_ids = source_packs_for_route(
@@ -3697,20 +4351,46 @@ def test_stage25_source_pack_false_positive_guards():
     assert "/sec-11" not in hama.anchor_patterns
 
     laptop_packs = source_packs_for_route(
-        route_matter("my company laptop has been seized by police as part of investigation against my colleague"),
+        route_matter(
+            "my company laptop has been seized by police as part of investigation against my colleague"
+        ),
         "my company laptop has been seized by police as part of investigation against my colleague",
     )
     by_id = {pack.id: pack for pack in laptop_packs}
-    assert by_id["bnss_2023"].anchor_patterns == ("/sec-105", "/sec-106", "/sec-185", "/sec-497", "/sec-503")
-    assert by_id["crpc_1973"].anchor_patterns == ("/sec-100", "/sec-102", "/sec-165", "/sec-451", "/sec-457")
+    assert by_id["bnss_2023"].anchor_patterns == (
+        "/sec-105",
+        "/sec-106",
+        "/sec-185",
+        "/sec-497",
+        "/sec-503",
+    )
+    assert by_id["crpc_1973"].anchor_patterns == (
+        "/sec-100",
+        "/sec-102",
+        "/sec-165",
+        "/sec-451",
+        "/sec-457",
+    )
 
     release_notice_packs = source_packs_for_route(
         route_matter("police notice for release of seized phone after investigation"),
         "police notice for release of seized phone after investigation",
     )
     release_by_id = {pack.id: pack for pack in release_notice_packs}
-    assert release_by_id["bnss_2023"].anchor_patterns == ("/sec-105", "/sec-106", "/sec-185", "/sec-497", "/sec-503")
-    assert release_by_id["crpc_1973"].anchor_patterns == ("/sec-100", "/sec-102", "/sec-165", "/sec-451", "/sec-457")
+    assert release_by_id["bnss_2023"].anchor_patterns == (
+        "/sec-105",
+        "/sec-106",
+        "/sec-185",
+        "/sec-497",
+        "/sec-503",
+    )
+    assert release_by_id["crpc_1973"].anchor_patterns == (
+        "/sec-100",
+        "/sec-102",
+        "/sec-165",
+        "/sec-451",
+        "/sec-457",
+    )
 
 
 def test_witch_false_case_does_not_trigger_generic_child_pocso_packs():
@@ -3730,25 +4410,70 @@ def test_witch_false_case_does_not_trigger_generic_child_pocso_packs():
         ids = set(_pack_ids(query))
         assert "chhattisgarh_tonahi_2005" not in ids
 
-    durg_ids = set(_pack_ids("durg district villagers say i am tonhi after child died false case what can i do"))
+    durg_ids = set(
+        _pack_ids(
+            "durg district villagers say i am tonhi after child died false case what can i do"
+        )
+    )
     assert "chhattisgarh_tonahi_2005" in durg_ids
 
 
 def test_stage6_failure_prompts_get_required_source_packs():
     expected = {
-        "food safety officer collected sample from my kirana said adulteration delhi azadpur": {"food_safety_2006"},
-        "contractor said go back home pandemic no return ticket money given 9 of us walked from delhi": {"ismw_1979", "code_on_wages_2019"},
-        "how to file habeas corpus petition husband detained illegally by police": {"constitution_article_21", "constitution_article_226_habeas", "bnss_2023"},
-        "he gets angry and slaps me but says sorry next day my parents say all marriages are like this should I stay": {"pwdva_2005", "bns_2023"},
-        "patwari asking 5000 rupees to enter my name in revenue records can I complain": {"prevention_corruption_1988", "rti_2005"},
-        "pattadar passbook lost in flood tehsildar saying come next month": {"ap_rights_land_pattadar_passbooks_1971", "rti_2005"},
-        "sir my husband died in army no service pension widow what papers needed where to go": {"army_pension_regulations_2008_part_i", "army_pension_regulations_2008_part_ii", "rti_2005"},
-        "what to do lost aadhaar in morbi tile factory raid how to get new one no original village papers gone": {"aadhaar_2016", "rti_2005"},
-        "sir I am ASHA worker not paid honorarium 6 months who can help where to go": {"nhm_asha_incentives_2025", "rti_2005", "legal_services_authorities_1987"},
-        "my company forced me to resign n now they are not giving me full n final settlement": {"code_on_wages_2019", "industrial_disputes_1947"},
-        "software vendor sent notice saying we are using unlicensed copies 22 cad seats noida": {"copyright_1957", "copyright_1957_remedies"},
-        "land acquired for coal block without consulting palli sabha angul odisha": {"rfctlarr_2013", "pesa_1996"},
-        "16 yr daughter arrested theft put in observation home or jail how to verify age": {"jj_2015", "bnss_2023"},
+        "food safety officer collected sample from my kirana said adulteration delhi azadpur": {
+            "food_safety_2006"
+        },
+        "contractor said go back home pandemic no return ticket money given 9 of us walked from delhi": {
+            "ismw_1979",
+            "code_on_wages_2019",
+        },
+        "how to file habeas corpus petition husband detained illegally by police": {
+            "constitution_article_21",
+            "constitution_article_226_habeas",
+            "bnss_2023",
+        },
+        "he gets angry and slaps me but says sorry next day my parents say all marriages are like this should I stay": {
+            "pwdva_2005",
+            "bns_2023",
+        },
+        "patwari asking 5000 rupees to enter my name in revenue records can I complain": {
+            "prevention_corruption_1988",
+            "rti_2005",
+        },
+        "pattadar passbook lost in flood tehsildar saying come next month": {
+            "ap_rights_land_pattadar_passbooks_1971",
+            "rti_2005",
+        },
+        "sir my husband died in army no service pension widow what papers needed where to go": {
+            "army_pension_regulations_2008_part_i",
+            "army_pension_regulations_2008_part_ii",
+            "rti_2005",
+        },
+        "what to do lost aadhaar in morbi tile factory raid how to get new one no original village papers gone": {
+            "aadhaar_2016",
+            "rti_2005",
+        },
+        "sir I am ASHA worker not paid honorarium 6 months who can help where to go": {
+            "nhm_asha_incentives_2025",
+            "rti_2005",
+            "legal_services_authorities_1987",
+        },
+        "my company forced me to resign n now they are not giving me full n final settlement": {
+            "code_on_wages_2019",
+            "industrial_disputes_1947",
+        },
+        "software vendor sent notice saying we are using unlicensed copies 22 cad seats noida": {
+            "copyright_1957",
+            "copyright_1957_remedies",
+        },
+        "land acquired for coal block without consulting palli sabha angul odisha": {
+            "rfctlarr_2013",
+            "pesa_1996",
+        },
+        "16 yr daughter arrested theft put in observation home or jail how to verify age": {
+            "jj_2015",
+            "bnss_2023",
+        },
     }
     for query, required_ids in expected.items():
         assert required_ids <= set(_pack_ids(query)), query
@@ -3758,17 +4483,25 @@ def test_custody_status_neighbors_get_owned_source_packs():
     hidden_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("police took my brother last night not showing station and not allowing lawyer what urgent remedy"),
+            route_matter(
+                "police took my brother last night not showing station and not allowing lawyer what urgent remedy"
+            ),
             "police took my brother last night not showing station and not allowing lawyer what urgent remedy",
         )
     }
-    assert {"constitution_article_21", "constitution_article_226_habeas", "bnss_2023"} <= set(hidden_packs)
-    assert {"/sec-47", "/sec-48", "/sec-57", "/sec-58"} & set(hidden_packs["bnss_2023"].anchor_patterns)
+    assert {"constitution_article_21", "constitution_article_226_habeas", "bnss_2023"} <= set(
+        hidden_packs
+    )
+    assert {"/sec-47", "/sec-48", "/sec-57", "/sec-58"} & set(
+        hidden_packs["bnss_2023"].anchor_patterns
+    )
 
     missing_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("my adult brother missing since yesterday phone off but no proof police picked him what complaint should i file"),
+            route_matter(
+                "my adult brother missing since yesterday phone off but no proof police picked him what complaint should i file"
+            ),
             "my adult brother missing since yesterday phone off but no proof police picked him what complaint should i file",
         )
     }
@@ -3779,7 +4512,9 @@ def test_custody_status_neighbors_get_owned_source_packs():
     notice_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("police sent notice to come station for questioning tomorrow but not arrested should i go with lawyer"),
+            route_matter(
+                "police sent notice to come station for questioning tomorrow but not arrested should i go with lawyer"
+            ),
             "police sent notice to come station for questioning tomorrow but not arrested should i go with lawyer",
         )
     }
@@ -3791,57 +4526,181 @@ def test_custody_status_neighbors_get_owned_source_packs():
     lawyer_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("jail superintendent not allowing lawyer meeting for my brother first time arrest what legal aid route"),
+            route_matter(
+                "jail superintendent not allowing lawyer meeting for my brother first time arrest what legal aid route"
+            ),
             "jail superintendent not allowing lawyer meeting for my brother first time arrest what legal aid route",
         )
     }
-    assert {"legal_services_authorities_1987", "constitution_legal_aid", "bnss_2023"} <= set(lawyer_packs)
+    assert {"legal_services_authorities_1987", "constitution_legal_aid", "bnss_2023"} <= set(
+        lawyer_packs
+    )
     assert {"/sec-47", "/sec-57", "/sec-58"} <= set(lawyer_packs["bnss_2023"].anchor_patterns)
 
 
 def test_stage7_gate_source_gaps_get_official_source_packs():
     expected = {
-        "brother UAPA arrested 3 months chargesheet not filed total custody can be extended 180 days": {"uapa_1967", "bnss_2023"},
-        "tihar jail mulaqat only 30 min once a week is this legal can we ask more": {"delhi_prison_rules_2018_mulaqat_books", "prisons_1894", "constitution_article_21"},
-        "son in tihar can he get books from family during prison rules": {"delhi_prison_rules_2018_mulaqat_books", "prisons_1894"},
-        "brother in rohini jail wants custody parole for mother's funeral what application route": {"delhi_prison_rules_2018_parole_furlough", "prisons_1894"},
-        "65 yrs heart patient husband in jail furlough application uttar pradesh how to file": {"prisons_1894"},
-        "respondent skipped pre litigation mediation can my commercial suit be rejected at threshold": {"commercial_courts_2015", "mediation_2023", "cpc_1908"},
-        "rule 86B applies to me turnover 55 lakh per month must pay 1% cash mandatory ya choot hai": {"cgst_rules_2017", "cgst_2017"},
-        "agent sold pension money to ulip policy father lost 8 lakh how to complain": {"consumer_protection_2019", "insurance_ombudsman_rules_2017"},
-        "how to file PIL in high court regarding pollution from factory nearby": {"constitution_article_226", "environment_protection_1986", "water_pollution_1974", "ngt_2010"},
-        "factory smoke making us sick should i go ngt or high court pil first what proof needed": {"constitution_article_226", "environment_protection_1986", "water_pollution_1974", "ngt_2010"},
-        "DM gave NOC to bauxite project bastar without gram sabha resolution how to challenge": {"pesa_1996", "mmdr_1957", "forest_conservation_1980"},
-        "upper caste people stopped dalit family entering temple and taking water from village well": {"protection_civil_rights_1955", "constitution_article_17"},
-        "bank recovery agents are harassing me after complaint bank says fair practices not applicable can i go to rbi ombudsman": {"banking_regulation_1949", "rbi_integrated_ombudsman_2021", "consumer_protection_2019"},
-        "CIBIL still shows old closed loan as written off how to correct credit report": {"credit_information_companies_2005", "consumer_protection_2019"},
-        "police refusing FIR caste atrocity case sub inspector saying it is small matter jharkhand": {"scst_poa_1989", "bnss_2023"},
-        "police beating brother in lockup arthur road how to complain nhrc procedure": {"constitution_article_21", "protection_human_rights_1993", "bnss_2023"},
-        "I am gay and my parents are forcing me to marry a girl next month they are not listening I am 26 what is my right": {"constitution_article_21"},
-        "freelance designer 18 lakh income should i register gst or no": {"cgst_2017", "income_tax_1961"},
-        "binance froze my usdt wallet 4 lakh saying suspicious trade is it legal": {"consumer_protection_2019", "pmla_2002"},
-        "tribal land sold to non tribal by uncle without our consent is it legal": {"constitution_scheduled_areas"},
-        "my saas labelled daayan and beaten by village people assam barpeta": {"assam_witch_hunting_2015", "bns_2023"},
-        "site supervisor saying minimum wage 350 only but karnataka rate is 600 construction unskilled": {"code_on_wages_2019"},
+        "brother UAPA arrested 3 months chargesheet not filed total custody can be extended 180 days": {
+            "uapa_1967",
+            "bnss_2023",
+        },
+        "tihar jail mulaqat only 30 min once a week is this legal can we ask more": {
+            "delhi_prison_rules_2018_mulaqat_books",
+            "prisons_1894",
+            "constitution_article_21",
+        },
+        "son in tihar can he get books from family during prison rules": {
+            "delhi_prison_rules_2018_mulaqat_books",
+            "prisons_1894",
+        },
+        "brother in rohini jail wants custody parole for mother's funeral what application route": {
+            "delhi_prison_rules_2018_parole_furlough",
+            "prisons_1894",
+        },
+        "65 yrs heart patient husband in jail furlough application uttar pradesh how to file": {
+            "prisons_1894"
+        },
+        "respondent skipped pre litigation mediation can my commercial suit be rejected at threshold": {
+            "commercial_courts_2015",
+            "mediation_2023",
+            "cpc_1908",
+        },
+        "rule 86B applies to me turnover 55 lakh per month must pay 1% cash mandatory ya choot hai": {
+            "cgst_rules_2017",
+            "cgst_2017",
+        },
+        "agent sold pension money to ulip policy father lost 8 lakh how to complain": {
+            "consumer_protection_2019",
+            "insurance_ombudsman_rules_2017",
+        },
+        "how to file PIL in high court regarding pollution from factory nearby": {
+            "constitution_article_226",
+            "environment_protection_1986",
+            "water_pollution_1974",
+            "ngt_2010",
+        },
+        "factory smoke making us sick should i go ngt or high court pil first what proof needed": {
+            "constitution_article_226",
+            "environment_protection_1986",
+            "water_pollution_1974",
+            "ngt_2010",
+        },
+        "DM gave NOC to bauxite project bastar without gram sabha resolution how to challenge": {
+            "pesa_1996",
+            "mmdr_1957",
+            "forest_conservation_1980",
+        },
+        "upper caste people stopped dalit family entering temple and taking water from village well": {
+            "protection_civil_rights_1955",
+            "constitution_article_17",
+        },
+        "bank recovery agents are harassing me after complaint bank says fair practices not applicable can i go to rbi ombudsman": {
+            "banking_regulation_1949",
+            "rbi_integrated_ombudsman_2021",
+            "consumer_protection_2019",
+        },
+        "CIBIL still shows old closed loan as written off how to correct credit report": {
+            "credit_information_companies_2005",
+            "consumer_protection_2019",
+        },
+        "police refusing FIR caste atrocity case sub inspector saying it is small matter jharkhand": {
+            "scst_poa_1989",
+            "bnss_2023",
+        },
+        "police beating brother in lockup arthur road how to complain nhrc procedure": {
+            "constitution_article_21",
+            "protection_human_rights_1993",
+            "bnss_2023",
+        },
+        "I am gay and my parents are forcing me to marry a girl next month they are not listening I am 26 what is my right": {
+            "constitution_article_21"
+        },
+        "freelance designer 18 lakh income should i register gst or no": {
+            "cgst_2017",
+            "income_tax_1961",
+        },
+        "binance froze my usdt wallet 4 lakh saying suspicious trade is it legal": {
+            "consumer_protection_2019",
+            "pmla_2002",
+        },
+        "tribal land sold to non tribal by uncle without our consent is it legal": {
+            "constitution_scheduled_areas"
+        },
+        "my saas labelled daayan and beaten by village people assam barpeta": {
+            "assam_witch_hunting_2015",
+            "bns_2023",
+        },
+        "site supervisor saying minimum wage 350 only but karnataka rate is 600 construction unskilled": {
+            "code_on_wages_2019"
+        },
         "I am ASHA worker not paid honorarium 6 months who can help": {"nhm_asha_incentives_2025"},
         "appeal against NCLT order to NCLAT how many days limit": {"ibc_2016"},
-        "my mother 81 not allowed in her own kitchen by daughter in law mumbai legal remedy": {"senior_citizens_2007", "pwdva_2005"},
-        "contractor at local shop has not paid two months salary but I am from same city what law applies": {"code_on_wages_2019", "contract_labour_1970"},
-        "principal employer reliance site contractor ran away with 4 months wages 22 workers what to do": {"contract_labour_1970", "code_on_wages_2019"},
-        "principal employer reliance site contractor brought workers from bihar to gujarat and wages unpaid": {"contract_labour_1970", "ismw_1979", "code_on_wages_2019"},
-        "brother arrested no fir copy given family police saying secret kya rule": {"bnss_2023", "constitution_article_22"},
-        "kanya vivah scheme money not given by government after my daughter wedding": {"bihar_kanya_vivah_service", "rti_2005"},
-        "bihar kanya vivah scheme money not given by government after my daughter wedding": {"bihar_kanya_vivah_service", "rti_2005"},
-        "my husband died in army no service pension widow what papers needed": {"army_pension_regulations_2008_part_i", "army_pension_regulations_2008_part_ii"},
-        "old age pension stopped suddenly bank says aadhaar not linked": {"nsap_guidelines_2014", "aadhaar_2016", "rti_2005"},
+        "my mother 81 not allowed in her own kitchen by daughter in law mumbai legal remedy": {
+            "senior_citizens_2007",
+            "pwdva_2005",
+        },
+        "contractor at local shop has not paid two months salary but I am from same city what law applies": {
+            "code_on_wages_2019",
+            "contract_labour_1970",
+        },
+        "principal employer reliance site contractor ran away with 4 months wages 22 workers what to do": {
+            "contract_labour_1970",
+            "code_on_wages_2019",
+        },
+        "principal employer reliance site contractor brought workers from bihar to gujarat and wages unpaid": {
+            "contract_labour_1970",
+            "ismw_1979",
+            "code_on_wages_2019",
+        },
+        "brother arrested no fir copy given family police saying secret kya rule": {
+            "bnss_2023",
+            "constitution_article_22",
+        },
+        "kanya vivah scheme money not given by government after my daughter wedding": {
+            "bihar_kanya_vivah_service",
+            "rti_2005",
+        },
+        "bihar kanya vivah scheme money not given by government after my daughter wedding": {
+            "bihar_kanya_vivah_service",
+            "rti_2005",
+        },
+        "my husband died in army no service pension widow what papers needed": {
+            "army_pension_regulations_2008_part_i",
+            "army_pension_regulations_2008_part_ii",
+        },
+        "old age pension stopped suddenly bank says aadhaar not linked": {
+            "nsap_guidelines_2014",
+            "aadhaar_2016",
+            "rti_2005",
+        },
         "family pension not paid after husband died in bihar rti kaise karein": {"rti_2005"},
-        "recovery agents from a NBFC visited my office and shouted in front of colleagues, this is harassment right": {"rbi_integrated_ombudsman_2021", "consumer_protection_2019"},
-        "i am 73 christian widow can my stepchildren claim share in husband self acquired property": {"indian_succession_1925"},
-        "pls tell i am christian widow in kerala husband died without will how prop divides among children need lawyer or police": {"indian_succession_1925"},
-        "vendor agreed delivery in 30 days now 4 months over want to cancel and recover advance 8 lakh": {"indian_contract_1872", "sale_of_goods_1930"},
-        "my husband had affair I caught them I slapped the woman now she is filing case on me what to do": {"bns_2023", "bnss_2023"},
-        "fake call from sbi pension office took 2 lakh from my account 75 yr father": {"it_act_2000", "bns_2023", "bnss_2023"},
-        "vendor zone bhopal allotted me 2018 now hawker inspector saying pay 2000 every month otherwise remove": {"street_vendors_2014", "prevention_corruption_1988"},
+        "recovery agents from a NBFC visited my office and shouted in front of colleagues, this is harassment right": {
+            "rbi_integrated_ombudsman_2021",
+            "consumer_protection_2019",
+        },
+        "i am 73 christian widow can my stepchildren claim share in husband self acquired property": {
+            "indian_succession_1925"
+        },
+        "pls tell i am christian widow in kerala husband died without will how prop divides among children need lawyer or police": {
+            "indian_succession_1925"
+        },
+        "vendor agreed delivery in 30 days now 4 months over want to cancel and recover advance 8 lakh": {
+            "indian_contract_1872",
+            "sale_of_goods_1930",
+        },
+        "my husband had affair I caught them I slapped the woman now she is filing case on me what to do": {
+            "bns_2023",
+            "bnss_2023",
+        },
+        "fake call from sbi pension office took 2 lakh from my account 75 yr father": {
+            "it_act_2000",
+            "bns_2023",
+            "bnss_2023",
+        },
+        "vendor zone bhopal allotted me 2018 now hawker inspector saying pay 2000 every month otherwise remove": {
+            "street_vendors_2014",
+            "prevention_corruption_1988",
+        },
     }
     for query, required_ids in expected.items():
         assert required_ids <= set(_pack_ids(query)), query
@@ -3858,17 +4717,23 @@ def test_atm_cash_not_dispensed_gets_rbi_ombudsman_source_pack():
 
 
 def test_uapa_pack_does_not_match_place_names_like_nuapada():
-    packs = set(_pack_ids("brother arrested in nuapada odisha theft case bail no chargesheet possible"))
+    packs = set(
+        _pack_ids("brother arrested in nuapada odisha theft case bail no chargesheet possible")
+    )
 
     assert "uapa_1967" not in packs
 
 
 def test_arms_farming_tool_pack_needs_actual_tool_context_not_place_name():
     generic = set(_pack_ids("weapon case in gadchiroli police called me what to do"))
-    pistol_arms = set(_pack_ids("police booked me under arms act for pistol in gadchiroli what bail"))
-    actual_tool = set(_pack_ids(
-        "urgent police booked us under arms act for axe we use in farming gadchiroli how to complain"
-    ))
+    pistol_arms = set(
+        _pack_ids("police booked me under arms act for pistol in gadchiroli what bail")
+    )
+    actual_tool = set(
+        _pack_ids(
+            "urgent police booked us under arms act for axe we use in farming gadchiroli how to complain"
+        )
+    )
 
     assert "arms_1959_farming_tool" not in generic
     assert "arms_1959_farming_tool" not in pistol_arms
@@ -3878,14 +4743,38 @@ def test_arms_farming_tool_pack_needs_actual_tool_context_not_place_name():
 
 def test_stage10_abort_hard_fail_prompts_get_source_packs():
     expected = {
-        "father custodial death lockup byculla police saying suicide what is 196 procedure": {"constitution_article_21", "protection_human_rights_1993", "bnss_2023"},
-        "girl child 12 helping mother in our migrant camp domestic work delhi is this illegal she is my niece": {"child_labour_1986", "jj_2015"},
-        "passport seized in mumbai airport for vape cartridge cbd legal in goa": {"ndps_1985", "bnss_2023"},
+        "father custodial death lockup byculla police saying suicide what is 196 procedure": {
+            "constitution_article_21",
+            "protection_human_rights_1993",
+            "bnss_2023",
+        },
+        "girl child 12 helping mother in our migrant camp domestic work delhi is this illegal she is my niece": {
+            "child_labour_1986",
+            "jj_2015",
+        },
+        "passport seized in mumbai airport for vape cartridge cbd legal in goa": {
+            "ndps_1985",
+            "bnss_2023",
+        },
         "papa ki pension 6 month se nahi aayi rti kaise file karein": {"rti_2005"},
-        "auto driver bangalore traffic police taking 500 every week no challan saying tamil license invalid": {"motor_vehicles_1988", "prevention_corruption_1988"},
-        "bonded labour my chacha working for thakur 12 years no wages just food bihar": {"bonded_labour_1976"},
-        "police caught me drinking village they saying case under prohibition law what punishment": {"constitution_article_47", "bnss_2023", "crpc_1973"},
-        "police caught me drinking in bihar under prohibition law what punishment": {"bihar_prohibition_excise_2016", "constitution_article_47", "bnss_2023", "crpc_1973"},
+        "auto driver bangalore traffic police taking 500 every week no challan saying tamil license invalid": {
+            "motor_vehicles_1988",
+            "prevention_corruption_1988",
+        },
+        "bonded labour my chacha working for thakur 12 years no wages just food bihar": {
+            "bonded_labour_1976"
+        },
+        "police caught me drinking village they saying case under prohibition law what punishment": {
+            "constitution_article_47",
+            "bnss_2023",
+            "crpc_1973",
+        },
+        "police caught me drinking in bihar under prohibition law what punishment": {
+            "bihar_prohibition_excise_2016",
+            "constitution_article_47",
+            "bnss_2023",
+            "crpc_1973",
+        },
     }
     for query, required_ids in expected.items():
         assert required_ids <= set(_pack_ids(query)), query
@@ -3893,7 +4782,9 @@ def test_stage10_abort_hard_fail_prompts_get_source_packs():
 
 def test_stage_e9_remaining_gap_prompts_get_focused_source_packs():
     whatsapp_packs = source_packs_for_route(
-        route_matter("sir my whatsapp account got hacked and someone is asking my contacts fr money in my name where to go"),
+        route_matter(
+            "sir my whatsapp account got hacked and someone is asking my contacts fr money in my name where to go"
+        ),
         "sir my whatsapp account got hacked and someone is asking my contacts fr money in my name where to go",
     )
     whatsapp_by_id = {pack.id: pack for pack in whatsapp_packs}
@@ -3920,9 +4811,15 @@ def test_stage_e9_remaining_gap_prompts_get_focused_source_packs():
 
 def test_stage36_blocker_queries_get_required_source_packs():
     expected = {
-        "trademark application opposed by a bigger company saying it is similar to their mark, hearing scheduled": {"trade_marks_1999"},
-        "my land taken for highway 4 years back compensation still not received who to ask": {"rfctlarr_2013"},
-        "how to approach Lok Adalat for pending traffic challan settlement": {"legal_services_authorities_1987"},
+        "trademark application opposed by a bigger company saying it is similar to their mark, hearing scheduled": {
+            "trade_marks_1999"
+        },
+        "my land taken for highway 4 years back compensation still not received who to ask": {
+            "rfctlarr_2013"
+        },
+        "how to approach Lok Adalat for pending traffic challan settlement": {
+            "legal_services_authorities_1987"
+        },
         "maharashtra construction site labour department raid kiya overtime register not maintained 11 workers what to do": {
             "maharashtra_shops_establishments_2017",
             "bocw_1996",
@@ -3938,9 +4835,11 @@ def test_stage36_blocker_queries_get_required_source_packs():
     }
     for query, required_ids in expected.items():
         assert required_ids <= set(_pack_ids(query)), query
-    non_construction_ids = set(_pack_ids(
-        "maharashtra labour department raid kiya overtime register not maintained 11 workers what to do"
-    ))
+    non_construction_ids = set(
+        _pack_ids(
+            "maharashtra labour department raid kiya overtime register not maintained 11 workers what to do"
+        )
+    )
     assert "maharashtra_shops_establishments_2017" in non_construction_ids
     assert "bocw_1996" not in non_construction_ids
     assert "maharashtra_shops_establishments_2017" not in _pack_ids(
@@ -3950,9 +4849,17 @@ def test_stage36_blocker_queries_get_required_source_packs():
 
 def test_child_custody_and_will_prompts_get_all_core_family_source_packs():
     custody_ids = set(_pack_ids("wife and child living separately I want custody of son aged 6"))
-    assert {"guardians_wards_1890", "hindu_minority_guardianship_1956", "family_courts_1984"} <= custody_ids
+    assert {
+        "guardians_wards_1890",
+        "hindu_minority_guardianship_1956",
+        "family_courts_1984",
+    } <= custody_ids
 
-    will_ids = set(_pack_ids("father made will in 1998 not registered now after death sons fighting is unregistered will valid"))
+    will_ids = set(
+        _pack_ids(
+            "father made will in 1998 not registered now after death sons fighting is unregistered will valid"
+        )
+    )
     assert {"indian_succession_1925", "registration_1908"} <= will_ids
 
     prospective_will_ids = set(_pack_ids("Can I make a will for my property?"))
@@ -3963,22 +4870,38 @@ def test_child_custody_and_will_prompts_get_all_core_family_source_packs():
 
 
 def test_msme_tcs_gst_and_cyber_variants_get_exact_packs():
-    msme_ids = set(_pack_ids("psu not paid me since 8 months MSME registered party can i charge interest"))
+    msme_ids = set(
+        _pack_ids("psu not paid me since 8 months MSME registered party can i charge interest")
+    )
     assert "msmed_2006" in msme_ids
 
-    assert "income_tax_1961" in _pack_ids("TCS deducted on foreign remittance for my son education abroad how do i claim it back")
-    assert "cgst_2017" in _pack_ids("rule 86B applies to me turnover 55 lakh per month must pay 1% cash mandatory ya choot hai")
-    assert "cgst_rules_2017" in _pack_ids("rule 86B applies to me turnover 55 lakh per month must pay 1% cash mandatory ya choot hai")
+    assert "income_tax_1961" in _pack_ids(
+        "TCS deducted on foreign remittance for my son education abroad how do i claim it back"
+    )
+    assert "cgst_2017" in _pack_ids(
+        "rule 86B applies to me turnover 55 lakh per month must pay 1% cash mandatory ya choot hai"
+    )
+    assert "cgst_rules_2017" in _pack_ids(
+        "rule 86B applies to me turnover 55 lakh per month must pay 1% cash mandatory ya choot hai"
+    )
 
-    cyber_ids = set(_pack_ids("delhi police chargesheet for tweet calling cm corrupt is this 356 case"))
+    cyber_ids = set(
+        _pack_ids("delhi police chargesheet for tweet calling cm corrupt is this 356 case")
+    )
     assert {"it_act_2000", "bns_2023", "bnss_2023"} <= cyber_ids
 
 
 def test_review_blocker_source_pack_near_misses():
-    accident_ids = set(_pack_ids("my brother was hurt in a road accident police made station diary but no FIR"))
+    accident_ids = set(
+        _pack_ids("my brother was hurt in a road accident police made station diary but no FIR")
+    )
     assert "constitution_article_21" not in accident_ids
 
-    tribal_school_project_ids = set(_pack_ids("tribal student needs noc for college project but officer is delaying certificate"))
+    tribal_school_project_ids = set(
+        _pack_ids(
+            "tribal student needs noc for college project but officer is delaying certificate"
+        )
+    )
     assert "rfctlarr_2013" not in tribal_school_project_ids
 
     env_ids = set(_pack_ids("thermal plant blasting cracking our houses no compensation kalahandi"))
@@ -3989,15 +4912,15 @@ def test_review_blocker_source_pack_near_misses():
 
 
 def test_stage10_source_pack_false_positive_guards():
-    thakur_only_ids = set(_pack_ids(
-        "bonded labour my chacha working for thakur 12 years no wages just food bihar"
-    ))
+    thakur_only_ids = set(
+        _pack_ids("bonded labour my chacha working for thakur 12 years no wages just food bihar")
+    )
     assert "bonded_labour_1976" in thakur_only_ids
     assert "scst_poa_1989" not in thakur_only_ids
 
-    explicit_dalit_ids = set(_pack_ids(
-        "dalit bonded labour working for thakur 12 years no wages just food bihar"
-    ))
+    explicit_dalit_ids = set(
+        _pack_ids("dalit bonded labour working for thakur 12 years no wages just food bihar")
+    )
     assert {"bonded_labour_1976", "scst_poa_1989"} <= explicit_dalit_ids
 
     for query in (
@@ -4007,9 +4930,9 @@ def test_stage10_source_pack_false_positive_guards():
     ):
         assert {"bonded_labour_1976", "scst_poa_1989"} <= set(_pack_ids(query))
 
-    adivasi_labour_ids = set(_pack_ids(
-        "adivasi bonded labour working for upper caste landlord no wages just food"
-    ))
+    adivasi_labour_ids = set(
+        _pack_ids("adivasi bonded labour working for upper caste landlord no wages just food")
+    )
     assert "scst_poa_1989" in adivasi_labour_ids
     assert "chota_nagpur_tenancy_1908_transfer_restriction" not in adivasi_labour_ids
     assert "chota_nagpur_tenancy_1908_restoration" not in adivasi_labour_ids
@@ -4027,16 +4950,18 @@ def test_stage10_source_pack_false_positive_guards():
     assert "chota_nagpur_tenancy_1908_restoration" not in _pack_ids(
         "tribal welfare land records training workshop cancelled want refund"
     )
-    maharashtra_land_ids = set(_pack_ids(
-        "adivasi family landlord grabbed our land without consent in maharashtra"
-    ))
+    maharashtra_land_ids = set(
+        _pack_ids("adivasi family landlord grabbed our land without consent in maharashtra")
+    )
     assert "constitution_scheduled_areas" in maharashtra_land_ids
     assert "chota_nagpur_tenancy_1908_transfer_restriction" not in maharashtra_land_ids
     assert "chota_nagpur_tenancy_1908_restoration" not in maharashtra_land_ids
     assert "santhal_parganas_tenancy_1949" not in maharashtra_land_ids
-    jharkhand_land_ids = set(_pack_ids(
-        "munda land grabbed by upper caste in our agency village how to get back chaibasa"
-    ))
+    jharkhand_land_ids = set(
+        _pack_ids(
+            "munda land grabbed by upper caste in our agency village how to get back chaibasa"
+        )
+    )
     assert {
         "chota_nagpur_tenancy_1908_transfer_restriction",
         "chota_nagpur_tenancy_1908_restoration",
@@ -4044,23 +4969,45 @@ def test_stage10_source_pack_false_positive_guards():
         "constitution_scheduled_areas",
     } <= jharkhand_land_ids
 
-    assert "rpa_1951" not in _pack_ids("politician deepfake video not during election just trolling")
+    assert "rpa_1951" not in _pack_ids(
+        "politician deepfake video not during election just trolling"
+    )
     assert "rpa_1951" not in _pack_ids("candidate deepfake video during election campaign")
     assert "rpa_1951" in _pack_ids("MLA candidate deepfake video during election campaign")
     assert "rpa_1951" in _pack_ids("politician deepfake video during election campaign")
-    public_political_ids = set(_pack_ids("deepfake of modi pm circulating my friend made it bjp it cell threatening"))
-    assert {"rpa_1951", "bns_2023_public_political_deepfake", "it_act_2000_political_deepfake_personation"} <= public_political_ids
+    public_political_ids = set(
+        _pack_ids("deepfake of modi pm circulating my friend made it bjp it cell threatening")
+    )
+    assert {
+        "rpa_1951",
+        "bns_2023_public_political_deepfake",
+        "it_act_2000_political_deepfake_personation",
+    } <= public_political_ids
     assert "rpa_1951" not in _pack_ids("job candidate deepfake video shared by HR group")
-    assert "rpa_1951" not in _pack_ids("job candidate deepfake video shared before company voting in HR group")
-    assert "rpa_1951" not in _pack_ids("housing society election candidate deepfake video on whatsapp")
-    assert "rpa_1951" not in _pack_ids("student union candidate deepfake video during campus election campaign")
-    assert "rpa_1951" not in _pack_ids("trade union election candidate deepfake video shared by opponent")
-    assert "rpa_1951" not in _pack_ids("club election candidate deepfake video on whatsapp during campaign")
-    assert "rpa_1951" not in _pack_ids("cooperative bank election candidate deepfake video shared by rival")
+    assert "rpa_1951" not in _pack_ids(
+        "job candidate deepfake video shared before company voting in HR group"
+    )
+    assert "rpa_1951" not in _pack_ids(
+        "housing society election candidate deepfake video on whatsapp"
+    )
+    assert "rpa_1951" not in _pack_ids(
+        "student union candidate deepfake video during campus election campaign"
+    )
+    assert "rpa_1951" not in _pack_ids(
+        "trade union election candidate deepfake video shared by opponent"
+    )
+    assert "rpa_1951" not in _pack_ids(
+        "club election candidate deepfake video on whatsapp during campaign"
+    )
+    assert "rpa_1951" not in _pack_ids(
+        "cooperative bank election candidate deepfake video shared by rival"
+    )
 
-    software_delivery_ids = set(_pack_ids(
-        "software vendor agreed delivery in 30 days now 4 months over want to cancel and recover advance"
-    ))
+    software_delivery_ids = set(
+        _pack_ids(
+            "software vendor agreed delivery in 30 days now 4 months over want to cancel and recover advance"
+        )
+    )
     assert "indian_contract_1872" in software_delivery_ids
     assert "sale_of_goods_1930" not in software_delivery_ids
 
@@ -4075,11 +5022,15 @@ def test_stage10_source_pack_false_positive_guards():
         assert "indian_contract_1872" in ids
         assert "sale_of_goods_1930" not in ids
 
-    goods_delivery_ids = set(_pack_ids(
-        "vendor agreed delivery in 30 days now 4 months over want to cancel and recover advance 8 lakh"
-    ))
+    goods_delivery_ids = set(
+        _pack_ids(
+            "vendor agreed delivery in 30 days now 4 months over want to cancel and recover advance 8 lakh"
+        )
+    )
     assert "sale_of_goods_1930" in goods_delivery_ids
-    machinery_ids = set(_pack_ids("supplier failed to deliver machinery after taking advance 8 lakh"))
+    machinery_ids = set(
+        _pack_ids("supplier failed to deliver machinery after taking advance 8 lakh")
+    )
     assert {"indian_contract_1872", "sale_of_goods_1930"} <= machinery_ids
 
     assert "army_pension_regulations_2008_part_i" not in _pack_ids(
@@ -4157,14 +5108,18 @@ def test_creator_paid_video_leak_gets_copyright_and_intermediary_packs():
     )
     assert {"it_act_2000", "bns_2023"} <= set(adult_private_ids)
     adult_private_packs = source_packs_for_route(
-        route_matter("he took my private pictures during video call now threatening to put on telegram"),
+        route_matter(
+            "he took my private pictures during video call now threatening to put on telegram"
+        ),
         "he took my private pictures during video call now threatening to put on telegram",
     )
     bns_pack = next(pack for pack in adult_private_packs if pack.id == "bns_2023")
     assert "/sec-351" in bns_pack.anchor_patterns
 
     minor_deepfake_packs = source_packs_for_route(
-        route_matter("my schoolmate is making deepfake nude videos of girls in class using AI and circulating I am one of them I am 15"),
+        route_matter(
+            "my schoolmate is making deepfake nude videos of girls in class using AI and circulating I am one of them I am 15"
+        ),
         "my schoolmate is making deepfake nude videos of girls in class using AI and circulating I am one of them I am 15",
     )
     minor_bns = next(pack for pack in minor_deepfake_packs if pack.id == "bns_2023")
@@ -4191,10 +5146,7 @@ def test_creator_paid_video_leak_gets_copyright_and_intermediary_packs():
 
 def test_false_498a_accused_source_packs_include_ipc_498a_when_explicit():
     query = "i am confused my wife filed false 498A case against me n my parents, can we get anticipatory bail pls guide"
-    packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(query), query)
-    }
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
 
     assert "bns_2023_498a_accused_cruelty" in packs
     assert "pwdva_2005_accused_context" in packs
@@ -4204,7 +5156,9 @@ def test_false_498a_accused_source_packs_include_ipc_498a_when_explicit():
 
 def test_stage_iid1_recovery_prompts_get_required_source_packs():
     support_packs = source_packs_for_route(
-        route_matter("my husband left me with two children and no money for school fees what to do"),
+        route_matter(
+            "my husband left me with two children and no money for school fees what to do"
+        ),
         "my husband left me with two children and no money for school fees what to do",
     )
     support_by_id = {pack.id: pack for pack in support_packs}
@@ -4215,7 +5169,9 @@ def test_stage_iid1_recovery_prompts_get_required_source_packs():
     assert "/sec-125" in support_by_id["crpc_1973"].anchor_patterns
 
     inlaw_packs = source_packs_for_route(
-        route_matter("my husband's brother has been making me uncomfortable saying things and now grabbed my hand whom to tell I cant tell husband"),
+        route_matter(
+            "my husband's brother has been making me uncomfortable saying things and now grabbed my hand whom to tell I cant tell husband"
+        ),
         "my husband's brother has been making me uncomfortable saying things and now grabbed my hand whom to tell I cant tell husband",
     )
     inlaw_by_id = {pack.id: pack for pack in inlaw_packs}
@@ -4225,10 +5181,14 @@ def test_stage_iid1_recovery_prompts_get_required_source_packs():
     abroad_ids = _pack_ids(
         "my ex husband took our son to UK on tourist visa and is not bringing back he said permanent now what to do"
     )
-    assert {"guardians_wards_1890", "constitution_article_21", "family_courts_1984"} <= set(abroad_ids)
+    assert {"guardians_wards_1890", "constitution_article_21", "family_courts_1984"} <= set(
+        abroad_ids
+    )
 
     promise_packs = source_packs_for_route(
-        route_matter("I am living with my boyfriend for 3 years he promised marriage now he is marrying another girl can I file case"),
+        route_matter(
+            "I am living with my boyfriend for 3 years he promised marriage now he is marrying another girl can I file case"
+        ),
         "I am living with my boyfriend for 3 years he promised marriage now he is marrying another girl can I file case",
     )
     promise_by_id = {pack.id: pack for pack in promise_packs}
@@ -4248,25 +5208,35 @@ def test_stage_iid1_recovery_prompts_get_required_source_packs():
     assert {"constitution_panchayats_part_ix", "rti_2005"} <= set(common_land_ids)
 
     spa_packs = source_packs_for_route(
-        route_matter("the spa was raided last week and police took me and other girls to station I just do massage I am scared what will happen now"),
+        route_matter(
+            "the spa was raided last week and police took me and other girls to station I just do massage I am scared what will happen now"
+        ),
         "the spa was raided last week and police took me and other girls to station I just do massage I am scared what will happen now",
     )
     spa_by_id = {pack.id: pack for pack in spa_packs}
     assert {"/sec-4", "/sec-5", "/sec-7", "/sec-8"} <= set(spa_by_id["itpa_1956"].anchor_patterns)
-    assert {"/sec-173", "/sec-216", "/sec-480", "/sec-483"} <= set(spa_by_id["bnss_2023"].anchor_patterns)
+    assert {"/sec-173", "/sec-216", "/sec-480", "/sec-483"} <= set(
+        spa_by_id["bnss_2023"].anchor_patterns
+    )
 
 
 def test_stage_iid2_production_gate_prompts_get_required_source_packs():
     tenancy_packs = source_packs_for_route(
-        route_matter("my landlord is asking me to vacate in 15 days because he wants to sell the flat, my lock in is for 11 months"),
+        route_matter(
+            "my landlord is asking me to vacate in 15 days because he wants to sell the flat, my lock in is for 11 months"
+        ),
         "my landlord is asking me to vacate in 15 days because he wants to sell the flat, my lock in is for 11 months",
     )
     tenancy_by_id = {pack.id: pack for pack in tenancy_packs}
     assert "transfer_property_1882" in tenancy_by_id
-    assert {"/sec-105", "/sec-106", "/sec-111"} <= set(tenancy_by_id["transfer_property_1882"].anchor_patterns)
+    assert {"/sec-105", "/sec-106", "/sec-111"} <= set(
+        tenancy_by_id["transfer_property_1882"].anchor_patterns
+    )
 
     salary_packs = source_packs_for_route(
-        route_matter("husband took my salary atm card and gives me only 2000 per month for groceries is this legal he says he is breadwinner"),
+        route_matter(
+            "husband took my salary atm card and gives me only 2000 per month for groceries is this legal he says he is breadwinner"
+        ),
         "husband took my salary atm card and gives me only 2000 per month for groceries is this legal he says he is breadwinner",
     )
     salary_by_id = {pack.id: pack for pack in salary_packs}
@@ -4274,7 +5244,9 @@ def test_stage_iid2_production_gate_prompts_get_required_source_packs():
     assert {"/sec-3", "/sec-20", "/sec-12"} <= set(salary_by_id["pwdva_2005"].anchor_patterns)
 
     mtp_packs = source_packs_for_route(
-        route_matter("I am 6 months pregnant after rape doctor says it is too late for abortion but I cannot keep this child help"),
+        route_matter(
+            "I am 6 months pregnant after rape doctor says it is too late for abortion but I cannot keep this child help"
+        ),
         "I am 6 months pregnant after rape doctor says it is too late for abortion but I cannot keep this child help",
     )
     mtp_by_id = {pack.id: pack for pack in mtp_packs}
@@ -4283,7 +5255,9 @@ def test_stage_iid2_production_gate_prompts_get_required_source_packs():
     assert "rape survivor" in mtp_by_id["mtp_1971"].search_query
 
     baby_support_packs = source_packs_for_route(
-        route_matter("I left my husband 2 months back I have a baby 1 year old he is not giving any money how much maintenance can I get"),
+        route_matter(
+            "I left my husband 2 months back I have a baby 1 year old he is not giving any money how much maintenance can I get"
+        ),
         "I left my husband 2 months back I have a baby 1 year old he is not giving any money how much maintenance can I get",
     )
     baby_support_by_id = {pack.id: pack for pack in baby_support_packs}
@@ -4294,13 +5268,17 @@ def test_stage_iid2_production_gate_prompts_get_required_source_packs():
     assert "/sec-125" in baby_support_by_id["crpc_1973"].anchor_patterns
 
     custody_packs = source_packs_for_route(
-        route_matter("girl child age 4 my wife died parents in law took her away they refuse to return"),
+        route_matter(
+            "girl child age 4 my wife died parents in law took her away they refuse to return"
+        ),
         "girl child age 4 my wife died parents in law took her away they refuse to return",
     )
     custody_by_id = {pack.id: pack for pack in custody_packs}
     assert "guardians_wards_1890" in custody_by_id
     assert "hindu_minority_guardianship_1956" in custody_by_id
-    assert {"/sec-6", "/sec-13"} <= set(custody_by_id["hindu_minority_guardianship_1956"].anchor_patterns)
+    assert {"/sec-6", "/sec-13"} <= set(
+        custody_by_id["hindu_minority_guardianship_1956"].anchor_patterns
+    )
 
 
 def test_stage38_review_blocker_queries_get_precise_source_packs():
@@ -4326,23 +5304,31 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
         assert "rti_2005" in state_ids
         assert "bihar_kanya_vivah_service" not in state_ids
 
-    honour_ids = set(_pack_ids("my parents threatening to kill me if i marry inter caste need protection"))
+    honour_ids = set(
+        _pack_ids("my parents threatening to kill me if i marry inter caste need protection")
+    )
     assert {"bns_2023_honour_threat_intimidation", "bnss_2023_fir_information"} <= honour_ids
 
     wage_ids = _pack_ids(
         "boss saying i signed paper give up wages but i dont read english kannada bangalore"
     )
-    assert {"code_on_wages_2019_contracting_out", "indian_contract_1872_free_consent"} <= set(wage_ids)
+    assert {"code_on_wages_2019_contracting_out", "indian_contract_1872_free_consent"} <= set(
+        wage_ids
+    )
 
     otp_ids = _pack_ids("otp fraud 2 lakh lost bank says my fault no refund what can i do")
     assert {"it_act_2000", "rbi_integrated_ombudsman_2021"} <= set(otp_ids)
 
     quashing_ids = _pack_ids("482 CrPC quashing FIR in high court what documents needed")
     assert {"bnss_2023_quashing", "crpc_1973_quashing"} <= set(quashing_ids)
-    legacy_quashing_ids = _pack_ids("482 CrPC quashing FIR in high court what documents needed, FIR is from 2023")
+    legacy_quashing_ids = _pack_ids(
+        "482 CrPC quashing FIR in high court what documents needed, FIR is from 2023"
+    )
     assert "crpc_1973_quashing" in legacy_quashing_ids
     assert "bnss_2023_quashing" not in legacy_quashing_ids
-    bnss_named_quashing_ids = _pack_ids("BNSS 2023 section 528 quashing FIR in high court what documents needed")
+    bnss_named_quashing_ids = _pack_ids(
+        "BNSS 2023 section 528 quashing FIR in high court what documents needed"
+    )
     assert "bnss_2023_quashing" in bnss_named_quashing_ids
     assert "crpc_1973_quashing" in bnss_named_quashing_ids
     assert "bnss_2023_quashing" not in _pack_ids(
@@ -4361,17 +5347,23 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
     assert "/sec-47" in cpc.anchor_patterns
 
     senior_packs = source_packs_for_route(
-        route_matter("maintenance tribunal ordered son to pay but he stopped paying how to enforce"),
+        route_matter(
+            "maintenance tribunal ordered son to pay but he stopped paying how to enforce"
+        ),
         "maintenance tribunal ordered son to pay but he stopped paying how to enforce",
     )
     senior = next(pack for pack in senior_packs if pack.id == "senior_citizens_2007")
     assert "/sec-11" in senior.anchor_patterns
     assert "/sec-13" in senior.anchor_patterns
     senior_police_keyword_packs = source_packs_for_route(
-        route_matter("tribunal in tamil nadu ordered son to pay 10000 he stopped paying enforce need lawyer or police"),
+        route_matter(
+            "tribunal in tamil nadu ordered son to pay 10000 he stopped paying enforce need lawyer or police"
+        ),
         "tribunal in tamil nadu ordered son to pay 10000 he stopped paying enforce need lawyer or police",
     )
-    senior_police_keyword = next(pack for pack in senior_police_keyword_packs if pack.id == "senior_citizens_2007")
+    senior_police_keyword = next(
+        pack for pack in senior_police_keyword_packs if pack.id == "senior_citizens_2007"
+    )
     assert "/sec-11" in senior_police_keyword.anchor_patterns
     assert "/sec-13" in senior_police_keyword.anchor_patterns
     senior_police_ids = {pack.id for pack in senior_police_keyword_packs}
@@ -4384,7 +5376,9 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
     marital_bns = next(pack for pack in marital_sexual_packs if pack.id == "bns_2023")
     assert "/sec-63" in marital_bns.anchor_patterns
     senior_gift_packs = source_packs_for_route(
-        route_matter("father gifted flat to son but son not paying maintenance can tribunal cancel gift deed"),
+        route_matter(
+            "father gifted flat to son but son not paying maintenance can tribunal cancel gift deed"
+        ),
         "father gifted flat to son but son not paying maintenance can tribunal cancel gift deed",
     )
     senior_gift = next(pack for pack in senior_gift_packs if pack.id == "senior_citizens_2007")
@@ -4412,7 +5406,9 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
     assert "code_on_wages_2019" not in mgnrega_social_ids
 
     juvenile_packs = source_packs_for_route(
-        route_matter("son 17 yrs in adult jail puzhal pocso case age proof school certificate where to file"),
+        route_matter(
+            "son 17 yrs in adult jail puzhal pocso case age proof school certificate where to file"
+        ),
         "son 17 yrs in adult jail puzhal pocso case age proof school certificate where to file",
     )
     jj_pack = next(pack for pack in juvenile_packs if pack.id == "jj_2015")
@@ -4421,7 +5417,9 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
     nephew_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("my 17 year nephew accused in pocso is in adult prison, school DOB proof available"),
+            route_matter(
+                "my 17 year nephew accused in pocso is in adult prison, school DOB proof available"
+            ),
             "my 17 year nephew accused in pocso is in adult prison, school DOB proof available",
         )
     }
@@ -4430,7 +5428,9 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
     assert {"/sec-94", "/sec-9"} <= set(nephew_packs["jj_2015"].anchor_patterns)
 
     ndps_packs = source_packs_for_route(
-        route_matter("NDPS case 50 gram ganja, first time accused, can I get bail and which court should I approach"),
+        route_matter(
+            "NDPS case 50 gram ganja, first time accused, can I get bail and which court should I approach"
+        ),
         "NDPS case 50 gram ganja, first time accused, can I get bail and which court should I approach",
     )
     bnss = next(pack for pack in ndps_packs if pack.id == "bnss_2023")
@@ -4464,7 +5464,9 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
         route_matter("tihar jail mulaqat only 30 min once a week is this legal can we ask more"),
         "tihar jail mulaqat only 30 min once a week is this legal can we ask more",
     )
-    assert {"delhi_prison_rules_2018_mulaqat_books", "prisons_1894", "constitution_article_21"} <= {pack.id for pack in prison_packs}
+    assert {"delhi_prison_rules_2018_mulaqat_books", "prisons_1894", "constitution_article_21"} <= {
+        pack.id for pack in prison_packs
+    }
 
     vakalat_packs = source_packs_for_route(
         route_matter("how to file vakalatnama change of advocate during pending suit"),
@@ -4506,8 +5508,14 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
     )
     assert {"pesa_1996", "mmdr_1957", "forest_conservation_1980"} <= set(mining_noc_ids)
 
-    bauxite_pollution_ids = set(_pack_ids("bauxite mine pollution damaged my house in bastar what compensation"))
-    assert {"environment_protection_1986", "water_pollution_1974", "ngt_2010"} <= bauxite_pollution_ids
+    bauxite_pollution_ids = set(
+        _pack_ids("bauxite mine pollution damaged my house in bastar what compensation")
+    )
+    assert {
+        "environment_protection_1986",
+        "water_pollution_1974",
+        "ngt_2010",
+    } <= bauxite_pollution_ids
     assert "pesa_1996" not in bauxite_pollution_ids
     assert "rfctlarr_2013" not in bauxite_pollution_ids
     assert "forest_conservation_1980" not in bauxite_pollution_ids
@@ -4515,20 +5523,35 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
     ancestral_ids = _pack_ids(
         "ancestral land in my dada name now uncle selling without telling us what to do"
     )
-    assert {"hindu_succession_1956", "transfer_property_1882", "specific_relief_1963"} <= set(ancestral_ids)
+    assert {"hindu_succession_1956", "transfer_property_1882", "specific_relief_1963"} <= set(
+        ancestral_ids
+    )
 
-    encroachment_ids = set(_pack_ids("neighbour encroached on my land and police says civil matter"))
-    assert {"specific_relief_1963_land_encroachment", "transfer_property_1882_land_title"} <= encroachment_ids
+    encroachment_ids = set(
+        _pack_ids("neighbour encroached on my land and police says civil matter")
+    )
+    assert {
+        "specific_relief_1963_land_encroachment",
+        "transfer_property_1882_land_title",
+    } <= encroachment_ids
 
     tenant_lock_ids = set(_pack_ids("tenant changed lock and stopped paying rent can I break lock"))
     assert "transfer_property_1882" in tenant_lock_ids
 
-    landlord_lockout_ids = set(_pack_ids("landlord broke my lock and threw my things out because rent late"))
+    landlord_lockout_ids = set(
+        _pack_ids("landlord broke my lock and threw my things out because rent late")
+    )
     assert "transfer_property_1882" in landlord_lockout_ids
 
-    builder_defect_ids = set(_pack_ids("flat possession already given but bathroom tiles defective builder not repairing"))
+    builder_defect_ids = set(
+        _pack_ids(
+            "flat possession already given but bathroom tiles defective builder not repairing"
+        )
+    )
     assert "rera_2016" in builder_defect_ids
-    builder_gave_possession_ids = set(_pack_ids("builder gave possession but bathroom tiles are broken and leakage started"))
+    builder_gave_possession_ids = set(
+        _pack_ids("builder gave possession but bathroom tiles are broken and leakage started")
+    )
     assert "rera_2016" in builder_gave_possession_ids
     defective_phone_ids = set(_pack_ids("defective phone seller not repairing refund denied"))
     assert "rera_2016" not in defective_phone_ids
@@ -4537,11 +5560,24 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
     doctor_refund_ids = set(_pack_ids("doctor appointment cancelled but clinic denied refund"))
     assert "clinical_establishments_2010" not in doctor_refund_ids
 
-    tribal_blank_ids = set(_pack_ids("tribal family land transferred by moneylender using blank paper"))
-    assert {"pesa_1996", "constitution_scheduled_areas", "transfer_property_1882_tribal_document_lane"} <= tribal_blank_ids
+    tribal_blank_ids = set(
+        _pack_ids("tribal family land transferred by moneylender using blank paper")
+    )
+    assert {
+        "pesa_1996",
+        "constitution_scheduled_areas",
+        "transfer_property_1882_tribal_document_lane",
+    } <= tribal_blank_ids
 
-    voluntary_gift_ids = set(_pack_ids("my father willingly gifted flat to daughter now regrets it can we cancel gift deed"))
-    assert {"transfer_property_1882_gift_revocation", "registration_1908_gift_deed_records"} <= voluntary_gift_ids
+    voluntary_gift_ids = set(
+        _pack_ids(
+            "my father willingly gifted flat to daughter now regrets it can we cancel gift deed"
+        )
+    )
+    assert {
+        "transfer_property_1882_gift_revocation",
+        "registration_1908_gift_deed_records",
+    } <= voluntary_gift_ids
 
 
 def test_stage_c_repeated_blockers_get_required_source_packs():
@@ -4621,7 +5657,9 @@ def test_stage_c_review_source_pack_regime_and_variant_guards():
     dealer_ids = set(_pack_ids("dealer supplied poor quality goods refusing refund"))
     assert {"indian_contract_1872", "sale_of_goods_1930"} <= dealer_ids
 
-    lic_ids = set(_pack_ids("LIC agent told my father guaranteed return now matured got half amount fraud"))
+    lic_ids = set(
+        _pack_ids("LIC agent told my father guaranteed return now matured got half amount fraud")
+    )
     assert {"consumer_protection_2019", "insurance_ombudsman_rules_2017"} <= lic_ids
 
     mtp_packs = source_packs_for_route(
@@ -4632,16 +5670,18 @@ def test_stage_c_review_source_pack_regime_and_variant_guards():
     assert "/sec-13" in hma.anchor_patterns
     assert "hindu_marriage_1955_divorce" in {pack.id for pack in mtp_packs}
 
-    legacy_property_ids = set(_pack_ids(
-        "mother says son took her thumb impression on blank paper in 2022 now produced as gift deed"
-    ))
+    legacy_property_ids = set(
+        _pack_ids(
+            "mother says son took her thumb impression on blank paper in 2022 now produced as gift deed"
+        )
+    )
     assert "crpc_1973" in legacy_property_ids
     assert "bns_2023" not in legacy_property_ids
     assert "bnss_2023" not in legacy_property_ids
 
-    legacy_bank_ids = set(_pack_ids(
-        "son took loan against my house in 2022 i did not sign told bank to stop"
-    ))
+    legacy_bank_ids = set(
+        _pack_ids("son took loan against my house in 2022 i did not sign told bank to stop")
+    )
     assert "crpc_1973" in legacy_bank_ids
     assert "bns_2023" not in legacy_bank_ids
     assert "bnss_2023" not in legacy_bank_ids
@@ -4651,7 +5691,12 @@ def test_stage_c_review_source_pack_regime_and_variant_guards():
         "in 2019 brother forged my signature on gift deed of my house",
     )
     forged_signature_ids = {pack.id for pack in forged_signature_packs}
-    assert {"transfer_property_1882", "registration_1908", "specific_relief_1963", "crpc_1973"} <= forged_signature_ids
+    assert {
+        "transfer_property_1882",
+        "registration_1908",
+        "specific_relief_1963",
+        "crpc_1973",
+    } <= forged_signature_ids
     assert "bns_2023" not in forged_signature_ids
     crpc = next(pack for pack in forged_signature_packs if pack.id == "crpc_1973")
     assert crpc.anchor_patterns == ("/sec-154", "/sec-156", "/sec-200")
@@ -4666,9 +5711,7 @@ def test_common_screenshot_source_packs_are_available():
         "banking_regulation_1949",
         "bnss_2023_bank_account_legal_hold",
         "crpc_1973_bank_account_legal_hold",
-    } <= set(
-        _pack_ids("my bank account is frozen suddenly cyber police says lien what can I do")
-    )
+    } <= set(_pack_ids("my bank account is frozen suddenly cyber police says lien what can I do"))
 
     loan_ids = set(_pack_ids("Loan app is harassing my contacts"))
     assert {
@@ -4686,10 +5729,19 @@ def test_common_screenshot_source_packs_are_available():
     bank_debit_ids = set(_pack_ids("Bank deducted money wrongly and customer care not helping."))
     assert {"rbi_integrated_ombudsman_2021", "consumer_protection_2019"} <= bank_debit_ids
 
-    fake_customer_care_ids = set(_pack_ids("fake customer care made me install app and money got transferred"))
-    assert {"it_act_2000", "rbi_integrated_ombudsman_2021", "bns_2023", "bnss_2023"} <= fake_customer_care_ids
+    fake_customer_care_ids = set(
+        _pack_ids("fake customer care made me install app and money got transferred")
+    )
+    assert {
+        "it_act_2000",
+        "rbi_integrated_ombudsman_2021",
+        "bns_2023",
+        "bnss_2023",
+    } <= fake_customer_care_ids
 
-    credit_card_ids = set(_pack_ids("credit card unauthorized transaction bank not reversing amount"))
+    credit_card_ids = set(
+        _pack_ids("credit card unauthorized transaction bank not reversing amount")
+    )
     assert {"it_act_2000", "rbi_integrated_ombudsman_2021", "bns_2023"} <= credit_card_ids
 
     recovery_agent_ids = set(_pack_ids("loan recovery agents came home and threatened my mother"))
@@ -4718,11 +5770,11 @@ def test_common_user_gate_failure_cluster_source_packs_are_available():
             "bnss_2023_bank_account_legal_hold",
             "crpc_1973_bank_account_legal_hold",
         },
-            "online loan app calling my relatives and abusing me": {
-                "rbi_integrated_ombudsman_2021",
-                "bns_2023",
-                "bnss_2023",
-            },
+        "online loan app calling my relatives and abusing me": {
+            "rbi_integrated_ombudsman_2021",
+            "bns_2023",
+            "bnss_2023",
+        },
         "private hospital not giving medical records after discharge": {
             "consumer_protection_2019",
             "clinical_establishments_2010",
@@ -4783,7 +5835,11 @@ def test_common_user_gate_failure_cluster_source_packs_are_available():
     assert "/sec-35A" in salary_freeze_packs["banking_regulation_1949"].anchor_patterns
 
     heir_sale_ids = set(_pack_ids("Can I sell property if one legal heir is not agreeing?"))
-    assert {"transfer_property_1882", "hindu_succession_1956", "specific_relief_1963"} <= heir_sale_ids
+    assert {
+        "transfer_property_1882",
+        "hindu_succession_1956",
+        "specific_relief_1963",
+    } <= heir_sale_ids
     inherited_sale_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
@@ -4795,14 +5851,22 @@ def test_common_user_gate_failure_cluster_source_packs_are_available():
     assert {"/sec-31", "/sec-34", "/sec-38"} <= set(
         inherited_sale_packs["specific_relief_1963_inherited_sale"].anchor_patterns
     )
-    sold_ancestral_ids = set(_pack_ids("uncle sold ancestral land without asking other heirs where to go"))
-    assert {"specific_relief_1963", "transfer_property_1882", "hindu_succession_1956"} <= sold_ancestral_ids
+    sold_ancestral_ids = set(
+        _pack_ids("uncle sold ancestral land without asking other heirs where to go")
+    )
+    assert {
+        "specific_relief_1963",
+        "transfer_property_1882",
+        "hindu_succession_1956",
+    } <= sold_ancestral_ids
 
     adultery_ids = set(_pack_ids("i caught my husband with another women having sex"))
     assert {"family_courts_1984", "hindu_marriage_1955_divorce"} <= adultery_ids
     assert "bns_2023" not in adultery_ids
     assert "bnss_2023" not in adultery_ids
-    living_with_another_ids = set(_pack_ids("I found my wife living with another man after marriage what case can I file"))
+    living_with_another_ids = set(
+        _pack_ids("I found my wife living with another man after marriage what case can I file")
+    )
     assert {"family_courts_1984", "hindu_marriage_1955_divorce"} <= living_with_another_ids
     assert "bns_2023" not in living_with_another_ids
     assert "bnss_2023" not in living_with_another_ids
@@ -4824,7 +5888,9 @@ def test_stage3_property_succession_source_packs_are_available():
     assert set(daughter_packs["hindu_succession_1956"].anchor_patterns) == {"/sec-6"}
     assert daughter_packs["hindu_succession_1956"].priority >= 1.18
 
-    society_ids = set(_pack_ids("housing society not transferring flat after father death to legal heirs"))
+    society_ids = set(
+        _pack_ids("housing society not transferring flat after father death to legal heirs")
+    )
     assert {
         "hindu_succession_1956",
         "registration_1908_flat_transfer",
@@ -4946,10 +6012,16 @@ def test_stage5_money_cyber_identity_source_packs_cover_contract_authorities():
 
 def test_reviewer_counterexample_source_packs_stay_specific():
     pan_loan_ids = set(_pack_ids("someone used my pan only and took loan in my name"))
-    assert {"it_act_2000", "credit_information_companies_2005", "rbi_integrated_ombudsman_2021"} <= pan_loan_ids
+    assert {
+        "it_act_2000",
+        "credit_information_companies_2005",
+        "rbi_integrated_ombudsman_2021",
+    } <= pan_loan_ids
     assert "aadhaar_2016_identity_misuse" not in pan_loan_ids
 
-    pan_police_ids = set(_pack_ids("someone used my pan only and took loan in my name what police complaint"))
+    pan_police_ids = set(
+        _pack_ids("someone used my pan only and took loan in my name what police complaint")
+    )
     assert {
         "it_act_2000",
         "credit_information_companies_2005",
@@ -4959,15 +6031,25 @@ def test_reviewer_counterexample_source_packs_stay_specific():
     } <= pan_police_ids
     assert "aadhaar_2016_identity_misuse" not in pan_police_ids
 
-    asha_cross_noise_ids = set(_pack_ids("asha worker incentive pending but block office says ask anganwadi cdpo where to complain"))
+    asha_cross_noise_ids = set(
+        _pack_ids(
+            "asha worker incentive pending but block office says ask anganwadi cdpo where to complain"
+        )
+    )
     assert {"nhm_asha_incentives_2025", "rti_2005"} <= asha_cross_noise_ids
     assert "anganwadi_honorarium_case_law" not in asha_cross_noise_ids
 
-    anganwadi_cross_noise_ids = set(_pack_ids("anganwadi worker payment pending but officer called it asha nhm file where to complain"))
+    anganwadi_cross_noise_ids = set(
+        _pack_ids(
+            "anganwadi worker payment pending but officer called it asha nhm file where to complain"
+        )
+    )
     assert {"anganwadi_honorarium_case_law", "rti_2005"} <= anganwadi_cross_noise_ids
     assert "nhm_asha_incentives_2025" not in anganwadi_cross_noise_ids
 
-    assert "nhm_asha_incentives_2025" not in set(_pack_ids("health department ASHA software login not working"))
+    assert "nhm_asha_incentives_2025" not in set(
+        _pack_ids("health department ASHA software login not working")
+    )
     icds_supplier_ids = set(_pack_ids("ICDS nutrition supplier payment pending"))
     assert "anganwadi_honorarium_case_law" not in icds_supplier_ids
     assert "indian_contract_1872" in icds_supplier_ids
@@ -4979,7 +6061,11 @@ def test_reviewer_counterexample_source_packs_stay_specific():
     restaurant_ids = set(_pack_ids("restaurant sealed by corporation no notice"))
     assert {"food_safety_2006", "rti_2005"} <= restaurant_ids
 
-    hotel_kitchen_ids = set(_pack_ids("health department sealed my small hotel kitchen without giving inspection report"))
+    hotel_kitchen_ids = set(
+        _pack_ids(
+            "health department sealed my small hotel kitchen without giving inspection report"
+        )
+    )
     assert "food_safety_2006" in hotel_kitchen_ids
 
     gujarat_shop_ids = set(_pack_ids("My shop is in Gujarat and municipality sealed it."))
@@ -4993,31 +6079,65 @@ def test_reviewer_counterexample_source_packs_stay_specific():
     pan_ids = set(_pack_ids("my pan and aadhaar is mismatch"))
     assert {"income_tax_pan_1961", "aadhaar_2016", "rti_2005"} <= pan_ids
 
-    death_ids = set(_pack_ids("death certificate has wrong name hospital says they cannot correct it what is process"))
+    death_ids = set(
+        _pack_ids(
+            "death certificate has wrong name hospital says they cannot correct it what is process"
+        )
+    )
     assert {"births_deaths_registration_1969", "rti_2005"} <= death_ids
 
-    posh_ids = set(_pack_ids("my employer fired me after i complained to ICC about sexual harassment at office"))
+    posh_ids = set(
+        _pack_ids(
+            "my employer fired me after i complained to ICC about sexual harassment at office"
+        )
+    )
     assert {"posh_2013", "industrial_disputes_1947"} <= posh_ids
 
-    marriage_ids = set(_pack_ids("husband lied about salary and loans before marriage what can I do now"))
-    assert {"hindu_marriage_1955_voidable", "special_marriage_1954_voidable", "family_courts_1984"} <= marriage_ids
+    marriage_ids = set(
+        _pack_ids("husband lied about salary and loans before marriage what can I do now")
+    )
+    assert {
+        "hindu_marriage_1955_voidable",
+        "special_marriage_1954_voidable",
+        "family_courts_1984",
+    } <= marriage_ids
 
 
 def test_stage_e_hardfail_source_packs_are_available():
-    ancestral_ids = set(_pack_ids(
-        "pls tell father is hindu 78 yrs ancestral land sold by brother without consent madhya pradesh need lawyer or police"
-    ))
-    assert {"hindu_succession_1956", "hindu_succession_1956_section6_cases", "transfer_property_1882", "specific_relief_1963"} <= ancestral_ids
+    ancestral_ids = set(
+        _pack_ids(
+            "pls tell father is hindu 78 yrs ancestral land sold by brother without consent madhya pradesh need lawyer or police"
+        )
+    )
+    assert {
+        "hindu_succession_1956",
+        "hindu_succession_1956_section6_cases",
+        "transfer_property_1882",
+        "specific_relief_1963",
+    } <= ancestral_ids
 
-    writ_ids = set(_pack_ids(
-        "urgent difference between Article 32 Supreme Court and Article 226 High Court writ how to complain"
-    ))
-    assert {"constitution_writ_32_226", "writ_mandamus_article226_cases", "legal_services_authorities_1987"} <= writ_ids
+    writ_ids = set(
+        _pack_ids(
+            "urgent difference between Article 32 Supreme Court and Article 226 High Court writ how to complain"
+        )
+    )
+    assert {
+        "constitution_writ_32_226",
+        "writ_mandamus_article226_cases",
+        "legal_services_authorities_1987",
+    } <= writ_ids
 
-    health_ids = set(_pack_ids(
-        "please help the man I am supposed to marry next month I found out hides he is HIV positive his family also knows can I cancel without dowry return issue any remedy"
-    ))
-    assert {"hiv_aids_2017", "hindu_marriage_1955_voidable", "family_courts_1984", "dowry_prohibition_1961"} <= health_ids
+    health_ids = set(
+        _pack_ids(
+            "please help the man I am supposed to marry next month I found out hides he is HIV positive his family also knows can I cancel without dowry return issue any remedy"
+        )
+    )
+    assert {
+        "hiv_aids_2017",
+        "hindu_marriage_1955_voidable",
+        "family_courts_1984",
+        "dowry_prohibition_1961",
+    } <= health_ids
 
 
 def test_stage_f_safety_blocker_source_packs_are_available():
@@ -5025,8 +6145,7 @@ def test_stage_f_safety_blocker_source_packs_are_available():
     csam_ids = set(_pack_ids(csam_query))
     assert {"it_act_2000", "pocso_2012", "bns_2023"} <= csam_ids
     csam_packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(csam_query), csam_query)
+        pack.id: pack for pack in source_packs_for_route(route_matter(csam_query), csam_query)
     }
     assert "/sec-67B" in csam_packs["it_act_2000"].anchor_patterns
     assert "bns_2023_child_sexual_image" in csam_packs
@@ -5051,103 +6170,155 @@ def test_stage_f_safety_blocker_source_packs_are_available():
 
 def test_stage_500_offtopic_review_source_packs_are_specific():
     esi_packs = source_packs_for_route(
-        route_matter("ESI hospital refused to treat my wife for delivery saying my contributions are short"),
+        route_matter(
+            "ESI hospital refused to treat my wife for delivery saying my contributions are short"
+        ),
         "ESI hospital refused to treat my wife for delivery saying my contributions are short",
     )
     esi = next(pack for pack in esi_packs if pack.id == "esi_1948")
     assert {"/sec-46", "/sec-56", "/sec-58", "/sec-59", "/sec-75"} <= set(esi.anchor_patterns)
 
-    accident_ids = set(_pack_ids(
-        "i was driving and accidentally hit a pedestrian who is now claiming 8 lakh, my insurance is third party only"
-    ))
+    accident_ids = set(
+        _pack_ids(
+            "i was driving and accidentally hit a pedestrian who is now claiming 8 lakh, my insurance is third party only"
+        )
+    )
     assert "motor_vehicles_1988" in accident_ids
     assert "food_safety_2006" not in accident_ids
 
-    laptop_ids = set(_pack_ids(
-        "my company laptop has been seized by police as part of investigation against my colleague"
-    ))
+    laptop_ids = set(
+        _pack_ids(
+            "my company laptop has been seized by police as part of investigation against my colleague"
+        )
+    )
     assert {"bnss_2023", "crpc_1973", "it_act_2000"} <= laptop_ids
 
     nclat_ids = set(_pack_ids("tribunal order against me how to appeal NCLAT format and fees"))
     assert {"ibc_2016", "companies_2013", "nclat_rules_2016"} <= nclat_ids
 
-    nclt_ids = set(_pack_ids("operational creditor want to file section 9 ibc against company owing 2.5 cr"))
+    nclt_ids = set(
+        _pack_ids("operational creditor want to file section 9 ibc against company owing 2.5 cr")
+    )
     assert {"ibc_2016", "nclt_rules_2016"} <= nclt_ids
 
-    water_ids = set(_pack_ids("my borewell water has come bad neighbours factory throwing chemicals"))
+    water_ids = set(
+        _pack_ids("my borewell water has come bad neighbours factory throwing chemicals")
+    )
     assert {"water_pollution_1974", "environment_protection_1986", "ngt_2010"} <= water_ids
 
-    food_ids = set(_pack_ids("wrong delivery by Uber Eats gave me food poisoning hospital bill what can I do"))
+    food_ids = set(
+        _pack_ids("wrong delivery by Uber Eats gave me food poisoning hospital bill what can I do")
+    )
     assert {"consumer_protection_2019", "food_safety_2006"} <= food_ids
     assert "clinical_establishments_2010" not in food_ids
 
-    closure_ids = set(_pack_ids("factory closed sudden 80 of us tamil migrant no notice 2 months salary pending tiruppur"))
+    closure_ids = set(
+        _pack_ids(
+            "factory closed sudden 80 of us tamil migrant no notice 2 months salary pending tiruppur"
+        )
+    )
     assert {"industrial_disputes_1947_closure", "code_on_wages_2019_closure_arrears"} <= closure_ids
 
-    food_deduction_ids = set(_pack_ids("contractor took rs 30 daily for food gave gruel only deducted from wages legal or not"))
+    food_deduction_ids = set(
+        _pack_ids(
+            "contractor took rs 30 daily for food gave gruel only deducted from wages legal or not"
+        )
+    )
     assert {"code_on_wages_2019_food_deduction", "ismw_1979_food_deduction"} <= food_deduction_ids
 
-    conditional_posh_ids = set(_pack_ids(
-        "i complained against my manager for harassment to HR and now they are putting me on PIP, is this retaliation"
-    ))
+    conditional_posh_ids = set(
+        _pack_ids(
+            "i complained against my manager for harassment to HR and now they are putting me on PIP, is this retaliation"
+        )
+    )
     assert "industrial_disputes_1947" in conditional_posh_ids
     assert "posh_2013" in conditional_posh_ids
 
 
 def test_stage3_state_gap_source_packs_cover_critical_ledger_rows():
-    bhang_packs = _packs_by_id("vit student caught with bhang lassi in mahabaleshwar holi is it ndps")
+    bhang_packs = _packs_by_id(
+        "vit student caught with bhang lassi in mahabaleshwar holi is it ndps"
+    )
     assert "ndps_1985" in bhang_packs
     assert "maharashtra_state_excise_prohibition_1949" in bhang_packs
-    assert "official_summary" in bhang_packs["maharashtra_state_excise_prohibition_1949"].source_types
+    assert (
+        "official_summary" in bhang_packs["maharashtra_state_excise_prohibition_1949"].source_types
+    )
     assert bhang_packs["maharashtra_state_excise_prohibition_1949"].priority >= 1.35
     goa_bhang_packs = _packs_by_id("bhang lassi holi goa police caught is it ndps")
     assert "ndps_1985" in goa_bhang_packs
     assert "maharashtra_state_excise_prohibition_1949" not in goa_bhang_packs
 
-    arrest_delay_ids = set(_pack_ids("papa arrest 5 din ho gaya magistrate ke samne kab le jana hota hai"))
+    arrest_delay_ids = set(
+        _pack_ids("papa arrest 5 din ho gaya magistrate ke samne kab le jana hota hai")
+    )
     assert "navtej_lgbtq_liberty" not in arrest_delay_ids
     assert "constitution_article_22" in arrest_delay_ids
 
-    lawyer_access_ids = set(_pack_ids("husband first time arrest jail superintendent not allowing lawyer meeting legal"))
+    lawyer_access_ids = set(
+        _pack_ids("husband first time arrest jail superintendent not allowing lawyer meeting legal")
+    )
     assert "constitution_article_22" in lawyer_access_ids
     assert "legal_services_authorities_1987" in lawyer_access_ids
 
-    ap_packs = _packs_by_id("tehsildar transferred my baba land to bania without my consent agency area andhra")
+    ap_packs = _packs_by_id(
+        "tehsildar transferred my baba land to bania without my consent agency area andhra"
+    )
     ap_ids = set(ap_packs)
     assert "ap_scheduled_areas_land_transfer_regulation_1959" in ap_ids
     assert "ap_scheduled_areas_land_transfer_case" in ap_ids
     assert "regulation" in ap_packs["ap_scheduled_areas_land_transfer_regulation_1959"].source_types
 
-    odisha_packs = _packs_by_id("patwari changed mutation record giving my dadaji land to non tribal buyer nuapada odisha")
+    odisha_packs = _packs_by_id(
+        "patwari changed mutation record giving my dadaji land to non tribal buyer nuapada odisha"
+    )
     odisha_ids = set(odisha_packs)
     assert "orissa_scheduled_areas_transfer_1956" in odisha_ids
     assert "odisha_scheduled_area_framework_sc" in odisha_ids
     assert "regulation" in odisha_packs["orissa_scheduled_areas_transfer_1956"].source_types
 
-    witch_ids = set(_pack_ids("neighbours calling me witch want to throw me out of village chaibasa what law"))
+    witch_ids = set(
+        _pack_ids("neighbours calling me witch want to throw me out of village chaibasa what law")
+    )
     assert "jharkhand_witch_daain_2001" in witch_ids
     assert "jharkhand_witch_official_source_missing" not in witch_ids
 
-    customs_packs = _packs_by_id("icegate showing bill of entry on hold misdeclaration alleged chinese led lights")
+    customs_packs = _packs_by_id(
+        "icegate showing bill of entry on hold misdeclaration alleged chinese led lights"
+    )
     assert "customs_1962" in customs_packs
     assert "customs_misdeclaration_1962" in customs_packs
-    assert {"/sec-111", "/sec-112", "/sec-124"} <= set(customs_packs["customs_1962"].anchor_patterns)
-    assert {"/sec-111", "/sec-112", "/sec-124"} <= set(customs_packs["customs_misdeclaration_1962"].anchor_patterns)
+    assert {"/sec-111", "/sec-112", "/sec-124"} <= set(
+        customs_packs["customs_1962"].anchor_patterns
+    )
+    assert {"/sec-111", "/sec-112", "/sec-124"} <= set(
+        customs_packs["customs_misdeclaration_1962"].anchor_patterns
+    )
 
-    svb_packs = _packs_by_id("customs reclassified my import wire harness higher duty 18% instead of 10% svb opened mumbai")
+    svb_packs = _packs_by_id(
+        "customs reclassified my import wire harness higher duty 18% instead of 10% svb opened mumbai"
+    )
     assert "customs_1962" in svb_packs
     assert "customs_valuation_svb_1962" in svb_packs
     assert "/sec-14" in svb_packs["customs_1962"].anchor_patterns
-    assert {"/sec-14", "/sec-17", "/sec-28", "/sec-128"} <= set(svb_packs["customs_valuation_svb_1962"].anchor_patterns)
+    assert {"/sec-14", "/sec-17", "/sec-28", "/sec-128"} <= set(
+        svb_packs["customs_valuation_svb_1962"].anchor_patterns
+    )
 
-    drawback_packs = _packs_by_id("drawback claim rejected by customs ngu shipping bill mismatched export incentive 9 lakh")
+    drawback_packs = _packs_by_id(
+        "drawback claim rejected by customs ngu shipping bill mismatched export incentive 9 lakh"
+    )
     assert "customs_1962" in drawback_packs
     assert "customs_drawback_1962" in drawback_packs
-    assert {"/sec-75", "/sec-74", "/sec-27", "/sec-128"} <= set(drawback_packs["customs_drawback_1962"].anchor_patterns)
+    assert {"/sec-75", "/sec-74", "/sec-27", "/sec-128"} <= set(
+        drawback_packs["customs_drawback_1962"].anchor_patterns
+    )
 
 
 def test_customs_issue_packs_require_issue_terms_not_document_terms_only():
-    bill_of_entry_packs = _packs_by_id("bill of entry assessment query no misdeclaration no penalty")
+    bill_of_entry_packs = _packs_by_id(
+        "bill of entry assessment query no misdeclaration no penalty"
+    )
     assert "customs_1962" in bill_of_entry_packs
     assert "customs_misdeclaration_1962" not in bill_of_entry_packs
 
@@ -5155,15 +6326,21 @@ def test_customs_issue_packs_require_issue_terms_not_document_terms_only():
     assert "customs_1962" in shipping_bill_packs
     assert "customs_drawback_1962" not in shipping_bill_packs
 
-    not_drawback_packs = _packs_by_id("shipping bill amendment not a drawback claim only port code correction")
+    not_drawback_packs = _packs_by_id(
+        "shipping bill amendment not a drawback claim only port code correction"
+    )
     assert "customs_1962" in not_drawback_packs
     assert "customs_drawback_1962" not in not_drawback_packs
 
-    not_penalty_packs = _packs_by_id("icegate bill of entry on hold not a penalty issue only assessment query")
+    not_penalty_packs = _packs_by_id(
+        "icegate bill of entry on hold not a penalty issue only assessment query"
+    )
     assert "customs_1962" in not_penalty_packs
     assert "customs_misdeclaration_1962" not in not_penalty_packs
 
-    no_svb_packs = _packs_by_id("customs reclassified imported wire harness higher duty no svb opened")
+    no_svb_packs = _packs_by_id(
+        "customs reclassified imported wire harness higher duty no svb opened"
+    )
     assert "customs_1962" in no_svb_packs
     assert "customs_valuation_svb_1962" not in no_svb_packs
 
@@ -5171,23 +6348,29 @@ def test_customs_issue_packs_require_issue_terms_not_document_terms_only():
     assert "customs_1962" in svb_no_customs_word
     assert "customs_valuation_svb_1962" in svb_no_customs_word
 
-    svb_not_related_party = _packs_by_id("svb opened but we are not related party declared value rejected by customs")
+    svb_not_related_party = _packs_by_id(
+        "svb opened but we are not related party declared value rejected by customs"
+    )
     assert "customs_valuation_svb_1962" in svb_not_related_party
 
 
 def test_stage_500_post_review_source_packs_cover_quality_blockers():
-    false_fir_ids = set(_pack_ids(
-        "thekedar made fake theft fir against me after i asked wages now police calling station"
-    ))
+    false_fir_ids = set(
+        _pack_ids(
+            "thekedar made fake theft fir against me after i asked wages now police calling station"
+        )
+    )
     assert {
         "code_on_wages_2019_false_fir_retaliation",
         "contract_labour_1970",
     } <= false_fir_ids
     assert "bnss_2023" in false_fir_ids and "bns_2023" in false_fir_ids
 
-    muslim_ids = set(_pack_ids(
-        "father says he is muslim 72 years his sons not giving share from grandfather property hyderabad"
-    ))
+    muslim_ids = set(
+        _pack_ids(
+            "father says he is muslim 72 years his sons not giving share from grandfather property hyderabad"
+        )
+    )
     assert {
         "shariat_1937",
         "transfer_property_1882_coowner",
@@ -5195,19 +6378,21 @@ def test_stage_500_post_review_source_packs_cover_quality_blockers():
         "senior_citizens_2007",
     } <= muslim_ids
 
-    trans_ids = set(_pack_ids(
-        "I am transwoman my landlord threw me out after he found out he kept my deposit also where do I complain"
-    ))
+    trans_ids = set(
+        _pack_ids(
+            "I am transwoman my landlord threw me out after he found out he kept my deposit also where do I complain"
+        )
+    )
     assert {"transfer_property_1882", "transgender_2019_tenancy_discrimination"} <= trans_ids
 
-    custody_ids = set(_pack_ids(
-        "my brother beaten in lockup constable took 20000 for bail still not released"
-    ))
+    custody_ids = set(
+        _pack_ids("my brother beaten in lockup constable took 20000 for bail still not released")
+    )
     assert {"protection_human_rights_1993", "bnss_2023", "bns_2023"} <= custody_ids
 
-    ola_ids = set(_pack_ids(
-        "ola driver suspended id no reason 4000 rupees earning gone how to complaint"
-    ))
+    ola_ids = set(
+        _pack_ids("ola driver suspended id no reason 4000 rupees earning gone how to complaint")
+    )
     assert {
         "motor_vehicle_aggregator_guidelines_2020_contract",
         "motor_vehicle_aggregator_guidelines_2020_grievance",
@@ -5223,7 +6408,9 @@ def test_stage_e9c_source_gap_blockers_get_precise_source_pack_anchors():
     assert "commercial_courts_2015" in commercial
     assert {"/sec-12A", "/sec-12-a"} & set(commercial["commercial_courts_2015"].anchor_patterns)
     assert "mediation_2023" in commercial
-    assert {"/sec-5", "/sec-6", "/sec-18", "/sec-19"} & set(commercial["mediation_2023"].anchor_patterns)
+    assert {"/sec-5", "/sec-6", "/sec-18", "/sec-19"} & set(
+        commercial["mediation_2023"].anchor_patterns
+    )
 
     ip_commercial = _packs_by_id(
         "amazon seller using my registered brand on fake items need commercial court injunction"
@@ -5239,7 +6426,9 @@ def test_stage_e9c_source_gap_blockers_get_precise_source_pack_anchors():
     assert "income_tax_1961" in assessment
     assert "/sec-143" in assessment["income_tax_1961"].anchor_patterns
 
-    itat = _packs_by_id("urgent how to file appeal before ITAT against CIT Appeals order time limit")
+    itat = _packs_by_id(
+        "urgent how to file appeal before ITAT against CIT Appeals order time limit"
+    )
     assert "income_tax_1961" in itat
     assert {"/sec-253", "/sec-254"} <= set(itat["income_tax_1961"].anchor_patterns)
 
@@ -5259,46 +6448,58 @@ def test_stage_e9c_source_gap_blockers_get_precise_source_pack_anchors():
 
 
 def test_repair8_source_packs_cover_precise_common_routes():
-    medical_ids = set(_pack_ids(
-        "my mother died after wrong injection in private hospital, can we get compensation or file police case"
-    ))
+    medical_ids = set(
+        _pack_ids(
+            "my mother died after wrong injection in private hospital, can we get compensation or file police case"
+        )
+    )
     assert "consumer_protection_2019" in medical_ids
 
-    army_ids = set(_pack_ids(
-        "army jawan husband passed away family pension not started which office and documents for widow"
-    ))
+    army_ids = set(
+        _pack_ids(
+            "army jawan husband passed away family pension not started which office and documents for widow"
+        )
+    )
     assert {
         "army_pension_regulations_2008_part_i",
         "army_pension_regulations_2008_part_ii",
     } <= army_ids
 
-    trademark_ids = set(_pack_ids(
-        "amazon seller using my registered brand on fake items, platform takedown not working what court route"
-    ))
+    trademark_ids = set(
+        _pack_ids(
+            "amazon seller using my registered brand on fake items, platform takedown not working what court route"
+        )
+    )
     assert {
         "trade_marks_1999",
         "trade_marks_1999_marketplace_infringement_forum",
     } <= trademark_ids
 
-    prior_user_ids = set(_pack_ids(
-        "competitor registered my brand name as trademark first but i am already using 6 years surat can i file case"
-    ))
+    prior_user_ids = set(
+        _pack_ids(
+            "competitor registered my brand name as trademark first but i am already using 6 years surat can i file case"
+        )
+    )
     assert {
         "trade_marks_1999_prior_user",
         "trade_marks_1999_forum_passing_off",
     } <= prior_user_ids
 
-    marketplace_ip_ids = set(_pack_ids(
-        "amazon delisted my product saying ip complaint how to file counter notice trademark wala"
-    ))
+    marketplace_ip_ids = set(
+        _pack_ids(
+            "amazon delisted my product saying ip complaint how to file counter notice trademark wala"
+        )
+    )
     assert {
         "trade_marks_1999",
         "trade_marks_1999_marketplace_infringement_forum",
     } <= marketplace_ip_ids
 
-    specific_performance_ids = set(_pack_ids(
-        "want specific performance of land purchase deal seller backing out delhi commercial plot"
-    ))
+    specific_performance_ids = set(
+        _pack_ids(
+            "want specific performance of land purchase deal seller backing out delhi commercial plot"
+        )
+    )
     assert {
         "specific_relief_1963_specific_performance",
         "indian_contract_1872_specific_performance",
@@ -5308,7 +6509,9 @@ def test_repair8_source_packs_cover_precise_common_routes():
     consumer_forum_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("urgent consumer complain value 50 lakh which forum district state or national how to complain"),
+            route_matter(
+                "urgent consumer complain value 50 lakh which forum district state or national how to complain"
+            ),
             "urgent consumer complain value 50 lakh which forum district state or national how to complain",
         )
     }
@@ -5319,9 +6522,15 @@ def test_repair8_source_packs_cover_precise_common_routes():
     assert {"/sec-34", "/sec-47", "/sec-58", "/sec-35"} <= set(
         consumer_forum_packs["consumer_protection_2019"].anchor_patterns
     )
-    assert consumer_forum_packs["consumer_jurisdiction_rules_2021_district"].anchor_patterns == ("/rule-2",)
-    assert consumer_forum_packs["consumer_jurisdiction_rules_2021_state"].anchor_patterns == ("/rule-3",)
-    assert consumer_forum_packs["consumer_jurisdiction_rules_2021_national"].anchor_patterns == ("/rule-4",)
+    assert consumer_forum_packs["consumer_jurisdiction_rules_2021_district"].anchor_patterns == (
+        "/rule-2",
+    )
+    assert consumer_forum_packs["consumer_jurisdiction_rules_2021_state"].anchor_patterns == (
+        "/rule-3",
+    )
+    assert consumer_forum_packs["consumer_jurisdiction_rules_2021_national"].anchor_patterns == (
+        "/rule-4",
+    )
 
     ordinary_value_packs = {
         pack.id
@@ -5334,27 +6543,29 @@ def test_repair8_source_packs_cover_precise_common_routes():
     assert "consumer_jurisdiction_rules_2021_state" not in ordinary_value_packs
     assert "consumer_jurisdiction_rules_2021_national" not in ordinary_value_packs
 
-    copyright_ids = set(_pack_ids(
-        "youtube struck my video for copyright but it was my own original song"
-    ))
+    copyright_ids = set(
+        _pack_ids("youtube struck my video for copyright but it was my own original song")
+    )
     assert "copyright_1957" in copyright_ids
     assert "copyright_1957_exceptions" in copyright_ids
     assert "copyright_1957_remedies" in copyright_ids
     assert "trade_marks_1999" not in copyright_ids
     assert "trade_marks_1999_marketplace_infringement_forum" not in copyright_ids
 
-    copyright_reel_ids = set(_pack_ids(
-        "fake influencer used my reel got 2M views without credit copyright bhai"
-    ))
+    copyright_reel_ids = set(
+        _pack_ids("fake influencer used my reel got 2M views without credit copyright bhai")
+    )
     assert {
         "copyright_1957",
         "copyright_1957_remedies",
     } <= copyright_reel_ids
     assert "trade_marks_1999" not in copyright_reel_ids
 
-    paid_video_ids = set(_pack_ids(
-        "telegram channel leaked my paid video content without permission how to take it down"
-    ))
+    paid_video_ids = set(
+        _pack_ids(
+            "telegram channel leaked my paid video content without permission how to take it down"
+        )
+    )
     assert {
         "copyright_1957",
         "copyright_1957_exceptions",
@@ -5363,9 +6574,11 @@ def test_repair8_source_packs_cover_precise_common_routes():
     } <= paid_video_ids
     assert "trade_marks_1999" not in paid_video_ids
 
-    remix_ids = set(_pack_ids(
-        "i used 20 seconds of a bollywood song in my review video and got copyright strike what can i do"
-    ))
+    remix_ids = set(
+        _pack_ids(
+            "i used 20 seconds of a bollywood song in my review video and got copyright strike what can i do"
+        )
+    )
     assert {
         "copyright_1957",
         "copyright_1957_exceptions",
@@ -5373,14 +6586,18 @@ def test_repair8_source_packs_cover_precise_common_routes():
     } <= remix_ids
     assert "trade_marks_1999" not in remix_ids
 
-    execution_ids = set(_pack_ids(
-        "money decree passed in my favour no payment since months, tell civil court procedure for attachment"
-    ))
+    execution_ids = set(
+        _pack_ids(
+            "money decree passed in my favour no payment since months, tell civil court procedure for attachment"
+        )
+    )
     assert "cpc_1908" in execution_ids
 
-    confidentiality_ids = set(_pack_ids(
-        "former sales manager using our confidential customer database after joining rival, what civil court remedy"
-    ))
+    confidentiality_ids = set(
+        _pack_ids(
+            "former sales manager using our confidential customer database after joining rival, what civil court remedy"
+        )
+    )
     assert {
         "indian_contract_1872_confidentiality",
         "specific_relief_1963_confidentiality_injunction",
@@ -5389,16 +6606,20 @@ def test_repair8_source_packs_cover_precise_common_routes():
     noncompete_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("employee joined competitor but no nda only non compete clause is it enforceable"),
+            route_matter(
+                "employee joined competitor but no nda only non compete clause is it enforceable"
+            ),
             "employee joined competitor but no nda only non compete clause is it enforceable",
         )
     }
     assert "indian_contract_act_1872_restraint_trade" in noncompete_packs
     assert "/sec-27" in noncompete_packs["indian_contract_act_1872_restraint_trade"].anchor_patterns
 
-    pollution_ids = set(_pack_ids(
-        "nearby chemical factory polluting water, people want public interest litigation what is procedure"
-    ))
+    pollution_ids = set(
+        _pack_ids(
+            "nearby chemical factory polluting water, people want public interest litigation what is procedure"
+        )
+    )
     assert {"water_pollution_1974", "environment_protection_1986", "ngt_2010"} <= pollution_ids
 
 
@@ -5445,7 +6666,9 @@ def test_fresh_negative_neighbor_v2_source_slots_cover_controlling_law():
     damage_packs = {
         pack.id: pack
         for pack in source_packs_for_route(
-            route_matter("local boys broke my scooter mirror and police are delaying FIR calling it insurance issue"),
+            route_matter(
+                "local boys broke my scooter mirror and police are delaying FIR calling it insurance issue"
+            ),
             "local boys broke my scooter mirror and police are delaying FIR calling it insurance issue",
         )
     }
@@ -5461,11 +6684,12 @@ def test_stage2_worksite_death_retrieves_bocw_as_conditional_support():
 def test_patch15_succession_source_packs_prioritize_will_update_and_pre2005_coparcenary():
     will_query = "pls tell i registered my will in sub registrar pune do i need to update it every year need lawyer or police"
     will_packs = {
-        pack.id: pack
-        for pack in source_packs_for_route(route_matter(will_query), will_query)
+        pack.id: pack for pack in source_packs_for_route(route_matter(will_query), will_query)
     }
     assert "indian_succession_1925_will_update_revocation" in will_packs
-    assert {"/sec-62", "/sec-70"} <= set(will_packs["indian_succession_1925_will_update_revocation"].anchor_patterns)
+    assert {"/sec-62", "/sec-70"} <= set(
+        will_packs["indian_succession_1925_will_update_revocation"].anchor_patterns
+    )
 
     daughter_query = "pls tell as a daughter am i coparcener in ancestral prop father died 2003 before amendment need lawyer or police"
     daughter_packs = {
@@ -5483,20 +6707,30 @@ def test_stage3_refusal_probe_source_packs_cover_named_criminal_statutes():
     assert route_matter(arms_query).label == "Arms Act / farming-tool criminal defence"
     assert "arms_1959_farming_tool" in arms_packs
     assert "crpc_1973_arms_act_arrest_notice" in arms_packs
-    assert {"/sec-2", "/sec-4", "/sec-25"} <= set(arms_packs["arms_1959_farming_tool"].anchor_patterns)
+    assert {"/sec-2", "/sec-4", "/sec-25"} <= set(
+        arms_packs["arms_1959_farming_tool"].anchor_patterns
+    )
 
-    moneylender_query = "moneylender took my thumb impression on blank paper now showing 5 lakh loan i never took"
+    moneylender_query = (
+        "moneylender took my thumb impression on blank paper now showing 5 lakh loan i never took"
+    )
     moneylender_packs = _packs_by_id(moneylender_query)
     assert "indian_contract_1872_free_consent_blank_paper" in moneylender_packs
-    assert {"/sec-14", "/sec-17", "/sec-19"} <= set(moneylender_packs["indian_contract_1872_free_consent_blank_paper"].anchor_patterns)
+    assert {"/sec-14", "/sec-17", "/sec-19"} <= set(
+        moneylender_packs["indian_contract_1872_free_consent_blank_paper"].anchor_patterns
+    )
 
-    mcoca_query = "my brother is in MCOCA case 100 days custody no chargesheet can we file default bail"
+    mcoca_query = (
+        "my brother is in MCOCA case 100 days custody no chargesheet can we file default bail"
+    )
     mcoca_packs = _packs_by_id(mcoca_query)
     assert route_matter(mcoca_query).label == "Default bail / no chargesheet"
     assert "mcoca_1999_default_bail" in mcoca_packs
     assert "/sec-21" in mcoca_packs["mcoca_1999_default_bail"].anchor_patterns
 
-    chowk_query = "delhi labour chowk police picked workers saying begging, contractor also not paying wages"
+    chowk_query = (
+        "delhi labour chowk police picked workers saying begging, contractor also not paying wages"
+    )
     chowk_packs = _packs_by_id(chowk_query)
     assert "bnss_2023_labour_chowk_detention" in chowk_packs
     assert "crpc_1973_labour_chowk_detention" in chowk_packs
@@ -5504,7 +6738,9 @@ def test_stage3_refusal_probe_source_packs_cover_named_criminal_statutes():
     false_498a_query = "wife filed false 498A and named my 70 years old mother and whole family"
     false_498a_packs = _packs_by_id(false_498a_query)
     assert "crpc_1973_498a_accused_bail_quashing" in false_498a_packs
-    assert {"/sec-438", "/sec-482"} <= set(false_498a_packs["crpc_1973_498a_accused_bail_quashing"].anchor_patterns)
+    assert {"/sec-438", "/sec-482"} <= set(
+        false_498a_packs["crpc_1973_498a_accused_bail_quashing"].anchor_patterns
+    )
 
 
 def test_source_packs_cover_stage4_source_gap_repair_prompts():
@@ -5522,12 +6758,16 @@ def test_source_packs_cover_stage4_source_gap_repair_prompts():
     assert {"/sec-173", "/sec-175"} <= set(caste_school_packs["bnss_2023"].anchor_patterns)
     assert "rte_2009_school_punishment" in caste_school_packs
 
-    old_deepfake_query = "someone made deepfake video of me on instagram in June 2024 and is extorting me"
+    old_deepfake_query = (
+        "someone made deepfake video of me on instagram in June 2024 and is extorting me"
+    )
     old_deepfake_packs = _packs_by_id(old_deepfake_query)
     assert "ipc_1860_intimate_image_blackmail" in old_deepfake_packs
     assert old_deepfake_packs["ipc_1860_intimate_image_blackmail"].anchor_patterns == ("/sec-384",)
     assert "crpc_1973_cyber_blackmail_fir" in old_deepfake_packs
-    assert {"/sec-154", "/sec-156", "/sec-200"} <= set(old_deepfake_packs["crpc_1973_cyber_blackmail_fir"].anchor_patterns)
+    assert {"/sec-154", "/sec-156", "/sec-200"} <= set(
+        old_deepfake_packs["crpc_1973_cyber_blackmail_fir"].anchor_patterns
+    )
     assert "bns_2023_intimate_image_blackmail" not in old_deepfake_packs
 
     pre_cutover_packs = _packs_by_id(
@@ -5544,19 +6784,24 @@ def test_source_packs_cover_stage4_source_gap_repair_prompts():
     assert "crpc_1973_cyber_blackmail_fir" in numeric_pre_cutover_packs
     assert "bns_2023_intimate_image_blackmail" not in numeric_pre_cutover_packs
 
-    current_deepfake_query = "someone made deepfake video of me on instagram in 2025 and is extorting me"
+    current_deepfake_query = (
+        "someone made deepfake video of me on instagram in 2025 and is extorting me"
+    )
     current_deepfake_packs = _packs_by_id(current_deepfake_query)
     assert "bns_2023_intimate_image_blackmail" in current_deepfake_packs
-    assert current_deepfake_packs["bns_2023_intimate_image_blackmail"].anchor_patterns == ("/sec-308",)
+    assert current_deepfake_packs["bns_2023_intimate_image_blackmail"].anchor_patterns == (
+        "/sec-308",
+    )
     assert "bnss_2023" in current_deepfake_packs
     assert "ipc_1860_intimate_image_blackmail" not in current_deepfake_packs
 
-    negated_extortion_query = (
-        "someone made deepfake video of me on instagram in 2025 no extortion just threatening to share"
-    )
+    negated_extortion_query = "someone made deepfake video of me on instagram in 2025 no extortion just threatening to share"
     negated_extortion_packs = _packs_by_id(negated_extortion_query)
     assert "bns_2023_intimate_image_blackmail" in negated_extortion_packs
-    assert "/sec-308" not in negated_extortion_packs["bns_2023_intimate_image_blackmail"].anchor_patterns
+    assert (
+        "/sec-308"
+        not in negated_extortion_packs["bns_2023_intimate_image_blackmail"].anchor_patterns
+    )
     assert {"/sec-77", "/sec-351", "/sec-356"} <= set(
         negated_extortion_packs["bns_2023_intimate_image_blackmail"].anchor_patterns
     )
@@ -5586,23 +6831,37 @@ def test_source_packs_cover_stage4_source_gap_repair_prompts():
 
 
 def test_source_packs_do_not_inject_new_criminal_law_for_legacy_dates():
-    dated_cyber_ids = set(_pack_ids("in 2020 otp fraud took 2 lakh from my bank account police not helping"))
-    assert not any(pack_id.startswith("bns_2023") or pack_id.startswith("bnss_2023") for pack_id in dated_cyber_ids)
+    dated_cyber_ids = set(
+        _pack_ids("in 2020 otp fraud took 2 lakh from my bank account police not helping")
+    )
+    assert not any(
+        pack_id.startswith("bns_2023") or pack_id.startswith("bnss_2023")
+        for pack_id in dated_cyber_ids
+    )
     assert "crpc_1973" in dated_cyber_ids
 
     dated_domestic_ids = set(_pack_ids("in 2020 husband forced sex and beat me what case can file"))
-    assert not any(pack_id.startswith("bns_2023") or pack_id.startswith("bnss_2023") for pack_id in dated_domestic_ids)
+    assert not any(
+        pack_id.startswith("bns_2023") or pack_id.startswith("bnss_2023")
+        for pack_id in dated_domestic_ids
+    )
     assert "crpc_1973" in dated_domestic_ids
 
 
 def test_source_packs_do_not_trigger_mgnrega_from_bare_panchayat_wage_words():
     assert "mgnrega_2005" not in _pack_ids("panchayat secretary not paying my salary")
-    assert "mgnrega_2005" not in _pack_ids("gram panchayat contractor not paying construction workers wages")
-    assert "mgnrega_2005" in _pack_ids("gram panchayat not giving work under mgnrega after application")
+    assert "mgnrega_2005" not in _pack_ids(
+        "gram panchayat contractor not paying construction workers wages"
+    )
+    assert "mgnrega_2005" in _pack_ids(
+        "gram panchayat not giving work under mgnrega after application"
+    )
 
 
 def test_jharkhand_tribal_land_pack_targets_cnt_section_46():
-    packs = _packs_by_id("munda land grabbed by upper caste in our agency village how to get back chaibasa")
+    packs = _packs_by_id(
+        "munda land grabbed by upper caste in our agency village how to get back chaibasa"
+    )
     assert "chota_nagpur_tenancy_1908_transfer_restriction" in packs
     assert "sec-46" in packs["chota_nagpur_tenancy_1908_transfer_restriction"].anchor_patterns
 
@@ -5610,7 +6869,10 @@ def test_jharkhand_tribal_land_pack_targets_cnt_section_46():
         "tehsildar transferred my baba land to bania without my consent agency area andhra"
     )
     assert "ap_scheduled_areas_land_transfer_regulation_1959" in ap_packs
-    assert "secondary_reference" in ap_packs["ap_scheduled_areas_land_transfer_regulation_1959"].source_types
+    assert (
+        "secondary_reference"
+        in ap_packs["ap_scheduled_areas_land_transfer_regulation_1959"].source_types
+    )
     assert ap_packs["ap_scheduled_areas_land_transfer_regulation_1959"].priority >= 1.35
 
     odisha_packs = _packs_by_id(

@@ -306,14 +306,44 @@ _COMMON_WORKFLOW_ACTIVATION_SPECS: dict[
 ] = {
     "loan_app_harassment": (
         (
-            "rbi_scope",
-            ("reserve bank integrated ombudsman", "integrated ombudsman"),
-            ("/sec-2", "/sec-3"),
+            "digital_grievance",
+            ("digital lending",),
+            ("/para-11",),
         ),
         (
-            "rbi_complaint",
+            "digital_data",
+            ("digital lending",),
+            ("/para-12",),
+        ),
+        (
+            "recovery_conduct",
+            ("recovery agents", "responsibilities of regulated entities"),
+            ("/para-2",),
+        ),
+        (
+            "rbi_application",
             ("reserve bank integrated ombudsman", "integrated ombudsman"),
-            ("/sec-9", "/sec-10"),
+            ("/sec-1",),
+        ),
+        (
+            "rbi_definitions",
+            ("reserve bank integrated ombudsman", "integrated ombudsman"),
+            ("/sec-3",),
+        ),
+        (
+            "rbi_forum",
+            ("reserve bank integrated ombudsman", "integrated ombudsman"),
+            ("/sec-6",),
+        ),
+        (
+            "rbi_grounds",
+            ("reserve bank integrated ombudsman", "integrated ombudsman"),
+            ("/sec-9",),
+        ),
+        (
+            "rbi_maintainability",
+            ("reserve bank integrated ombudsman", "integrated ombudsman"),
+            ("/sec-10",),
         ),
     ),
 }
@@ -4244,32 +4274,42 @@ def _loan_app_harassment_lines(
     if route.category not in {"banking_credit_dispute", "cyber_fraud_or_harassment", "criminal_general"} or not _is_loan_app(q):
         return []
     source_indices = enforced_source_indices or {}
-    rbi_scope = source_indices.get("rbi_scope") or _find(
-        passages,
-        title_terms=("reserve bank integrated ombudsman",),
-        anchor_terms=("/sec-2", "/sec-3"),
+    digital_grievance = source_indices.get("digital_grievance") or _find(
+        passages, title_terms=("digital lending",), anchor_terms=("/para-11",)
     )
-    rbi_complaint = source_indices.get("rbi_complaint") or _find(
-        passages,
-        title_terms=("reserve bank integrated ombudsman",),
-        anchor_terms=("/sec-9", "/sec-10"),
+    digital_data = source_indices.get("digital_data") or _find(
+        passages, title_terms=("digital lending",), anchor_terms=("/para-12",)
     )
-    rbi = rbi_complaint or rbi_scope
-    dpdp = (
-        _find(
-            passages,
-            title_terms=("digital personal data protection",),
-            anchor_terms=("/sec-13",),
-        )
-        if dpdp_section_13_in_force()
-        else None
+    recovery_conduct = source_indices.get("recovery_conduct") or _find(
+        passages, title_terms=("recovery agents",), anchor_terms=("/para-2",)
     )
-    it_act = _find(passages, title_terms=("information technology",), anchor_terms=("/sec-66C", "/sec-66D", "/sec-66E", "/sec-67"))
-    bns = _find(passages, title_terms=("bharatiya nyaya",), anchor_terms=("/sec-308", "/sec-351", "/sec-356"))
-    bnss = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-173",))
-    primary = rbi or it_act or dpdp or bns or bnss
-    if primary is None:
+    rbi_application = source_indices.get("rbi_application") or _find(
+        passages, title_terms=("integrated ombudsman",), anchor_terms=("/sec-1",)
+    )
+    rbi_definitions = source_indices.get("rbi_definitions") or _find(
+        passages, title_terms=("integrated ombudsman",), anchor_terms=("/sec-3",)
+    )
+    rbi_forum = source_indices.get("rbi_forum") or _find(
+        passages, title_terms=("integrated ombudsman",), anchor_terms=("/sec-6",)
+    )
+    rbi_grounds = source_indices.get("rbi_grounds") or _find(
+        passages, title_terms=("integrated ombudsman",), anchor_terms=("/sec-9",)
+    )
+    rbi_maintainability = source_indices.get("rbi_maintainability") or _find(
+        passages, title_terms=("integrated ombudsman",), anchor_terms=("/sec-10",)
+    )
+    if any(index is None for index in (
+        digital_grievance, digital_data, recovery_conduct,
+        rbi_application, rbi_definitions, rbi_forum,
+        rbi_grounds, rbi_maintainability,
+    )):
         return []
+    it_act = _find(passages, title_terms=("information technology",), anchor_terms=("/sec-66C", "/sec-66D", "/sec-66E", "/sec-67"))
+    bns_extortion = _find(
+        passages,
+        title_terms=("bharatiya nyaya sanhita",),
+        anchor_terms=("/sec-308",),
+    )
     image_blackmail = _has_any(q, ("morphed nude", "fake nude", "nude", "morphed-image", "morphed image")) and _has_any(q, ("blackmail", "miss payment", "payment tonight", "post", "photo", "upload"))
     photo_contacts_context = _has_any(q, (
         "sending my photo", "photo to contacts", "photo to my contacts",
@@ -4301,37 +4341,38 @@ def _loan_app_harassment_lines(
         if _has_any(q, ("nbfc", "visiting office", "workplace", "office"))
         else "Loan app or recovery harassment (loan app or recovery-agent harassment)"
     )
-    lines = ["**Short answer**"]
-    lines.append(
-        f"For {recovery_subject}, keep the lender grievance, personal-data misuse, and any threat or criminal complaint as separate tracks; a normal due-date reminder alone is not this harassment route [{primary}]."
-    )
-    if dpdp is not None:
-        lines.append(
-            f"DPDP Act Section 13 gives a Data Principal the right to a readily available grievance-redressal mechanism from the Data Fiduciary for acts or omissions concerning personal-data obligations [{dpdp}]."
-        )
-    if rbi_scope is not None:
-        lines.append(
-            f"The RBI Integrated Ombudsman Scheme applies only if the lender or its regulated partner is a covered regulated entity; identify that entity before using the RBI Ombudsman/CMS route [{rbi_scope}]."
-        )
-    if rbi_complaint is not None:
-        lines.append(
-            f"For a covered regulated entity, the Scheme's complaint and maintainability clauses require the prior written grievance and its reply or no-reply record before RBI Ombudsman/CMS escalation [{rbi_complaint}]."
-        )
+    lines = [
+        "**Short answer**",
+        f"RBI Digital Lending Directions paragraph 12 requires need-based, explicitly consented data collection and says regulated loan apps must not access contact lists or call logs [{digital_data}].",
+        f"RBI's recovery-agent circular prohibits intimidation or harassment, public humiliation, and intrusion into the privacy of a debtor's family members, referees, and friends [{recovery_conduct}].",
+        f"Ombudsman Scheme Clause 1 applies the Scheme to services provided by a Regulated Entity in India, and Clause 3 defines a Regulated Entity to include a bank or covered NBFC [{rbi_application}], [{rbi_definitions}].",
+        f"The lender and its app/LSP must provide a grievance route; rejection, an unsatisfactory reply, or 30 days without a reply can lead to RBI CMS escalation [{digital_grievance}].",
+        f"For RBI Ombudsman filing, Clause 9 supplies the complaint ground and Clause 10 supplies the prior-grievance and maintainability conditions [{rbi_grounds}], [{rbi_maintainability}].",
+    ]
     if image_blackmail and it_act is not None:
         lines.append(
-            f"IT Act Section 66E applies to intentional or knowing capture, publication, or transmission of an image of a person's private area without consent in privacy-violating circumstances [{it_act}]."
+            f"IT Act Section 66E is narrower than a general morphed-image threat: it applies to intentional or knowing capture, publication, or transmission of an actual private-area image without consent in privacy-violating circumstances [{it_act}]."
+        )
+    if image_blackmail and bns_extortion is not None:
+        lines.append(
+            f"Because the threat is tied to a demand for payment, BNS Section 308 is the extortion source to check: it covers inducing delivery of property by fear of injury and also attempting to put a person in fear in order to commit extortion [{bns_extortion}]."
         )
     lines.extend([
         "**What you can do next**",
         (
-            f"- Do not pay or forward the morphed nude threat; preserve screenshots, caller/app name, loan account, repayment proof, phone numbers, UPI/payment demand, WhatsApp/SMS messages, and report to cyber police/1930/cybercrime.gov.in while also keeping the lender/NBFC and personal-data grievance records [{it_act or dpdp or rbi or primary}]."
-            if image_blackmail
-            else f"- Identify the lender/NBFC or regulated partner; preserve the written grievance and response record, use RBI Ombudsman/CMS only where the entity and complaint are covered, and use local or cyber police/1930/cybercrime.gov.in if threats, extortion, photo misuse, or contact-data abuse continue [{rbi_complaint or rbi_scope or primary}]."
+            "- Preserve screenshots, caller/app name, loan account, repayment proof, phone numbers, payment demand, and messages; use the urgent cyber-reporting option in the action path, and do not pay or forward the threatened image."
+            if image_blackmail and it_act is not None
+            else f"- Use the grievance officer identified under paragraph 11 for a written complaint to the regulated lender or app/LSP; keep the reply or no-reply record [{digital_grievance}]."
         ),
         (
-            f"- Keep a private evidence folder for the morphed nude blackmail, contact-data abuse, call recordings, messages sent to contacts, complaint number, and any platform/profile links; do not reshare the image while reporting [{primary}]."
-            if image_blackmail
-            else f"- Keep the lender/app name, loan account, repayment proof, app permissions, call logs, WhatsApp/SMS screenshots, messages sent to contacts, workplace or neighbour contact proof, complaint number, and any threat recordings [{primary}]."
+            f"- Confirm that the provider is a covered bank or NBFC before using RBI CMS; Clause 1 limits the Scheme to services of a Regulated Entity in India, and Clause 3 defines the covered entity types [{rbi_application}], [{rbi_definitions}]."
+            if image_blackmail and it_act is not None
+            else f"- Keep a dated record that {recovery_subject}, plus the lender/app name, loan account, repayment proof, app permissions, call logs, messages sent to contacts, complaint number, and any threat recordings."
+        ),
+        (
+            f"- Use the grievance officer identified under paragraph 11 [{digital_grievance}]. If Clause 10 is satisfied, file through RBI Ombudsman/CMS or the Centralised Receipt and Processing Centre identified by Clause 6 [{rbi_maintainability}], [{rbi_forum}]."
+            if image_blackmail and it_act is not None
+            else f"- If Clause 10 is satisfied, file through RBI Ombudsman/CMS or the Centralised Receipt and Processing Centre identified by Clause 6 [{rbi_forum}]."
         ),
     ])
     return lines
