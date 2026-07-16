@@ -44,6 +44,19 @@ class _RerankerWorker:
         self._lock = threading.Lock()
         self._unavailable = False  # if first load fails, mark and stop retrying
 
+    def _load_model(self, device: str):
+        from sentence_transformers import CrossEncoder
+
+        logger.info(
+            "loading reranker %s on %s (first call; ~1-2 GB)",
+            self.model_name,
+            device,
+        )
+        t0 = time.perf_counter()
+        model = CrossEncoder(self.model_name, device=device, max_length=512)
+        logger.info("reranker loaded on %s in %.1fs", device, time.perf_counter() - t0)
+        return model
+
     def _ensure(self):
         if self._model is not None or self._unavailable:
             return
@@ -51,21 +64,28 @@ class _RerankerWorker:
             if self._model is not None or self._unavailable:
                 return
             try:
-                from sentence_transformers import CrossEncoder
-                logger.info(
-                    "loading reranker %s on %s (first call; ~1-2 GB)",
-                    self.model_name, self.device,
-                )
-                t0 = time.perf_counter()
-                self._model = CrossEncoder(self.model_name, device=self.device, max_length=512)
-                logger.info(
-                    "reranker loaded in %.1fs", time.perf_counter() - t0,
-                )
+                self._model = self._load_model(self.device)
             except Exception as e:
-                logger.warning(
-                    "reranker unavailable, falling back to combined_score order: %s", e,
-                )
-                self._unavailable = True
+                if self.device != "cpu":
+                    logger.warning(
+                        "reranker unavailable on %s (%s); retrying on CPU",
+                        self.device,
+                        e,
+                    )
+                    try:
+                        self.device = "cpu"
+                        self._model = self._load_model(self.device)
+                    except Exception as cpu_error:
+                        logger.warning(
+                            "reranker unavailable, falling back to combined_score order: %s",
+                            cpu_error,
+                        )
+                        self._unavailable = True
+                else:
+                    logger.warning(
+                        "reranker unavailable, falling back to combined_score order: %s", e,
+                    )
+                    self._unavailable = True
 
     def is_available(self) -> bool:
         self._ensure()
@@ -87,7 +107,27 @@ class _RerankerWorker:
             )
             return [float(s) for s in scores]
         except Exception as e:
-            logger.warning("reranker.predict failed: %s; falling back", e)
+            if self.device != "cpu":
+                logger.warning(
+                    "reranker.predict failed on %s (%s); retrying on CPU",
+                    self.device,
+                    e,
+                )
+                try:
+                    with self._lock:
+                        self.device = "cpu"
+                        self._model = self._load_model(self.device)
+                    scores = self._model.predict(
+                        [(query, p) for p in passages],
+                        batch_size=32,
+                        show_progress_bar=False,
+                        convert_to_numpy=True,
+                    )
+                    return [float(s) for s in scores]
+                except Exception as cpu_error:
+                    logger.warning("reranker CPU retry failed: %s; falling back", cpu_error)
+            else:
+                logger.warning("reranker.predict failed: %s; falling back", e)
             self._unavailable = True
             return None
 

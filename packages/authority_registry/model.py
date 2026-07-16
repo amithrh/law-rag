@@ -93,7 +93,12 @@ class AuthorityRecord(StrictModel):
     consolidation_as_at: date | None = None
     publisher: PublisherRecord
     canonical_url: str = Field(pattern=r"^https://")
-    source_origin: Literal["indiacode", "rbi"]
+    source_origin: Literal[
+        "indiacode",
+        "rbi",
+        "mha_gazette",
+        "legislative_department",
+    ]
     provenance: ProvenanceDeclaration
     doc_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
@@ -164,6 +169,7 @@ class WorkflowAuthorityRequirement(StrictModel):
     registry_key: str = Field(pattern=r"^[a-z0-9][a-z0-9_]*$")
     role: Literal["scope", "forum", "legal_basis", "maintainability", "remedy"]
     required: bool = True
+    answer_must_cite: bool | None = None
     condition_ids: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -198,7 +204,9 @@ class AuthorityWorkflowRecord(StrictModel):
 
     @property
     def record_sha256(self) -> str:
-        payload = self.model_dump_json(exclude_none=False)
+        # Optional workflow-policy fields must not rewrite hashes for already
+        # applied migrations that predate those fields.
+        payload = self.model_dump_json(exclude_none=True)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -214,5 +222,11 @@ class WorkflowMigrationOperation(StrictModel):
 class AuthorityMigration(StrictModel):
     migration_id: str = Field(pattern=r"^[0-9]{4}_[a-z0-9][a-z0-9_]*$")
     schema_version: Literal[1]
-    operations: tuple[AuthorityMigrationOperation, ...] = Field(min_length=1)
+    operations: tuple[AuthorityMigrationOperation, ...] = ()
     workflow_operations: tuple[WorkflowMigrationOperation, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_operations(self) -> AuthorityMigration:
+        if not self.operations and not self.workflow_operations:
+            raise ValueError("migration requires an authority or workflow operation")
+        return self

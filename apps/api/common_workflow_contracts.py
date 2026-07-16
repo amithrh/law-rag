@@ -1959,7 +1959,11 @@ def _custody_habeas_lockup_abuse_lines(q: str, route: MatterRoute, passages: lis
     if article22 is not None or bnss_arrest is not None or crpc_arrest is not None:
         arrest_cite = article22 or bnss_arrest or crpc_arrest
         lines.append(
-            f"Ask for grounds of arrest, arrest memo, station name, officer details, family or nominated-person intimation, lawyer access, and production before the Magistrate within the required time window [{arrest_cite}]."
+            f"Treat this as an arrest-information and liberty safeguard: ask for grounds of arrest, arrest memo, station name, officer details, family or nominated-person intimation, lawyer access, and production before the Magistrate within the required time window [{arrest_cite}]."
+        )
+    if article22 is not None:
+        lines.append(
+            f"Article 22 requires production before the nearest Magistrate within twenty-four hours of arrest, excluding necessary journey time, unless a separately reviewed constitutional exception applies [{article22}]."
         )
     if _has_any(q, ("beaten", "beating", "torture", "injury", "took 20000", "bribe", "constable")):
         abuse_cite = bns_hurt or human_rights or article21 or bnss_fir or primary
@@ -1968,13 +1972,13 @@ def _custody_habeas_lockup_abuse_lines(q: str, route: MatterRoute, passages: lis
         )
     if bnss_fir is not None:
         lines.append(
-            f"For the written complaint/FIR-refusal path, submit the custody facts in writing and preserve acknowledgement before escalating to SP, Magistrate, DLSA, or human-rights channels [{bnss_fir}]."
+            f"For the FIR copy, written complaint, or FIR-refusal path, submit the custody facts in writing and preserve acknowledgement before escalating to SP, Magistrate, DLSA, or human-rights channels [{bnss_fir}]."
         )
     action_cites = _cite_many(article22, article21, article226, bnss_arrest, crpc_arrest, bnss_fir, human_rights, bns_hurt)
     lines.extend([
         "**What you can do next**",
-        f"- Record arrest/pickup time, station, officer names, vehicle/CCTV/witnesses, injury photos, medical/MLC papers, money/bribe demand proof, calls/messages, FIR/notice number, and whether family/lawyer access or Magistrate production happened {action_cites}.",
-        f"- Contact DLSA/legal aid or a criminal lawyer immediately; for continuing detention use Magistrate/High Court habeas route, and for lockup abuse use senior police, SP, human-rights commission, and medical evidence route {action_cites}.",
+        f"- Record arrest/pickup time and place, station, officer names, vehicle/CCTV/witnesses, injury photos, medical/MLC papers, money/bribe demand proof, calls/messages, FIR/notice number, and whether family/lawyer access or Magistrate production happened {action_cites}.",
+        f"- If the station remains unknown, contact DLSA/legal aid or a criminal lawyer immediately; for continuing detention use the Magistrate/High Court habeas route, and for lockup abuse use senior police, SP, human-rights commission, and medical evidence route {action_cites}.",
     ])
     return lines
 

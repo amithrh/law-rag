@@ -713,18 +713,51 @@ def _loan_app_registry_passages():
     ]
 
 
+def _custody_registry_passages(regime="unknown", start=1):
+    passages = [
+        _passage(start, "Constitution of India", "constitution-india/sec-22", "constitution_article_22"),
+        _passage(start + 1, "Constitution of India", "constitution-india/sec-226", "constitution_article_226_habeas"),
+    ]
+    if regime in {"unknown", "legacy"}:
+        passages.append(_passage(
+            start + len(passages),
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "bnss-2023/sec-531",
+            "bnss_2023_custody_registry",
+        ))
+    if regime == "current":
+        for section in (36, 37, 47, 48, 57, 58):
+            passages.append(_passage(
+                start + len(passages),
+                "Bharatiya Nagarik Suraksha Sanhita 2023",
+                f"bnss-2023/sec-{section}",
+                "bnss_2023_custody_registry",
+            ))
+    if regime == "legacy":
+        for section in ("41-b", "41-c", "50", "50-a", "56", "57"):
+            passages.append(_passage(
+                start + len(passages),
+                "Code of Criminal Procedure 1973",
+                f"crpc-1973/sec-{section}",
+                "crpc_1973_custody_registry",
+            ))
+    if regime == "geographic_exception":
+        passages.append(_passage(
+            start + len(passages),
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "bnss-2023/sec-1",
+            "bnss_2023_custody_registry",
+        ))
+    return passages
+
+
 @pytest.mark.parametrize(
     "query,passages",
     (
         ("My husband is beating me right now", [
             _passage(1, "Protection of Women from Domestic Violence Act 2005", "pwdva-2005/sec-3", "pwdva_2005"),
         ]),
-        ("Police picked my son at night and gave no FIR copy", [
-            _passage(1, "Constitution of India", "constitution/sec-22", "constitution_article_22"),
-            _passage(2, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-47", "bnss_2023"),
-            _passage(3, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-57", "bnss_2023"),
-            _passage(4, "Code of Criminal Procedure 1973", "crpc-1973/sec-50", "crpc_1973"),
-        ]),
+        ("Police picked my son at night and gave no FIR copy", _custody_registry_passages()),
         ("Police arrested my son for being gay", [
             _passage(1, "NAVTEJ SINGH JOHAR & ORS. versus UNION OF INDIA", "2018-insc-790#header", "navtej_lgbtq_liberty", "sc_judgment"),
             _passage(2, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-47", "bnss_2023"),
@@ -942,11 +975,11 @@ def test_compatible_identity_and_custody_tracks_render_urgent_first():
     ]
     passages = [
         _passage(1, "NAVTEJ SINGH JOHAR & ORS. versus UNION OF INDIA", "2018-insc-790#header", "navtej_lgbtq_liberty", "sc_judgment"),
-        _passage(2, "Constitution of India", "constitution/sec-22", "constitution_article_22"),
-        _passage(3, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-47", "bnss_2023"),
-        _passage(4, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-57", "bnss_2023"),
-        _passage(5, "Code of Criminal Procedure 1973", "crpc-1973/sec-50", "crpc_1973"),
-        _passage(6, "Code of Criminal Procedure 1973", "crpc-1973/sec-57", "crpc_1973"),
+        _passage(2, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-47", "bnss_2023"),
+        _passage(3, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-57", "bnss_2023"),
+        _passage(4, "Code of Criminal Procedure 1973", "crpc-1973/sec-50", "crpc_1973"),
+        _passage(5, "Code of Criminal Procedure 1973", "crpc-1973/sec-57", "crpc_1973"),
+        *_custody_registry_passages(start=6),
     ]
     result = _selected_workflow_result(query, route, passages, plan)
     assert result is not None
@@ -1191,7 +1224,7 @@ def test_vehicle_theft_owner_and_sources_follow_incident_regime(
             "Police picked my son from home in May 2023 and gave no FIR copy",
             "authority_graph:arrest_custody_station_case_not_disclosed",
             {"Code of Criminal Procedure 1973"},
-            "BNSS Section",
+            "For a current BNSS matter",
         ),
         (
             "Police picked my son from home in August 2025 and gave no FIR copy",
@@ -1235,17 +1268,58 @@ def test_arrest_owners_filter_procedure_by_incident_regime(
         }
     }
     assert procedure_acts & required_procedure_acts
-    passages = [
-        {"index": 1, "title": "NAVTEJ SINGH JOHAR & ORS. versus UNION OF INDIA", "anchor": "2018-insc-790#header"},
-        {"index": 2, "title": "Constitution of India", "anchor": "constitution/sec-22"},
-        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-47"},
-        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-57"},
-        {"index": 5, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-50"},
-        {"index": 6, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-57"},
-    ]
+    if owner == "authority_graph:arrest_custody_station_case_not_disclosed":
+        custody_regime = (
+            "legacy" if route.legal_regime.startswith("legacy_") else "current"
+        )
+        passages = _custody_registry_passages(custody_regime)
+    else:
+        passages = [
+            _passage(1, "NAVTEJ SINGH JOHAR & ORS. versus UNION OF INDIA", "2018-insc-790#header", "navtej_lgbtq_liberty", "sc_judgment"),
+            _passage(2, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-47", "bnss_2023"),
+            _passage(3, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-57", "bnss_2023"),
+            _passage(4, "Code of Criminal Procedure 1973", "crpc-1973/sec-50", "crpc_1973"),
+            _passage(5, "Code of Criminal Procedure 1973", "crpc-1973/sec-57", "crpc_1973"),
+        ]
     workflow = _selected_workflow_result(query, route, passages, plan)
     assert workflow is not None
     assert forbidden_text not in " ".join(workflow.lines)
+
+
+def test_custody_registry_uses_incident_regime_not_birth_year():
+    query = (
+        "Police picked my son born in 2008 from home last night "
+        "and are hiding the station"
+    )
+
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    assert route.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident"
+    assert plan is not None
+    registry_keys = {
+        entry.registry_key for entry in plan.authority_ledger if entry.registry_key
+    }
+    assert "bharatiya_nagarik_suraksha_sanhita_2023_section_36" in registry_keys
+    assert not any(key.startswith("code_of_criminal_procedure_1973") for key in registry_keys)
+
+
+def test_custody_birth_year_without_incident_date_keeps_regime_unknown():
+    query = "Police picked my son born in 2008 from home and hide the station"
+
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    assert route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    assert plan is not None
+    registry_keys = {
+        entry.registry_key for entry in plan.authority_ledger if entry.registry_key
+    }
+    assert registry_keys == {
+        "constitution_of_india_article_22",
+        "constitution_of_india_article_226",
+        "bharatiya_nagarik_suraksha_sanhita_2023_section_531",
+    }
 
 
 def test_unknown_date_lgbtq_arrest_names_both_regimes_without_selecting_one():
@@ -1296,12 +1370,7 @@ def test_hidden_person_custody_owner_accepts_natural_user_grammar(query: str):
     route = route_matter(query)
     plan = build_matter_plan(query, route)
     assert plan is not None
-    passages = [
-        _passage(1, "Constitution of India", "constitution-india/sec-22", "constitution"),
-        _passage(2, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-47", "bnss_2023"),
-        _passage(3, "Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-57", "bnss_2023"),
-        _passage(4, "Code of Criminal Procedure 1973", "crpc-1973/sec-57", "crpc_1973"),
-    ]
+    passages = _custody_registry_passages()
 
     workflow = _selected_workflow_result(query, route, passages, plan)
 

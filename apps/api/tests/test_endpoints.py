@@ -2209,16 +2209,12 @@ def test_primary_workflow_template_does_not_append_unrelated_contract_floor(monk
 
 
 @pytest.mark.needs_stack
-def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypatch):
-    """Primary workflow answers must still cite retrieved route-required law.
-
-    This exercises the real /answer SSE path, not only the helper. The fake
-    workflow cites the RBI source but omits the retrieved Consumer Protection
-    source; source_floor_only should bridge that missing authority.
-    """
+def test_primary_registry_workflow_filters_neighboring_context_source(monkeypatch):
+    """Registry-owned answers keep canonical sources and filter neighbors."""
     from apps.api import main as api_main
     from apps.api import retrieval
     from apps.api.common_workflow_contracts import WorkflowTemplateResult
+    from authority_registry.model import canonical_authority_id
 
     def chunk(
         chunk_id: int,
@@ -2228,6 +2224,14 @@ def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypa
         required_source_pack: str,
         text: str,
     ) -> retrieval.RetrievedChunk:
+        authority_ids = []
+        if title == "Reserve Bank Integrated Ombudsman Scheme 2021":
+            clause = anchor.rsplit("-", 1)[-1]
+            authority_ids = [canonical_authority_id(
+                "Reserve Bank - Integrated Ombudsman Scheme, 2021",
+                "clause",
+                clause,
+            )]
         return retrieval.RetrievedChunk(
             chunk_id=chunk_id,
             document_id=chunk_id,
@@ -2244,26 +2248,50 @@ def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypa
             dense_score=0.95,
             bm25_score=0.95,
             rerank_score=0.95,
-            metadata={"_required_source_pack": required_source_pack},
+            metadata={
+                "_required_source_pack": required_source_pack,
+                "_authority_ids": authority_ids,
+            },
         )
 
     chunks = [
         chunk(
             1,
             "Reserve Bank Integrated Ombudsman Scheme 2021",
-            "rbi-integrated-ombudsman-2021/sec-2",
+            "rbi-integrated-ombudsman-2021/sec-1",
             required_source_pack="rbi_integrated_ombudsman_2021",
-            text="The RBI Ombudsman Scheme covers complaints against regulated entities including banks.",
+            text="The Scheme provides cost-free redress for customer complaints involving deficiency in services rendered by regulated entities.",
         ),
         chunk(
             2,
             "Reserve Bank Integrated Ombudsman Scheme 2021",
-            "rbi-integrated-ombudsman-2021/sec-9",
+            "rbi-integrated-ombudsman-2021/sec-3",
             required_source_pack="rbi_integrated_ombudsman_2021",
-            text="A complaint may be made after the regulated entity rejects it, gives an unsatisfactory reply, or does not reply within the prescribed period.",
+            text="Deficiency in service means a shortcoming or inadequacy in a financial service which the regulated entity is required to provide.",
         ),
         chunk(
             3,
+            "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "rbi-integrated-ombudsman-2021/sec-6",
+            required_source_pack="rbi_integrated_ombudsman_2021",
+            text="The Reserve Bank may appoint one or more Ombudsmen and Deputy Ombudsmen to carry out the functions entrusted under the Scheme.",
+        ),
+        chunk(
+            4,
+            "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "rbi-integrated-ombudsman-2021/sec-9",
+            required_source_pack="rbi_integrated_ombudsman_2021",
+            text="A customer aggrieved by deficiency in service of a regulated entity may file a complaint under the Scheme.",
+        ),
+        chunk(
+            5,
+            "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "rbi-integrated-ombudsman-2021/sec-10",
+            required_source_pack="rbi_integrated_ombudsman_2021",
+            text="A complaint is maintainable after the regulated entity rejects it, gives an unsatisfactory reply, or does not reply within thirty days.",
+        ),
+        chunk(
+            6,
             "Consumer Protection Act 2019",
             "consumer-protection-2019/sec-35",
             required_source_pack="consumer_protection_2019",
@@ -2284,13 +2312,25 @@ def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypa
             answer_mode="primary",
             lines=[
                 "**Short answer**",
-                "For a wrong bank debit, first raise a written bank complaint and use the RBI Ombudsman/CMS route if the bank reply or non-reply does not fix it [1] [2].",
+                "For a wrong bank debit, first raise a written bank complaint and use the RBI Ombudsman/CMS route if the bank reply or non-reply does not fix it [1] [2] [3] [4] [5].",
                 "**What you can do next**",
-                "- Keep the bank statement entry, transaction ID, complaint number, and written bank reply [1] [2].",
+                "- Keep the bank statement entry, transaction ID, complaint number, and written bank reply [1] [2] [3] [4] [5].",
             ],
-            required_sources=("rbi_scope", "rbi_complaint"),
+            required_sources=(
+                "rbi_application",
+                "rbi_definitions",
+                "rbi_forum",
+                "rbi_grounds",
+                "rbi_maintainability",
+            ),
             optional_sources=("consumer",),
-            source_indices={"rbi_scope": 1, "rbi_complaint": 2},
+            source_indices={
+                "rbi_application": 1,
+                "rbi_definitions": 2,
+                "rbi_forum": 3,
+                "rbi_grounds": 4,
+                "rbi_maintainability": 5,
+            },
         )
 
     monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fake_multi_query_retrieve)
@@ -2314,8 +2354,7 @@ def test_primary_workflow_template_emits_missing_required_source_bridge(monkeypa
     assert workflow["id"] == "wrong_bank_debit"
     assert workflow["answer_mode"] == "primary"
     assert "RBI Ombudsman/CMS route" in joined
-    assert "Consumer Protection Act 2019, Section 35 [3]" in joined
-    assert joined.count("Consumer Protection Act 2019, Section 35 [3]") == 1
+    assert "Consumer Protection Act 2019" not in joined
     assert "District Legal Services Authority" not in joined
 
 

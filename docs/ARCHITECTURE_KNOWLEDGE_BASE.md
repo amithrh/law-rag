@@ -865,3 +865,58 @@ returned the complete expected registry sets with no source gap, refusal, or
 weak/unsupported legal sentence. P2B is still awaiting an independent
 post-implementation review because the reviewer service reached its child
 thread limit; tests do not convert that missing review into a PASS.
+
+## 2026-07-15 P2C Registry-Owned Hidden Arrest and Custody
+
+P2C migrates the hidden-person custody route from title/anchor inference to a
+versioned authority workflow. It covers Constitution Articles 22 and 226,
+current BNSS arrest/location/intimation/production provisions, BNSS Section 531
+transition, legacy CrPC counterparts, and BNSS Section 1 scope for Nagaland and
+specified tribal areas.
+
+The legal and product invariants are:
+
+1. Incident date selects one procedural regime. An unknown date activates the
+   constitutional floor and transition question; it does not cite both full
+   old and new codes as though both govern.
+2. A proceeding pending immediately before 1 July 2024 can remain under CrPC
+   through BNSS Section 531. The arrest date alone does not erase the savings
+   inquiry.
+3. BNSS is not asserted nationally for Nagaland or specified tribal areas
+   without checking a State notification. Articles 22 and 226 remain available
+   while local procedure is verified.
+4. Public arrest-location information and private nominated-person intimation
+   are separate claims. The public control-room/designated-officer route does
+   not promise that any caller is entitled to private custody information.
+5. Hidden custody keeps an urgent Article 226 habeas-assistance path even when
+   an FIR copy, exact station, or offence section is unavailable.
+6. Retrieval completeness and answer completeness are different policies.
+   `WorkflowAuthorityRequirement.answer_must_cite` leaves all active provisions
+   in retrieval while allowing duplicative safeguards to remain supporting
+   law. A workflow-only migration changes that policy without rewriting an
+   applied authority migration.
+7. Statutory claims should be provision-specific. Combining two duties in one
+   sentence caused claim-level support to drop valid citations; the legacy
+   template now states Sections 41B, 41C, 50, 50A, 56, and 57 separately and
+   preserves the `without warrant` qualification where required.
+8. Official-source choice is content-sensitive. The available India Code BNSS
+   extraction repeated neighboring text for Section 58, so the enacted MHA
+   Gazette PDF is pinned and hash/text verified instead.
+9. The router owns the incident-date regime decision. Registry conditions
+   consume `MatterRoute.legal_regime` instead of reparsing every four-digit
+   number; a birth year or statute year must not switch BNSS and CrPC.
+10. Human-custody matching permits bounded personal descriptors such as a birth
+    year between the person and pickup location, but remains closed against
+    property continuations such as `worker ID cards`, equipment, or documents.
+
+P2C proof: the final shared-route regression slice passes `161/161`, the full
+non-stack API gate passes `1,673`, and all `43` real-stack API tests pass. The wheel contains migrations `0001` through
+`0007` and reloads the custody answer policy. Live `/answer` replays pass `8/8`
+across unknown, current, legacy, saved-pending, Nagaland, and three negative
+neighbors with exact authority sets and no source gap, refusal, or
+weak/unsupported sentence. The same broad gate repaired an implied-subject
+arrest expansion miss and an MPS-to-CPU reranker fallback.
+
+Independent post-implementation review remains open after three final retries
+because the reviewer service reports `agent thread limit reached`. The stage is technically green,
+not independently closed and not product launch evidence.

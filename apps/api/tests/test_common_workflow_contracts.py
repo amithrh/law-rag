@@ -1451,16 +1451,15 @@ def test_stage2_failed_family_workflows_use_specific_user_frame():
 
     arrest_sources = [
         {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
-        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-48"},
-        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-57"},
-        {"index": 4, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-57"},
+        {"index": 2, "title": "Constitution of India", "anchor": "constitution-india/sec-226"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-531"},
     ]
     arrest_query = "police has picked my son from my home in the night, i have not got FIR copy"
     assert _workflow_id(arrest_query, arrest_sources) == "arrest_custody_station_case_not_disclosed"
     arrest_answer = _grounded_joined(arrest_query, arrest_sources)
-    assert "urgent arrest/custody safeguard" in arrest_answer
-    assert "production before a Magistrate" in arrest_answer
-    assert "DLSA or a criminal lawyer immediately" in arrest_answer
+    assert "hidden police pickup as an urgent liberty issue" in arrest_answer
+    assert "within twenty-four hours" in arrest_answer
+    assert "DLSA or High Court counsel immediately" in arrest_answer
 
     legal_aid_sources = [
         {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
@@ -2263,16 +2262,17 @@ def test_common_workflow_contract_handles_fresh50_critical_families():
     assert "Protection Officer" in domestic
     assert "BNSS FIR/information and Magistrate-escalation route" in domestic
 
-    arrest = _joined(
+    arrest = _grounded_joined(
         "police took my brother at midnight and not telling station or case",
         [
             {"index": 1, "title": "Constitution of India", "anchor": "constitution-india/sec-22"},
-            {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-47"},
+            {"index": 2, "title": "Constitution of India", "anchor": "constitution-india/sec-226"},
+            {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-531"},
         ],
     )
-    assert "not telling the station, case, FIR copy, or grounds" in arrest
-    assert "arrest memo" in arrest
-    assert "habeas" not in arrest
+    assert "hidden police pickup as an urgent liberty issue" in arrest
+    assert "FIR copy" in arrest
+    assert "habeas corpus" in arrest
 
     caste = _joined(
         "neighbour used caste slur and hit me but station refuses case",

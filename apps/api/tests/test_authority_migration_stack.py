@@ -115,6 +115,8 @@ async def test_rbi_authority_family_real_postgres_contract():
             "0003_it_act_private_image",
             "0004_it_act_66e_verbatim_correction",
             "0005_bns_extortion",
+            "0006_custody_authority_family",
+            "0007_custody_answer_citation_policy",
         ]
         result = await apply_authority_migration(conn, migrations[0], embed=_fixture_embed)
         assert result.status == "applied"

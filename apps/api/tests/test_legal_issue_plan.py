@@ -374,7 +374,12 @@ def test_separate_criminal_procedure_requirements_follow_incident_regime():
     legacy_acts = {entry.act for entry in legacy.authority_ledger}
     current_acts = {entry.act for entry in current.authority_ledger}
     assert "Code of Criminal Procedure 1973" in legacy_acts
-    assert "Bharatiya Nagarik Suraksha Sanhita 2023" not in legacy_acts
+    legacy_bnss = [
+        entry
+        for entry in legacy.authority_ledger
+        if entry.act == "Bharatiya Nagarik Suraksha Sanhita 2023"
+    ]
+    assert {entry.section for entry in legacy_bnss} == {"Section 531"}
     assert "Bharatiya Nagarik Suraksha Sanhita 2023" in current_acts
     assert "Code of Criminal Procedure 1973" not in current_acts
 

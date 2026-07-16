@@ -1,0 +1,1274 @@
+{
+  "migration_id": "0006_custody_authority_family",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "constitution_of_india_article_22",
+        "authority_id_expected": "authority_f3c23051b8de5bc07ca4",
+        "canonical_name": "Constitution of India",
+        "aliases": [],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "article",
+          "number": "22",
+          "heading": "Protection against arrest and detention in certain cases",
+          "canonical_anchor": "/sec-22",
+          "anchor_aliases": []
+        },
+        "effective_from": "1950-01-26",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2025-11-11",
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.legislative.gov.in/static/uploads/2025/07/c9fe9c9b6840524844316f74bb1c556c.pdf",
+        "source_origin": "legislative_department",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "4c8e93689ec245e26db08e22b5ff3ad645c98736f0e5b7c8b6638acd7861f85b",
+          "raw_bytes_size": 2684622
+        },
+        "doc_id": "constitution-india",
+        "title": "Constitution of India",
+        "statute": "Constitution of India",
+        "year": 1950,
+        "subject_area": "constitutional",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "constitution_article_22",
+          "title_patterns": [
+            "Constitution of India"
+          ],
+          "doc_ids": [
+            "constitution-india"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Constitution of India article 22 Protection against arrest and detention in certain cases"
+        },
+        "verbatim_status": "declared",
+        "text": "22. Protection against arrest and detention in certain cases.--(1) No person who is arrested shall be detained in custody without being informed, as soon as may be, of the grounds for such arrest nor shall he be denied the right to consult, and to be defended by, a legal practitioner of his choice.\n(2) Every person who is arrested and detained in custody shall be produced before the nearest magistrate within a period of twenty-four hours of such arrest excluding the time necessary for the journey from the place of arrest to the court of the magistrate and no such person shall be detained in custody beyond the said period without the authority of a magistrate.\n(3) Nothing in clauses (1) and (2) shall apply--\n(a) to any person who for the time being is an enemy alien; or\n(b) to any person who is arrested or detained under any law providing for preventive detention.",
+        "text_sha256": "a72b07669b091fb3f7de2345286f9d0367dd371493b9d4f57c9e6f687b7d39aa"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "constitution_of_india_article_226",
+        "authority_id_expected": "authority_0b1a318f7328d5254ef6",
+        "canonical_name": "Constitution of India",
+        "aliases": [],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "article",
+          "number": "226",
+          "heading": "Power of High Courts to issue certain writs",
+          "canonical_anchor": "/sec-226",
+          "anchor_aliases": []
+        },
+        "effective_from": "1979-08-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2025-11-11",
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.legislative.gov.in/static/uploads/2025/07/c9fe9c9b6840524844316f74bb1c556c.pdf",
+        "source_origin": "legislative_department",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "4c8e93689ec245e26db08e22b5ff3ad645c98736f0e5b7c8b6638acd7861f85b",
+          "raw_bytes_size": 2684622
+        },
+        "doc_id": "constitution-india",
+        "title": "Constitution of India",
+        "statute": "Constitution of India",
+        "year": 1950,
+        "subject_area": "constitutional",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "constitution_article_226_habeas",
+          "title_patterns": [
+            "Constitution of India"
+          ],
+          "doc_ids": [
+            "constitution-india"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Constitution of India article 226 Power of High Courts to issue certain writs"
+        },
+        "verbatim_status": "declared",
+        "text": "226. Power of High Courts to issue certain writs.--(1) Notwithstanding anything in article 32, every High Court shall have power, throughout the territories in relation to which it exercises jurisdiction, to issue to any person or authority, including in appropriate cases, any Government, within those territories directions, orders or writs, including writs in the nature of habeas corpus, mandamus, prohibition, quo warranto and certiorari, or any of them, for the enforcement of any of the rights conferred by Part III and for any other purpose.\n(2) The power conferred by clause (1) to issue directions, orders or writs to any Government, authority or person may also be exercised by any High Court exercising jurisdiction in relation to the territories within which the cause of action, wholly or in part, arises for the exercise of such power, notwithstanding that the seat of such Government or authority or the residence of such person is not within those territories.",
+        "text_sha256": "27f085e1a4849cc0a1135b6d340d81f7fbbf6e6f34521f14f14f0191131b411b"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_1",
+        "authority_id_expected": "authority_a4f286f80b84f4cd2def",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "BNSS 2023"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "1",
+          "heading": "Short title, extent and commencement",
+          "canonical_anchor": "/sec-1",
+          "anchor_aliases": []
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bnss_2023_custody_registry",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "Bharatiya Nagarik Suraksha Sanhita, 2023",
+            "BNSS 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Bharatiya Nagarik Suraksha Sanhita 2023 section 1 Short title, extent and commencement"
+        },
+        "verbatim_status": "declared",
+        "text": "1. Short title, extent and commencement.--(1) This Act may be called the Bharatiya Nagarik Suraksha Sanhita, 2023.\n(2) The provisions of this Sanhita, other than those relating to Chapters IX, XI and XII thereof, shall not apply--\n(a) to the State of Nagaland;\n(b) to the tribal areas,\nbut the concerned State Government may, by notification, apply such provisions or any of them to the whole or part of the State of Nagaland or such tribal areas, as the case may be, with such supplemental, incidental or consequential modifications, as may be specified in the notification.",
+        "text_sha256": "3f9159baf3ea63851aa214bdb8be2b8c215cc28628b5bd071ab0a66c7008a5e9"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_36",
+        "authority_id_expected": "authority_def01ab5799756952d3e",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "BNSS 2023"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "36",
+          "heading": "Procedure of arrest and duties of officer making arrest",
+          "canonical_anchor": "/sec-36",
+          "anchor_aliases": []
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bnss_2023_custody_registry",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "Bharatiya Nagarik Suraksha Sanhita, 2023",
+            "BNSS 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Bharatiya Nagarik Suraksha Sanhita 2023 section 36 Procedure of arrest and duties of officer making arrest"
+        },
+        "verbatim_status": "declared",
+        "text": "36. Procedure of arrest and duties of officer making arrest.--Every police officer while making an arrest shall--\n(a) bear an accurate, visible and clear identification of his name which will facilitate easy identification;\n(b) prepare a memorandum of arrest which shall be--\n(i) attested by at least one witness, who is a member of the family of the person arrested or a respectable member of the locality where the arrest is made;\n(ii) countersigned by the person arrested; and\n(c) inform the person arrested, unless the memorandum is attested by a member of his family, that he has a right to have a relative or a friend or any other person named by him to be informed of his arrest.",
+        "text_sha256": "9edbb5df0f8273c8ba50f9f6f79366d25963271b20d8b94ee1c2f07b33facec1"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_37",
+        "authority_id_expected": "authority_93f3cd040dc2cfe3ec5b",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "BNSS 2023"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "37",
+          "heading": "Designated police officer",
+          "canonical_anchor": "/sec-37",
+          "anchor_aliases": []
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bnss_2023_custody_registry",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "Bharatiya Nagarik Suraksha Sanhita, 2023",
+            "BNSS 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Bharatiya Nagarik Suraksha Sanhita 2023 section 37 Designated police officer"
+        },
+        "verbatim_status": "declared",
+        "text": "37. Designated police officer.--The State Government shall--\n(a) establish a police control room in every district and at State level;\n(b) designate a police officer in every district and in every police station, not below the rank of Assistant Sub-Inspector of Police who shall be responsible for maintaining the information about the names and addresses of the persons arrested, nature of the offence with which charged, which shall be prominently displayed in any manner including in digital mode in every police station and at the district headquarters.",
+        "text_sha256": "2e5a810c7be521d44c79e53b39a6fe3b823799f56b407fc9ea2dfde5da23b05e"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_47",
+        "authority_id_expected": "authority_7ddff0a350aeeb91d2d6",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "BNSS 2023"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "47",
+          "heading": "Person arrested to be informed of grounds of arrest and of right to bail",
+          "canonical_anchor": "/sec-47",
+          "anchor_aliases": []
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bnss_2023_custody_registry",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "Bharatiya Nagarik Suraksha Sanhita, 2023",
+            "BNSS 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Bharatiya Nagarik Suraksha Sanhita 2023 section 47 Person arrested to be informed of grounds of arrest and of right to bail"
+        },
+        "verbatim_status": "declared",
+        "text": "47. Person arrested to be informed of grounds of arrest and of right to bail.--(1) Every police officer or other person arresting any person without warrant shall forthwith communicate to him full particulars of the offence for which he is arrested or other grounds for such arrest.\n(2) Where a police officer arrests without warrant any person other than a person accused of a non-bailable offence, he shall inform the person arrested that he is entitled to be released on bail and that he may arrange for sureties on his behalf.",
+        "text_sha256": "d1216047539886d586c4458bd2abd265680848d2c119e15f8396aba8150e84e6"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_48",
+        "authority_id_expected": "authority_1d85106c072148fd7b40",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "BNSS 2023"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "48",
+          "heading": "Obligation of person making arrest to inform about the arrest, etc., to a relative or a friend",
+          "canonical_anchor": "/sec-48",
+          "anchor_aliases": []
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bnss_2023_custody_registry",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "Bharatiya Nagarik Suraksha Sanhita, 2023",
+            "BNSS 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Bharatiya Nagarik Suraksha Sanhita 2023 section 48 Obligation of person making arrest to inform about the arrest, etc., to a relative or a friend"
+        },
+        "verbatim_status": "declared",
+        "text": "48. Obligation of person making arrest to inform about the arrest, etc., to a relative or a friend.--(1) Every police officer or other person making any arrest under this Sanhita shall forthwith give the information regarding such arrest and place where the arrested person is being held to any of his relatives, friends or such other persons as may be disclosed or nominated by the arrested person for the purpose of giving such information and also to the designated police officer in the district.\n(2) The police officer shall inform the arrested person of his rights under sub-section (1) as soon as he is brought to the police station.\n(3) An entry of the fact as to who has been informed of the arrest of such person shall be made in a book to be kept in the police station in such form as may be provided by rules.\n(4) It shall be the duty of the Magistrate before whom such arrested person is produced, to satisfy himself that the requirements of sub-section (2) and sub-section (3) have been complied with in respect of such arrested person.",
+        "text_sha256": "a7b14bbc822884ed3931df6aa59ed64c20f1e8e00bf90faa03e31976ef135117"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_57",
+        "authority_id_expected": "authority_688d8db414679cdba236",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "BNSS 2023"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "57",
+          "heading": "Person arrested to be taken before Magistrate or officer in charge of police station",
+          "canonical_anchor": "/sec-57",
+          "anchor_aliases": []
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bnss_2023_custody_registry",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "Bharatiya Nagarik Suraksha Sanhita, 2023",
+            "BNSS 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Bharatiya Nagarik Suraksha Sanhita 2023 section 57 Person arrested to be taken before Magistrate or officer in charge of police station"
+        },
+        "verbatim_status": "declared",
+        "text": "57. Person arrested to be taken before Magistrate or officer in charge of police station.--A police officer making an arrest without warrant shall, without unnecessary delay and subject to the provisions herein contained as to bail, take or send the person arrested before a Magistrate having jurisdiction in the case, or before the officer in charge of a police station.",
+        "text_sha256": "8c4e0284a632528b056e9273034841f36090227c75de3d5ca125a7564fd91959"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_58",
+        "authority_id_expected": "authority_4a984c503eb7bc74e445",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "BNSS 2023"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "58",
+          "heading": "Person arrested not to be detained more than twenty-four hours",
+          "canonical_anchor": "/sec-58",
+          "anchor_aliases": []
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bnss_2023_custody_registry",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "Bharatiya Nagarik Suraksha Sanhita, 2023",
+            "BNSS 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Bharatiya Nagarik Suraksha Sanhita 2023 section 58 Person arrested not to be detained more than twenty-four hours"
+        },
+        "verbatim_status": "declared",
+        "text": "58. Person arrested not to be detained more than twenty-four hours.--No police officer shall detain in custody a person arrested without warrant for a longer period than under all the circumstances of the case is reasonable, and such period shall not, in the absence of a special order of a Magistrate under section 187, exceed twenty-four hours exclusive of the time necessary for the journey from the place of arrest to the Magistrate's Court, whether having jurisdiction or not.",
+        "text_sha256": "90198feac785e30757e6e45ca8781ac2d2e80a86869b31a2445efcf394027d75"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_531",
+        "authority_id_expected": "authority_a304a271d59fa95369a8",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "BNSS 2023"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "531",
+          "heading": "Repeal and savings",
+          "canonical_anchor": "/sec-531",
+          "anchor_aliases": []
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bnss_2023_custody_registry",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "Bharatiya Nagarik Suraksha Sanhita, 2023",
+            "BNSS 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Bharatiya Nagarik Suraksha Sanhita 2023 section 531 Repeal and savings"
+        },
+        "verbatim_status": "declared",
+        "text": "531. Repeal and savings.--(1) The Code of Criminal Procedure, 1973 is hereby repealed.\n(2) Notwithstanding such repeal--\n(a) if, immediately before the date on which this Sanhita comes into force, there is any appeal, application, trial, inquiry or investigation pending, then, such appeal, application, trial, inquiry or investigation shall be disposed of, continued, held or made, as the case may be, in accordance with the provisions of the Code of Criminal Procedure, 1973, as in force immediately before such commencement, as if this Sanhita had not come into force.",
+        "text_sha256": "9cf147f18554612d57da2cba6fce8b5a3b155ff7c095add54a556d20bdf134c1"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_41b",
+        "authority_id_expected": "authority_5bf3db39ec37039c55cc",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": [
+          "Code of Criminal Procedure, 1973",
+          "CrPC 1973"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "41B",
+          "heading": "Procedure of arrest and duties of officer making arrest",
+          "canonical_anchor": "/sec-41-b",
+          "anchor_aliases": [
+            "/sec-41B",
+            "/sec-41b"
+          ]
+        },
+        "effective_from": "2010-11-01",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+          "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."
+        },
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/13624/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2f28d487c18d33f65195d7ab99cb5dc8fd4dcf232c7deb18dee7f8fa289891b9",
+          "raw_bytes_size": 1660268
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973_custody_registry",
+          "title_patterns": [
+            "Code of Criminal Procedure 1973",
+            "Code of Criminal Procedure, 1973",
+            "CrPC 1973"
+          ],
+          "doc_ids": [
+            "crpc-1973"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Code of Criminal Procedure 1973 section 41B Procedure of arrest and duties of officer making arrest"
+        },
+        "verbatim_status": "declared",
+        "text": "41B. Procedure of arrest and duties of officer making arrest.--Every police officer while making an arrest shall--\n(a) bear an accurate, visible and clear identification of his name which will facilitate easy identification;\n(b) prepare a memorandum of arrest which shall be--\n(i) attested by at least one witness, who is a member of the family of the person arrested or a respectable member of the locality where the arrest is made;\n(ii) countersigned by the person arrested; and\n(c) inform the person arrested, unless the memorandum is attested by a member of his family, that he has a right to have a relative or a friend named by him to be informed of his arrest.",
+        "text_sha256": "e30851db9beb1854178e365bd2b999c633b02f1c98bc9cf1f572936f2ce6f505"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_41c",
+        "authority_id_expected": "authority_e99135e7f04e003f2799",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": [
+          "Code of Criminal Procedure, 1973",
+          "CrPC 1973"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "41C",
+          "heading": "Control room at districts",
+          "canonical_anchor": "/sec-41-c",
+          "anchor_aliases": [
+            "/sec-41C",
+            "/sec-41c"
+          ]
+        },
+        "effective_from": "2010-11-01",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+          "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."
+        },
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/13624/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2f28d487c18d33f65195d7ab99cb5dc8fd4dcf232c7deb18dee7f8fa289891b9",
+          "raw_bytes_size": 1660268
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973_custody_registry",
+          "title_patterns": [
+            "Code of Criminal Procedure 1973",
+            "Code of Criminal Procedure, 1973",
+            "CrPC 1973"
+          ],
+          "doc_ids": [
+            "crpc-1973"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Code of Criminal Procedure 1973 section 41C Control room at districts"
+        },
+        "verbatim_status": "declared",
+        "text": "41C. Control room at districts.--(1) The State Government shall establish a police control room--\n(a) in every district; and\n(b) at State level.\n(2) The State Government shall cause to be displayed on the notice board kept outside the control rooms at every district, the names and addresses of the persons arrested and the name and designation of the police officers who made the arrests.\n(3) The control room at the Police Headquarters at the State level shall collect from time to time, details about the persons arrested, nature of the offence with which they are charged and maintain a database for the information of the general public.",
+        "text_sha256": "3c828fd1bab6bf76d20e2415068e75d985ab6e98676eac7c65d588daa4df308e"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_50",
+        "authority_id_expected": "authority_dfa4588172eb8b0b41fa",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": [
+          "Code of Criminal Procedure, 1973",
+          "CrPC 1973"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "50",
+          "heading": "Person arrested to be informed of grounds of arrest and of right to bail",
+          "canonical_anchor": "/sec-50",
+          "anchor_aliases": []
+        },
+        "effective_from": "1974-04-01",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+          "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."
+        },
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/13624/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2f28d487c18d33f65195d7ab99cb5dc8fd4dcf232c7deb18dee7f8fa289891b9",
+          "raw_bytes_size": 1660268
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973_custody_registry",
+          "title_patterns": [
+            "Code of Criminal Procedure 1973",
+            "Code of Criminal Procedure, 1973",
+            "CrPC 1973"
+          ],
+          "doc_ids": [
+            "crpc-1973"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Code of Criminal Procedure 1973 section 50 Person arrested to be informed of grounds of arrest and of right to bail"
+        },
+        "verbatim_status": "declared",
+        "text": "50. Person arrested to be informed of grounds of arrest and of right to bail.--(1) Every police officer or other person arresting any person without warrant shall forthwith communicate to him full particulars of the offence for which he is arrested or other grounds for such arrest.\n(2) Where a police officer arrests without warrant any person other than a person accused of a non-bailable offence, he shall inform the person arrested that he is entitled to be released on bail and that he may arrange for sureties on his behalf.",
+        "text_sha256": "773eb4fc73e8a5ce708079eaa5db420d84b9e6dd7a5f9a3461be4d0aced5cb6d"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_50a",
+        "authority_id_expected": "authority_cbc356cabe0493d53102",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": [
+          "Code of Criminal Procedure, 1973",
+          "CrPC 1973"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "50A",
+          "heading": "Obligation of person making arrest to inform about the arrest, etc., to a nominated person",
+          "canonical_anchor": "/sec-50-a",
+          "anchor_aliases": [
+            "/sec-50A",
+            "/sec-50a"
+          ]
+        },
+        "effective_from": "2006-06-23",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+          "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."
+        },
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/13624/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2f28d487c18d33f65195d7ab99cb5dc8fd4dcf232c7deb18dee7f8fa289891b9",
+          "raw_bytes_size": 1660268
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973_custody_registry",
+          "title_patterns": [
+            "Code of Criminal Procedure 1973",
+            "Code of Criminal Procedure, 1973",
+            "CrPC 1973"
+          ],
+          "doc_ids": [
+            "crpc-1973"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Code of Criminal Procedure 1973 section 50A Obligation of person making arrest to inform about the arrest, etc., to a nominated person"
+        },
+        "verbatim_status": "declared",
+        "text": "50A. Obligation of person making arrest to inform about the arrest, etc., to a nominated person.--(1) Every police officer or other person making any arrest under this Code shall forthwith give the information regarding such arrest and place where the arrested person is being held to any of his friends, relatives or such other persons as may be disclosed or nominated by the arrested person for the purpose of giving such information.\n(2) The police officer shall inform the arrested person of his rights under sub-section (1) as soon as he is brought to the police station.\n(3) An entry of the fact as to who has been informed of the arrest of such person shall be made in a book to be kept in the police station in such form as may be prescribed in this behalf by the State Government.\n(4) It shall be the duty of the Magistrate before whom such arrested person is produced, to satisfy himself that the requirements of sub-section (2) and sub-section (3) have been complied with in respect of such arrested person.",
+        "text_sha256": "3f7af7c79d7f3aee9b0ebab6903168b2beba5deb3efd8d6262ff8626f520b7a1"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_56",
+        "authority_id_expected": "authority_82813ec566a658017631",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": [
+          "Code of Criminal Procedure, 1973",
+          "CrPC 1973"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "56",
+          "heading": "Person arrested to be taken before Magistrate or officer in charge of police station",
+          "canonical_anchor": "/sec-56",
+          "anchor_aliases": []
+        },
+        "effective_from": "1974-04-01",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+          "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."
+        },
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/13624/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2f28d487c18d33f65195d7ab99cb5dc8fd4dcf232c7deb18dee7f8fa289891b9",
+          "raw_bytes_size": 1660268
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973_custody_registry",
+          "title_patterns": [
+            "Code of Criminal Procedure 1973",
+            "Code of Criminal Procedure, 1973",
+            "CrPC 1973"
+          ],
+          "doc_ids": [
+            "crpc-1973"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Code of Criminal Procedure 1973 section 56 Person arrested to be taken before Magistrate or officer in charge of police station"
+        },
+        "verbatim_status": "declared",
+        "text": "56. Person arrested to be taken before Magistrate or officer in charge of police station.--A police officer making an arrest without warrant shall, without unnecessary delay and subject to the provisions herein contained as to bail, take or send the person arrested before a Magistrate having jurisdiction in the case, or before the officer in charge of a police station.",
+        "text_sha256": "4fe616f004da8cea0b4555ae9990ff8633485aae9ae5f3bb14bea8f58468082d"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_57",
+        "authority_id_expected": "authority_eea1cf16d169c9cf9b4f",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": [
+          "Code of Criminal Procedure, 1973",
+          "CrPC 1973"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "57",
+          "heading": "Person arrested not to be detained more than twenty-four hours",
+          "canonical_anchor": "/sec-57",
+          "anchor_aliases": []
+        },
+        "effective_from": "1974-04-01",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+          "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."
+        },
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/13624/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2f28d487c18d33f65195d7ab99cb5dc8fd4dcf232c7deb18dee7f8fa289891b9",
+          "raw_bytes_size": 1660268
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973_custody_registry",
+          "title_patterns": [
+            "Code of Criminal Procedure 1973",
+            "Code of Criminal Procedure, 1973",
+            "CrPC 1973"
+          ],
+          "doc_ids": [
+            "crpc-1973"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Code of Criminal Procedure 1973 section 57 Person arrested not to be detained more than twenty-four hours"
+        },
+        "verbatim_status": "declared",
+        "text": "57. Person arrested not to be detained more than twenty-four hours.--No police officer shall detain in custody a person arrested without warrant for a longer period than under all the circumstances of the case is reasonable, and such period shall not, in the absence of a special order of a Magistrate under section 167, exceed twenty-four hours exclusive of the time necessary for the journey from the place of arrest to the Magistrate's Court.",
+        "text_sha256": "a06f33ae5b4e56e0627062551055ea658d12bb3c57596ecde816add915264a2e"
+      },
+      "expected_previous_record_sha256": null
+    }
+  ],
+  "workflow_operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "arrest_custody_station_case_not_disclosed",
+        "owner_token": "authority_graph:arrest_custody_station_case_not_disclosed",
+        "condition_ids": [
+          "custody_current_bnss",
+          "custody_legacy_crpc",
+          "custody_legacy_or_unknown",
+          "custody_bnss_geographic_exception"
+        ],
+        "authorities": [
+          {
+            "registry_key": "constitution_of_india_article_22",
+            "role": "legal_basis",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "constitution_of_india_article_226",
+            "role": "remedy",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_1",
+            "role": "scope",
+            "required": false,
+            "condition_ids": [
+              "custody_bnss_geographic_exception"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_36",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_37",
+            "role": "forum",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_47",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_48",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_57",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_58",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_531",
+            "role": "scope",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_or_unknown"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_41b",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_41c",
+            "role": "forum",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_50",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_50a",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_56",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_57",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          }
+        ],
+        "forums": [
+          "District or State police control room / designated police officer",
+          "nearest Magistrate",
+          "jurisdictional High Court for habeas corpus",
+          "District Legal Services Authority"
+        ],
+        "remedies": [
+          "verify custody location and arrest record",
+          "enforce grounds, lawyer access, nominated-person intimation, and production safeguards",
+          "seek urgent habeas corpus assistance where custody is hidden or production is not shown"
+        ],
+        "deadline_rules": [
+          "Article 22(2) requires production before the nearest Magistrate within twenty-four hours excluding journey time; preventive-detention and enemy-alien exceptions require separate review."
+        ],
+        "documents": [
+          "pickup time and place",
+          "officer, vehicle, CCTV, and witness details",
+          "calls and messages",
+          "arrest memo, grounds, FIR/case details, and remand or production order if available"
+        ],
+        "escalation": [
+          "contact DLSA or a criminal lawyer immediately",
+          "use the High Court habeas corpus route where the person or station remains hidden"
+        ]
+      },
+      "expected_previous_record_sha256": null
+    }
+  ]
+}

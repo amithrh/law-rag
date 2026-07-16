@@ -1,0 +1,176 @@
+{
+  "migration_id": "0007_custody_answer_citation_policy",
+  "schema_version": 1,
+  "operations": [],
+  "workflow_operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "arrest_custody_station_case_not_disclosed",
+        "owner_token": "authority_graph:arrest_custody_station_case_not_disclosed",
+        "condition_ids": [
+          "custody_current_bnss",
+          "custody_legacy_crpc",
+          "custody_legacy_or_unknown",
+          "custody_bnss_geographic_exception"
+        ],
+        "authorities": [
+          {
+            "registry_key": "constitution_of_india_article_22",
+            "role": "legal_basis",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "constitution_of_india_article_226",
+            "role": "remedy",
+            "required": true,
+            "condition_ids": []
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_1",
+            "role": "scope",
+            "required": false,
+            "condition_ids": [
+              "custody_bnss_geographic_exception"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_36",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_37",
+            "role": "forum",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_47",
+            "role": "legal_basis",
+            "required": false,
+            "answer_must_cite": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_48",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_57",
+            "role": "legal_basis",
+            "required": false,
+            "answer_must_cite": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_58",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_current_bnss"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_531",
+            "role": "scope",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_or_unknown"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_41b",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_41c",
+            "role": "forum",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_50",
+            "role": "legal_basis",
+            "required": false,
+            "answer_must_cite": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_50a",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_56",
+            "role": "legal_basis",
+            "required": false,
+            "answer_must_cite": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_57",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "custody_legacy_crpc"
+            ]
+          }
+        ],
+        "forums": [
+          "District or State police control room / designated police officer",
+          "nearest Magistrate",
+          "jurisdictional High Court for habeas corpus",
+          "District Legal Services Authority"
+        ],
+        "remedies": [
+          "verify custody location and arrest record",
+          "enforce grounds, lawyer access, nominated-person intimation, and production safeguards",
+          "seek urgent habeas corpus assistance where custody is hidden or production is not shown"
+        ],
+        "deadline_rules": [
+          "Article 22(2) requires production before the nearest Magistrate within twenty-four hours excluding journey time; preventive-detention and enemy-alien exceptions require separate review."
+        ],
+        "documents": [
+          "pickup time and place",
+          "officer, vehicle, CCTV, and witness details",
+          "calls and messages",
+          "arrest memo, grounds, FIR/case details, and remand or production order if available"
+        ],
+        "escalation": [
+          "contact DLSA or a criminal lawyer immediately",
+          "use the High Court habeas corpus route where the person or station remains hidden"
+        ]
+      },
+      "expected_previous_record_sha256": "cbb6783f10d55762beccace987563c4e32c29b954d7e98aba16923a6b97da02b"
+    }
+  ]
+}

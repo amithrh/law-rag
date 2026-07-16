@@ -1,4 +1,5 @@
 from scripts.verify_provenance import (
+    OFFICIAL_PDF_ORIGINS,
     audit_persistence_rows,
     verification_scope_updates,
 )
@@ -95,3 +96,7 @@ def test_registry_chunks_keep_independent_verification_verdicts():
     _, _, passed_chunks, failed_chunks = verification_scope_updates([row])
     assert passed_chunks == [130]
     assert failed_chunks == [131]
+
+
+def test_official_pdf_verifier_accepts_custody_registry_publishers():
+    assert {"mha_gazette", "legislative_department"} <= OFFICIAL_PDF_ORIGINS

@@ -88,10 +88,13 @@ def test_registry_migration_hash_and_order_are_deterministic():
         "0003_it_act_private_image",
         "0004_it_act_66e_verbatim_correction",
         "0005_bns_extortion",
+        "0006_custody_authority_family",
+        "0007_custody_answer_citation_policy",
     ]
     assert all(len(item.manifest_sha256) == 64 for item in migrations)
-    assert len(registry.records) == 11
+    assert len(registry.records) == 27
     assert {workflow.scenario_id for workflow in registry.workflows} == {
+        "arrest_custody_station_case_not_disclosed",
         "wrong_bank_debit",
         "loan_app_harassment",
     }
@@ -351,3 +354,95 @@ def test_manifest_is_data_only_and_contains_no_local_path():
         text = json.dumps(payload)
         assert "file:///" not in text
         assert "/Users/" not in text
+
+
+def test_custody_registry_uses_gazette_for_bnss_section_58():
+    registry = load_authority_registry()
+    record = registry.by_key(
+        "bharatiya_nagarik_suraksha_sanhita_2023_section_58"
+    )
+    assert record is not None
+    assert record.source_origin == "mha_gazette"
+    assert record.provenance.raw_sha256 == (
+        "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe"
+    )
+    assert "twenty-four hours" in record.text
+    assert "section 187" in record.text
+
+
+@pytest.mark.parametrize(
+    "query,required_keys,forbidden_prefixes",
+    (
+        (
+            "Police picked my son from home and will not tell me the station",
+            {
+                "constitution_of_india_article_22",
+                "constitution_of_india_article_226",
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_531",
+            },
+            (
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_36",
+                "code_of_criminal_procedure_1973_section_",
+            ),
+        ),
+        (
+            "Police picked my son from home in May 2023 and gave no FIR copy",
+            {
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_531",
+                "code_of_criminal_procedure_1973_section_41b",
+                "code_of_criminal_procedure_1973_section_41c",
+                "code_of_criminal_procedure_1973_section_50",
+                "code_of_criminal_procedure_1973_section_50a",
+                "code_of_criminal_procedure_1973_section_56",
+                "code_of_criminal_procedure_1973_section_57",
+            },
+            ("bharatiya_nagarik_suraksha_sanhita_2023_section_36",),
+        ),
+        (
+            "Police picked my son from home in August 2025 and gave no FIR copy",
+            {
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_36",
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_37",
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_47",
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_48",
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_57",
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_58",
+            },
+            ("code_of_criminal_procedure_1973_section_",),
+        ),
+        (
+            "Police picked my son today in Nagaland and hide the station",
+            {"bharatiya_nagarik_suraksha_sanhita_2023_section_1"},
+            (
+                "bharatiya_nagarik_suraksha_sanhita_2023_section_36",
+                "code_of_criminal_procedure_1973_section_",
+            ),
+        ),
+    ),
+)
+def test_custody_registry_selects_one_procedural_regime(
+    query: str,
+    required_keys: set[str],
+    forbidden_prefixes: tuple[str, ...],
+):
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    keys = {entry.registry_key for entry in plan.authority_ledger if entry.registry_key}
+    assert required_keys <= keys
+    assert all(not any(key.startswith(prefix) for prefix in forbidden_prefixes) for key in keys)
+
+
+def test_custody_registry_separates_retrieval_from_answer_citation_policy():
+    query = "Police picked my brother from home in May 2023 and gave no FIR copy"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    entries = {
+        entry.registry_key: entry
+        for entry in plan.authority_ledger
+        if entry.registry_key
+    }
+    assert entries["code_of_criminal_procedure_1973_section_50"].must_cite is False
+    assert entries["code_of_criminal_procedure_1973_section_56"].must_cite is False
+    assert entries["code_of_criminal_procedure_1973_section_41c"].must_cite is True
+    assert entries["code_of_criminal_procedure_1973_section_50a"].must_cite is True

@@ -142,6 +142,35 @@ P0 ownership baseline, 2026-07-11:
 - P2B is not closed until a post-implementation independent review is recorded.
   The review service reached its child-thread limit during the final gate; this
   is an explicit open gate, not an inferred PASS from tests.
+- P2C adds a registry-owned hidden-arrest/custody family. Migration `0006`
+  declares Constitution Articles 22 and 226, BNSS Sections 1, 36, 37, 47, 48,
+  57, 58, and 531, and legacy CrPC Sections 41B, 41C, 50, 50A, 56, and 57.
+  Current, legacy, saved-pending, unknown-date, and Nagaland/tribal-area paths
+  activate different sets; property custody, voluntary absence, and notice-only
+  questions do not inherit the workflow.
+- The enacted MHA Gazette is the pinned BNSS source because the available India
+  Code PDF extraction duplicated neighboring text for Section 58. All `16/16`
+  custody records are bound to exact official PDF hashes and verified corpus
+  projections. Public control-room information is kept separate from private
+  intimation to a person disclosed or nominated by the arrested person.
+- Migration `0007` separates authorities required in retrieval from authorities
+  that every answer must cite. The full legal pack remains retrieved while only
+  non-duplicative, user-essential safeguards fail closed at answer time.
+- P2C evidence: the final shared-route regression slice is `161 passed`; full
+  non-stack API gate `1,673 passed, 43 deselected`; full real-stack gate `43 passed, 1,673
+  deselected`; wheel build/content/runtime-policy check passed; and migration
+  `0007` dry-run/application passed. The broad run also repaired an
+  implied-subject arrest expansion miss and added CPU retry when MPS reranking
+  fails instead of silently preserving dense order. A second broad run caught
+  and closed two cross-route regressions before release: property phrases such
+  as `worker ID cards` cannot become human custody, and relative-date handling
+  cannot silently change an unrelated trafficking source pack.
+- P2C live `/answer` evidence is `8/8`: unknown date, current BNSS, legacy CrPC,
+  saved-pending transition, Nagaland scope, and three negative neighbors. Every
+  positive returned its exact expected registry set with no source gap,
+  refusal, weak-support, unsupported, or suppressed sentence. Independent
+  review remains open after three final retries because the reviewer service reports
+  `agent thread limit reached`; this is not a production-readiness claim.
 - This is a regression result, not launch evidence. A fresh 500-prompt
   human-style evaluation, independent legal-quality review, and the operational
   release gates remain required before any production claim.
@@ -224,19 +253,20 @@ policy, one answer owner, and no `main.py` special-case fallback.
 - [ ] Create declarative authority records for Act, section, jurisdiction,
   effective date, canonical URL, publisher, provenance status, and verbatim
   status.
-  Complete for CrPC 1973 Section 436A and the P2B RBI/IT Act/BNS authority
-  family listed in the current baseline; remaining released authorities still
-  need migration into the registry.
+  Complete for CrPC 1973 Section 436A, the P2B RBI/IT Act/BNS family, and the
+  P2C constitutional/BNSS/CrPC hidden-custody family; remaining released
+  authorities still need migration into the registry.
 - [ ] Add relationships: issue -> conditions -> authority -> remedy -> forum ->
   deadline -> documents -> escalation.
-  Complete for `wrong_bank_debit` and `loan_app_harassment`; remaining released
-  scenarios still need registry-owned workflow relationships.
+  Complete for `wrong_bank_debit`, `loan_app_harassment`, and
+  `arrest_custody_station_case_not_disclosed`; remaining released scenarios
+  still need registry-owned workflow relationships.
 - [ ] Replace one-off `add_*` scripts with repeatable ingestion migrations tied
   to authority-record IDs.
   The Section 436A one-off script is replaced by migration
-  `0001_crpc_436a`; P2B uses migrations `0002`-`0005` and deterministic
-  manifest builders. Other one-off corpus patches remain to be inventoried and
-  migrated.
+  `0001_crpc_436a`; P2B uses migrations `0002`-`0005`; P2C uses authority
+  migration `0006` and workflow-policy migration `0007`, all with deterministic
+  builders. Other one-off corpus patches remain to be inventoried and migrated.
 - [ ] Define supported geography: national law plus a verified set of states.
   Unsupported state-law matters must use a source-gap/handoff policy.
 - [ ] Enable provenance verification in production configuration and add a

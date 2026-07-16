@@ -279,8 +279,15 @@ def _required_source_specs(
             "legacy": ("crpc",),
         },
         "arrest_custody_station_case_not_disclosed": {
-            "current": ("arrest_info", "production"),
-            "legacy": ("crpc",),
+            "current": (
+                "bnss_memo", "bnss_public_location", "bnss_grounds",
+                "bnss_nominated_intimation", "bnss_no_delay", "bnss_24h",
+            ),
+            "legacy": (
+                "crpc_memo", "crpc_public_location", "crpc_grounds",
+                "crpc_nominated_intimation", "crpc_no_delay", "crpc_24h",
+                "bnss_transition",
+            ),
         },
         "lgbtq_identity_arrest_safeguard": {
             "current": ("bnss_arrest", "bnss_production"),
@@ -305,6 +312,8 @@ def _required_source_specs(
         selected = regime_keys["legacy"]
     elif route.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident":
         selected = regime_keys["current"]
+    elif contract.id == "arrest_custody_station_case_not_disclosed":
+        selected = ("bnss_transition",)
     else:
         selected = (*regime_keys["current"], *regime_keys["legacy"])
     return (*always_required, *(by_key[key] for key in selected))
@@ -323,13 +332,20 @@ def _allowed_source_keys_for_regime(
         return None
     current_keys = {
         "vehicle_theft_fir_refusal": {"bnss_fir", "bnss_refusal", "bnss_magistrate", "bns"},
-        "arrest_custody_station_case_not_disclosed": {"arrest_info", "production", "fir_info"},
+        "arrest_custody_station_case_not_disclosed": {
+            "bnss_memo", "bnss_public_location", "bnss_grounds",
+            "bnss_nominated_intimation", "bnss_no_delay", "bnss_24h",
+        },
         "lgbtq_identity_arrest_safeguard": {"bnss_arrest", "bnss_production"},
         "bank_account_freeze_legal_hold": {"bnss_seizure"},
     }[contract.id]
     legacy_keys = {
         "vehicle_theft_fir_refusal": {"crpc", "ipc"},
-        "arrest_custody_station_case_not_disclosed": {"crpc"},
+        "arrest_custody_station_case_not_disclosed": {
+            "crpc_memo", "crpc_public_location", "crpc_grounds",
+            "crpc_nominated_intimation", "crpc_no_delay", "crpc_24h",
+            "bnss_transition",
+        },
         "lgbtq_identity_arrest_safeguard": {"crpc_arrest", "crpc_production"},
         "bank_account_freeze_legal_hold": {"crpc_seizure"},
     }[contract.id]
@@ -5444,24 +5460,45 @@ AUTHORITY_WORKFLOW_CONTRACTS: tuple[AuthorityWorkflowContract, ...] = (
         route_categories=("arrest_custody_safeguard", "police_fir"),
         trigger_groups=(
             ("police", "officer", "officers", "crime branch", "arrest", "custody", "picked", "took", "taken", "detained", "utha", "le gayi", "le gaye"),
-            ("not telling station", "not telling the station", "not telling case", "will not tell", "won't tell", "not tell us", "will not disclose", "won't disclose", "will not identify", "won't identify", "cannot find which police station", "undisclosed station", "not produced", "will not produce", "won't produce", "which station", "family not informed", "no fir copy", "midnight", "night", "from home", "from my home", "picked my", "papa ko", "bhai ko", "jija ko", "jiju ko", "station ka naam", "thana nahi bata", "thana nahin bata", "nahi bata", "nahin bata", "kahan le gaye"),
+            ("not telling station", "not telling the station", "not telling case", "will not tell", "won't tell", "not tell us", "will not disclose", "won't disclose", "will not identify", "won't identify", "hide the station", "hiding the station", "station is hidden", "cannot find which police station", "undisclosed station", "not produced", "will not produce", "won't produce", "which station", "family not informed", "no fir copy", "midnight", "night", "from home", "from my home", "picked my", "papa ko", "bhai ko", "jija ko", "jiju ko", "station ka naam", "thana nahi bata", "thana nahin bata", "nahi bata", "nahin bata", "kahan le gaye"),
         ),
         source_specs=(
             PassageSpec("article22", ("constitution",), ("/sec-22",), required=True),
-            PassageSpec("article226", ("constitution",), ("/sec-226",)),
-            PassageSpec("arrest_info", ("bharatiya nagarik suraksha",), ("/sec-47", "/sec-48")),
-            PassageSpec("production", ("bharatiya nagarik suraksha",), ("/sec-57", "/sec-58")),
-            PassageSpec("fir_info", ("bharatiya nagarik suraksha",), ("/sec-173",)),
-            PassageSpec("crpc", ("code of criminal procedure",), ("/sec-50", "/sec-56", "/sec-57", "/sec-154")),
+            PassageSpec("article226", ("constitution",), ("/sec-226",), required=True),
+            PassageSpec("bnss_scope", ("bharatiya nagarik suraksha",), ("/sec-1",)),
+            PassageSpec("bnss_memo", ("bharatiya nagarik suraksha",), ("/sec-36",)),
+            PassageSpec("bnss_public_location", ("bharatiya nagarik suraksha",), ("/sec-37",)),
+            PassageSpec("bnss_grounds", ("bharatiya nagarik suraksha",), ("/sec-47",)),
+            PassageSpec("bnss_nominated_intimation", ("bharatiya nagarik suraksha",), ("/sec-48",)),
+            PassageSpec("bnss_no_delay", ("bharatiya nagarik suraksha",), ("/sec-57",)),
+            PassageSpec("bnss_24h", ("bharatiya nagarik suraksha",), ("/sec-58",)),
+            PassageSpec("bnss_transition", ("bharatiya nagarik suraksha",), ("/sec-531",)),
+            PassageSpec("crpc_memo", ("code of criminal procedure",), ("/sec-41-b", "/sec-41B", "/sec-41b")),
+            PassageSpec("crpc_public_location", ("code of criminal procedure",), ("/sec-41-c", "/sec-41C", "/sec-41c")),
+            PassageSpec("crpc_grounds", ("code of criminal procedure",), ("/sec-50",)),
+            PassageSpec("crpc_nominated_intimation", ("code of criminal procedure",), ("/sec-50-a", "/sec-50A", "/sec-50a")),
+            PassageSpec("crpc_no_delay", ("code of criminal procedure",), ("/sec-56",)),
+            PassageSpec("crpc_24h", ("code of criminal procedure",), ("/sec-57",)),
         ),
         line_specs=(
-            LineSpec("Because police picked your family member from home, a tea shop, or another place at night and are not telling the station, case, FIR copy, or grounds, treat this first as an urgent arrest/custody safeguard and as an arrest-information and liberty safeguard issue; Article 22 supports grounds of arrest, lawyer access, and production before a Magistrate [{article22}].", ("article22",)),
-            LineSpec("BNSS Section 47 requires an arresting officer to communicate full particulars of the offence or other grounds of arrest to the arrested person [{arrest_info}].", ("arrest_info",)),
-            LineSpec("Article 22 requires an arrested person to be produced before the nearest Magistrate within twenty-four hours, excluding journey time [{article22}].", ("article22",)),
-            LineSpec("If the person is not being shown, station location is hidden, or lawyer access is blocked, keep the Article 226 habeas corpus route ready with DLSA/High Court counsel while also asking for arrest/remand records [{article226}].", ("article226",)),
+            LineSpec("Treat a hidden police pickup as an urgent liberty issue. Article 22 protects the arrested person's right to know the grounds, consult a lawyer, and be produced before the nearest Magistrate within twenty-four hours excluding journey time [{article22}].", ("article22",)),
+            LineSpec("For a current BNSS matter, ask for the arrest memo and the arresting officer's identification; Section 36 also requires the memo to be witnessed and countersigned [{bnss_memo}].", ("bnss_memo",)),
+            LineSpec("Use the district or State control room and the designated police officer to check the publicly maintained arrest information under BNSS Section 37 [{bnss_public_location}].", ("bnss_public_location",)),
+            LineSpec("BNSS Section 47 requires the grounds to be communicated to the arrested person [{bnss_grounds}].", ("bnss_grounds",)),
+            LineSpec("BNSS Section 48 requires arrest and place-of-custody information to be given to a relative, friend, or other person disclosed or nominated by the arrested person; it does not promise every caller private custody information [{bnss_nominated_intimation}].", ("bnss_nominated_intimation",)),
+            LineSpec("BNSS requires movement without unnecessary delay and limits detention without a Magistrate's special order to twenty-four hours excluding journey time [{bnss_no_delay}], [{bnss_24h}].", ("bnss_no_delay", "bnss_24h")),
+            LineSpec("For a saved or older CrPC matter, Section 41B requires the arresting officer to be identifiable and to prepare an arrest memorandum that is witnessed and countersigned [{crpc_memo}].", ("crpc_memo",)),
+            LineSpec("CrPC Section 41C provides district and State police control rooms and requires public arrest information to be maintained there [{crpc_public_location}].", ("crpc_public_location",)),
+            LineSpec("For an arrest without warrant under the saved CrPC route, Section 50 requires the arrested person to be told the full particulars of the alleged offence or other grounds for arrest [{crpc_grounds}].", ("crpc_grounds",)),
+            LineSpec("CrPC Section 50A requires arrest and place-of-custody information to be given to a friend, relative, or other person disclosed or nominated by the arrested person [{crpc_nominated_intimation}].", ("crpc_nominated_intimation",)),
+            LineSpec("CrPC Section 56 requires the arrested person to be taken before a Magistrate or the officer in charge without unnecessary delay [{crpc_no_delay}].", ("crpc_no_delay",)),
+            LineSpec("CrPC Section 57 ordinarily limits police detention without a Magistrate's special order to twenty-four hours excluding journey time [{crpc_24h}].", ("crpc_24h",)),
+            LineSpec("If the investigation, inquiry, trial, application, or appeal was already pending before 1 July 2024, BNSS Section 531 may preserve the CrPC procedure; if that start date is unknown, verify it before choosing old or new procedure [{bnss_transition}].", ("bnss_transition",)),
+            LineSpec("BNSS arrest provisions do not automatically apply in Nagaland or the specified tribal areas unless a State notification applies them; verify the local notification and procedure rather than assuming the national BNSS route [{bnss_scope}].", ("bnss_scope",)),
+            LineSpec("If the person or station remains hidden, production is not shown, or lawyer access is blocked, Article 226 supports urgent High Court habeas corpus assistance; contact DLSA or High Court counsel immediately [{article226}].", ("article226",)),
             LineSpec("**What you can do next**"),
-            LineSpec("- Keep the pickup time and place, officer or vehicle details, CCTV or witness details, calls, messages, ID proof, arrest memo if provided, and any written custody, arrest, or refusal record."),
-            LineSpec("- Contact DLSA or a criminal lawyer immediately if the station remains unknown or the person is not produced."),
+            LineSpec("- Record the pickup time and place, officer or vehicle details, CCTV and witnesses, calls and messages, and any arrest memo, grounds, FIR copy or case detail, or remand/production order."),
+            LineSpec("- Ask the control room/designated officer and DLSA or a criminal lawyer to verify the station, arrest record, nominated-person intimation, and Magistrate production; do not wait if the person cannot be located."),
         ),
         priority=126,
     ),

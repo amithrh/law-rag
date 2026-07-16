@@ -418,7 +418,11 @@ def resolve_plan_answer_ownership(
     return PlanAnswerOwnershipResolution(owner=matches[0] if matches else None)
 
 
-def _registry_condition_matches(condition_id: str, query: str) -> bool:
+def _registry_condition_matches(
+    condition_id: str,
+    query: str,
+    legal_regime: str | None = None,
+) -> bool:
     q = _normalize(query)
     if condition_id == "private_image_abuse":
         image_facts = _has_any(q, (
@@ -446,12 +450,33 @@ def _registry_condition_matches(condition_id: str, query: str) -> bool:
             "after july 2024", "in 2025", "in 2026",
         ))
         return image_facts and payment_threat and current_incident
+    if condition_id.startswith("custody_"):
+        geographic_exception = _has_any(q, (
+            "nagaland", "tribal area", "tribal areas", "sixth schedule area",
+        ))
+        legacy = (
+            not geographic_exception
+            and legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+        )
+        current = (
+            not geographic_exception
+            and legal_regime == "current_bns_bnss_bsa_for_post_2024_incident"
+        )
+        if condition_id == "custody_current_bnss":
+            return current
+        if condition_id == "custody_legacy_crpc":
+            return legacy and not geographic_exception
+        if condition_id == "custody_legacy_or_unknown":
+            return not geographic_exception and (legacy or not current)
+        if condition_id == "custody_bnss_geographic_exception":
+            return geographic_exception
     return False
 
 
 def _active_registry_requirements(
     workflow: AuthorityWorkflowRecord,
     query: str,
+    legal_regime: str | None = None,
 ) -> tuple[WorkflowAuthorityRequirement, ...]:
     active: list[WorkflowAuthorityRequirement] = []
     for requirement in workflow.authorities:
@@ -459,7 +484,7 @@ def _active_registry_requirements(
             active.append(requirement)
             continue
         if requirement.condition_ids and all(
-            _registry_condition_matches(condition_id, query)
+            _registry_condition_matches(condition_id, query, legal_regime)
             for condition_id in requirement.condition_ids
         ):
             active.append(requirement)
@@ -470,6 +495,9 @@ def _registry_owner_retrieval_sources(
     owner: PlanOwnedAnswerRoute | None,
     retrieval_sources: list[RetrievalSourcePlan],
     query: str,
+    *,
+    legal_regime: str | None = None,
+    closed_owner_set: bool = True,
 ) -> list[RetrievalSourcePlan]:
     """Scope registry expansion to the selected answer owner.
 
@@ -486,7 +514,7 @@ def _registry_owner_retrieval_sources(
         return retrieval_sources
 
     records = []
-    for requirement in _active_registry_requirements(workflow, query):
+    for requirement in _active_registry_requirements(workflow, query, legal_regime):
         record = registry.by_key(requirement.registry_key)
         if record is None:
             raise ValueError(f"registry workflow authority missing: {requirement.registry_key}")
@@ -511,7 +539,9 @@ def _registry_owner_retrieval_sources(
             doc_ids=list(dict.fromkeys(
                 doc_id for record in pack_records for doc_id in record.retrieval.doc_ids
             )),
-            anchor_patterns=[record.provision.canonical_anchor for record in pack_records],
+            anchor_patterns=[
+                record.provision.canonical_anchor for record in pack_records
+            ],
             source_types=list(dict.fromkeys(
                 source_type
                 for record in pack_records
@@ -524,7 +554,12 @@ def _registry_owner_retrieval_sources(
     # A registry-owned answer is a closed authority set. Keeping generic route
     # packs here allowed unrelated statutes to enter the prompt and source list
     # even though they could never support this workflow's reviewed answer.
-    return list(replacements.values())
+    if closed_owner_set:
+        return list(replacements.values())
+    return [
+        source for source in retrieval_sources
+        if source.source_pack_id not in replacements
+    ] + list(replacements.values())
 
 
 def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
@@ -557,7 +592,20 @@ def build_matter_plan(query: str, route: MatterRoute) -> MatterPlan | None:
         )
         for pack in source_packs
     ]
-    retrieval_sources = _registry_owner_retrieval_sources(plan_owner, retrieval_sources, q)
+    retrieval_sources = _registry_owner_retrieval_sources(
+        plan_owner,
+        retrieval_sources,
+        q,
+        legal_regime=route.legal_regime,
+    )
+    for additional_owner in ownership_resolution.additional_owners:
+        retrieval_sources = _registry_owner_retrieval_sources(
+            additional_owner,
+            retrieval_sources,
+            q,
+            legal_regime=route.legal_regime,
+            closed_owner_set=False,
+        )
     if plan_owner is not None:
         route_entries = _authority_entries(q, route)
         route_entries_by_act = {
@@ -1789,7 +1837,11 @@ def _plan_owner_authority_entries(
         if workflow.owner_token != owner.owner_token:
             raise ValueError(f"registry workflow owner mismatch for {owner.scenario_id}")
         entries: list[AuthorityLedgerEntry] = []
-        for requirement in _active_registry_requirements(workflow, query):
+        for requirement in _active_registry_requirements(
+            workflow,
+            query,
+            route.legal_regime,
+        ):
             record = registry.by_key(requirement.registry_key)
             if record is None:
                 raise ValueError(f"registry workflow authority missing: {requirement.registry_key}")
@@ -1797,23 +1849,33 @@ def _plan_owner_authority_entries(
                 source
                 for source in retrieval_sources
                 if record.doc_id in source.doc_ids
-                and record.provision.canonical_anchor in source.anchor_patterns
+                and any(
+                    anchor in source.anchor_patterns
+                    for anchor in record.provision.all_anchors
+                )
             ]
             source = max(candidates, key=lambda item: item.priority) if candidates else None
             entries.append(
                 AuthorityLedgerEntry(
-                    source=f"{record.canonical_name} Clause {record.provision.number}",
+                    source=(
+                        f"{record.canonical_name} "
+                        f"{record.provision.kind.title()} {record.provision.number}"
+                    ),
                     authority_id=record.authority_id_expected,
                     registry_key=record.canonical_key,
                     identity_status="canonical",
                     canonical_name=_legal_name(record.canonical_name),
                     act=record.canonical_name,
-                    section=f"Clause {record.provision.number}",
+                    section=f"{record.provision.kind.title()} {record.provision.number}",
                     source_pack_id=source.source_pack_id if source is not None else None,
-                    required_anchor_patterns=[record.provision.canonical_anchor],
+                    required_anchor_patterns=list(record.provision.all_anchors),
                     claim_type=requirement.role,
-                    priority="must_cite" if requirement.required else "conditional",
-                    must_cite=True,
+                    priority=(
+                        "must_cite"
+                        if requirement.answer_must_cite is not False
+                        else "background"
+                    ),
+                    must_cite=requirement.answer_must_cite is not False,
                     conditional=not requirement.required,
                     note="registry_workflow_authority",
                 )

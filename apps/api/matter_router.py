@@ -10102,7 +10102,12 @@ def _is_child_marriage(q: str) -> bool:
 def _is_arrest_production_delay(q: str) -> bool:
     if _has_any(q, ("notice", "summons", "appear")) and not _has_any(q, ("arrested", "detained", "custody", "lockup", "police picked", "crime branch", "picked by", "utha liya")):
         return False
-    arrest_context = has_person_custody_context(q)
+    # Users and retrieval evals often omit the grammatical subject and start
+    # with "arrested in ...". A production/Magistrate fact makes that shorthand
+    # unambiguously personal custody rather than custody of property.
+    arrest_context = has_person_custody_context(q) or bool(
+        re.search(r"^\s*arrested\b", q, re.IGNORECASE)
+    )
     production_context = _has_any(q, (
         "magistrate ke samne", "magistrate ke saamne", "produce before magistrate",
         "produced before magistrate", "not produced", "24 hours",
@@ -10182,6 +10187,14 @@ def has_person_custody_context(q: str) -> bool:
         re.search(
             r"\b(?:picked(?:\s+up)?|took(?:\s+away)?|taken(?:\s+away)?|held|holding|kept|detained|arrested)\s+"
             rf"{person}\b(?!['’]s)(?=\s*(?:[,;.!?]|and\b|but\b|at\b|from\b|for\b|away\b|overnight\b|yesterday\b|today\b|tonight\b|last\b|after\b|before\b|since\b|$))",
+            q,
+        ) is not None,
+        re.search(
+            rf"\b(?:police|officers?)\b.{{0,24}}\b"
+            rf"(?:picked(?:\s+up)?|took(?:\s+away)?|taken(?:\s+away)?|detained|arrested)\s+"
+            rf"{person}\b\s+(?:born(?:\s+on|\s+in)?\s+(?:19|20)\d{{2}}|"
+            r"aged?\s+\d{1,3}|who\s+is\s+\d{1,3})\b.{0,30}\b"
+            r"(?:from|at|station|custody|lockup|last\s+night|yesterday|today|tonight)\b",
             q,
         ) is not None,
         re.search(rf"\bcustody\s+of\s+{person}\b(?!['’]s)", q) is not None,
@@ -11935,7 +11948,8 @@ def _criminal_regime(q: str) -> str:
         return "current_bns_bnss_bsa_for_post_2024_incident"
     if _has_any(q, (
         "today", "tonight", "just now", "this morning",
-        "this afternoon", "this evening",
+        "this afternoon", "this evening", "yesterday", "last night",
+        "last evening",
     )):
         return "current_bns_bnss_bsa_for_post_2024_incident"
     years = _extract_incident_years(q)
@@ -11965,10 +11979,21 @@ def _extract_years(q: str) -> list[int]:
 def _extract_incident_years(q: str) -> list[int]:
     years: list[int] = []
     for match in re.finditer(r"\b(20\d{2}|19\d{2})\b", q):
-        if _looks_like_statute_year(q, match.start(), match.end()):
+        if _looks_like_statute_year(q, match.start(), match.end()) or (
+            _looks_like_personal_date_year(q, match.start())
+        ):
             continue
         years.append(int(match.group(1)))
     return years
+
+
+def _looks_like_personal_date_year(q: str, start: int) -> bool:
+    before = q[max(0, start - 48):start].lower()
+    return re.search(
+        r"(?:born(?:\s+on|\s+in)?|birth\s+year|year\s+of\s+birth|"
+        r"date\s+of\s+birth|dob(?:\s+is)?)\s*$",
+        before,
+    ) is not None
 
 
 def _looks_like_statute_year(q: str, start: int, end: int) -> bool:
