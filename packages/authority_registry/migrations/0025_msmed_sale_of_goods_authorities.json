@@ -1,0 +1,349 @@
+{
+  "migration_id": "0025_msmed_sale_of_goods_authorities",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "msmed_2006_section_15",
+        "authority_id_expected": "authority_14b3ca26914b4862dc29",
+        "canonical_name": "Micro, Small and Medium Enterprises Development Act 2006",
+        "aliases": ["MSMED Act 2006", "MSME Act 2006"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "15",
+          "heading": "Liability of buyer to make payment",
+          "canonical_anchor": "/sec-15",
+          "anchor_aliases": []
+        },
+        "effective_from": "2006-10-02",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/2013/3/A2006-27.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2ecd1527ad2f91b591c1e4f38ae4b0133e85eb8d4a47179274828b8879115697",
+          "raw_bytes_size": 242312
+        },
+        "doc_id": "msmed-2006",
+        "title": "Micro, Small and Medium Enterprises Development Act 2006",
+        "statute": "Micro, Small and Medium Enterprises Development Act 2006",
+        "year": 2006,
+        "subject_area": "civil_general",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "msmed_2006",
+          "title_patterns": ["Micro, Small and Medium Enterprises Development Act 2006"],
+          "doc_ids": ["msmed-2006"],
+          "source_types": ["bare_act"],
+          "search_query": "MSMED Act 2006 section 15 liability of buyer delayed payment section 16 interest section 18 Facilitation Council"
+        },
+        "verbatim_status": "declared",
+        "text": "Micro, Small and Medium Enterprises Development Act 2006, Section 15\n\n15.Liability of buyer to make payment.—Where any supplier supplies any goods or renders any \nservices to any buyer, the buyer shall make payment therefor on or before the date agreed upon between \nhim and the supplier in writing or, where there is no agreement in this behalf, before the appointed day: \nProvided that in no case the period agreed upon between the supplier and the buyer in writing shall \nexceed forty-five days from the day of acceptance or the day of deemed acceptance.",
+        "text_sha256": "ba1b53d56f51721ee7ba3990b375083c581854c2f5a20a3414c7b3f9fda6597d"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "msmed_2006_section_16",
+        "authority_id_expected": "authority_84e3db3e8d92860b7ac6",
+        "canonical_name": "Micro, Small and Medium Enterprises Development Act 2006",
+        "aliases": ["MSMED Act 2006", "MSME Act 2006"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "16",
+          "heading": "Date from which and rate at which interest is payable",
+          "canonical_anchor": "/sec-16",
+          "anchor_aliases": []
+        },
+        "effective_from": "2006-10-02",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/2013/3/A2006-27.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2ecd1527ad2f91b591c1e4f38ae4b0133e85eb8d4a47179274828b8879115697",
+          "raw_bytes_size": 242312
+        },
+        "doc_id": "msmed-2006",
+        "title": "Micro, Small and Medium Enterprises Development Act 2006",
+        "statute": "Micro, Small and Medium Enterprises Development Act 2006",
+        "year": 2006,
+        "subject_area": "civil_general",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "msmed_2006",
+          "title_patterns": ["Micro, Small and Medium Enterprises Development Act 2006"],
+          "doc_ids": ["msmed-2006"],
+          "source_types": ["bare_act"],
+          "search_query": "MSMED Act 2006 section 15 liability of buyer delayed payment section 16 interest section 18 Facilitation Council"
+        },
+        "verbatim_status": "declared",
+        "text": "Micro, Small and Medium Enterprises Development Act 2006, Section 16\n\n16.Date from which and rate at which interest is payable.—Where any buyer fails to make \npayment of the amount to the supplier, as required under section 15, the buyer shall, notwithstanding \nanything contained in any agreement between the buyer and the supplier or in any law for the time being \nin force, be liable to pay compound interest with monthly rests to the supplier on that amount from the \nappointed day or, as the case may be, from the date immediately following the date agreed upon, at three \ntimes of the bank rate notified by the Reserve Bank.",
+        "text_sha256": "d47d029b5e3edef6fb130bd9efbabfbf8e1da217489d3afdee23042ae77ecb24"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "msmed_2006_section_18",
+        "authority_id_expected": "authority_f96da9f5d7d66e9c94d2",
+        "canonical_name": "Micro, Small and Medium Enterprises Development Act 2006",
+        "aliases": ["MSMED Act 2006", "MSME Act 2006"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "18",
+          "heading": "Reference to Micro and Small Enterprises Facilitation Council",
+          "canonical_anchor": "/sec-18",
+          "anchor_aliases": []
+        },
+        "effective_from": "2006-10-02",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/2013/3/A2006-27.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "2ecd1527ad2f91b591c1e4f38ae4b0133e85eb8d4a47179274828b8879115697",
+          "raw_bytes_size": 242312
+        },
+        "doc_id": "msmed-2006",
+        "title": "Micro, Small and Medium Enterprises Development Act 2006",
+        "statute": "Micro, Small and Medium Enterprises Development Act 2006",
+        "year": 2006,
+        "subject_area": "civil_general",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "msmed_2006",
+          "title_patterns": ["Micro, Small and Medium Enterprises Development Act 2006"],
+          "doc_ids": ["msmed-2006"],
+          "source_types": ["bare_act"],
+          "search_query": "MSMED Act 2006 section 15 liability of buyer delayed payment section 16 interest section 18 Facilitation Council"
+        },
+        "verbatim_status": "declared",
+        "text": "Micro, Small and Medium Enterprises Development Act 2006, Section 18\n\n18.Reference to Micro and Small EnterprisesFacilitation Council.—(1) Notwithstanding anything \ncontained in any other law for the time being in force, any party to a dispute may, with regard to any \namount due under section 17, make a reference to the Micro and Small Enterprises Facilitation Council. \n(2) On receipt of a reference under sub-section (1), the Council shall either itself conduct conciliation \nin the matter or seek the assistance of any institution or centre providing alternate dispute resolution \nservices by making a reference to such an institution or centre, for conducting conciliation and the \nprovisions of sections 65 to 81 of the Arbitration and Conciliation Act, 1996 (26 of 1996) shall apply to \nsuch a dispute as if the conciliation was initiated under Part III of that Act. \n(3) Where the conciliation initiated under sub-section (2) is not successful and stands terminated \nwithout any settlement between the parties, the Council shall either itself take up the dispute for \narbitration or refer ittoany institution or centre providing alternate dispute resolution services for such \narbitration and the provisions of the Arbitration and Conciliation Act, 1996 (26 of 1996) shall then apply \nto the dispute as if the arbitration was in pursuance of an arbitration agreement referred to in \nsub-section(1) of section 7 of that Act. \n(4) Notwithstanding anything contained in any other law for the time being in force, the Micro and \nSmall Enterprises Facilitation Council or the centre providing alternate dispute resolution services shall \nhave jurisdiction to act as an Arbitrator or Conciliator under this section in a dispute between the supplier \nlocated within its jurisdiction and a buyer located anywhere in India. \n(5) Every reference made under this section shall be decided within a period of ninety days from the \ndate of making such a reference.",
+        "text_sha256": "390c20827c28632c376bc695fc1bb824c5d05da8cc9f05b6bd2fb4b5f13d835e"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "sale_of_goods_1930_section_31",
+        "authority_id_expected": "authority_ca972b62188fc00d2d93",
+        "canonical_name": "Sale of Goods Act 1930",
+        "aliases": ["Sale of Goods Act, 1930"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "31",
+          "heading": "Duties of seller and buyer",
+          "canonical_anchor": "/sec-31",
+          "anchor_aliases": []
+        },
+        "effective_from": "1930-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/2390/1/193003.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "069ff04276e3511062a4076c74de9971ca0e616b80eabc0849b4f379a04a5e82",
+          "raw_bytes_size": 377988
+        },
+        "doc_id": "sale-of-goods-1930",
+        "title": "Sale of Goods Act 1930",
+        "statute": "Sale of Goods Act 1930",
+        "year": 1930,
+        "subject_area": "business",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "sale_of_goods_1930",
+          "title_patterns": ["Sale of Goods Act 1930"],
+          "doc_ids": ["sale-of-goods-1930"],
+          "source_types": ["bare_act"],
+          "search_query": "Sale of Goods Act 1930 delivery of goods breach buyer seller price damages section 55"
+        },
+        "verbatim_status": "declared",
+        "text": "Sale of Goods Act 1930, Section 31\n\n31. Duties, of seller and buyer.— It is the duty to the seller to deliver the goods and of the buyer to \naccept and pay for them, in accordance with the terms of the contract of sale.",
+        "text_sha256": "eeeb6b9353f4c8f121ee0dbda26343ed5e6b0c3bb52f2ff11e54c339188bed61"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "sale_of_goods_1930_section_32",
+        "authority_id_expected": "authority_ad5352abbebc38174948",
+        "canonical_name": "Sale of Goods Act 1930",
+        "aliases": ["Sale of Goods Act, 1930"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "32",
+          "heading": "Payment and delivery are concurrent conditions",
+          "canonical_anchor": "/sec-32",
+          "anchor_aliases": []
+        },
+        "effective_from": "1930-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/2390/1/193003.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "069ff04276e3511062a4076c74de9971ca0e616b80eabc0849b4f379a04a5e82",
+          "raw_bytes_size": 377988
+        },
+        "doc_id": "sale-of-goods-1930",
+        "title": "Sale of Goods Act 1930",
+        "statute": "Sale of Goods Act 1930",
+        "year": 1930,
+        "subject_area": "business",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "sale_of_goods_1930",
+          "title_patterns": ["Sale of Goods Act 1930"],
+          "doc_ids": ["sale-of-goods-1930"],
+          "source_types": ["bare_act"],
+          "search_query": "Sale of Goods Act 1930 delivery of goods breach buyer seller price damages section 55"
+        },
+        "verbatim_status": "declared",
+        "text": "Sale of Goods Act 1930, Section 32\n\n32. Payment and delivery are concurrent conditions.—Unless otherwise agreed, delivery of the \ngoods and payment of the price are concurrent conditions, that is to say, the seller shall be ready and \nwilling to give possession of the goods to the buyer in exchange for the price, and the buyer shall be ready \nand willing to pay the price in exchange for possession of the goods.",
+        "text_sha256": "dc5cb0e531c48142c32f1a8ddf68053e64fcf7ef77b19feed9a8cdb3ff790b6c"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "sale_of_goods_1930_section_55",
+        "authority_id_expected": "authority_e82f7a1ce9d8cd81476e",
+        "canonical_name": "Sale of Goods Act 1930",
+        "aliases": ["Sale of Goods Act, 1930"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "55",
+          "heading": "Suit for price",
+          "canonical_anchor": "/sec-55",
+          "anchor_aliases": []
+        },
+        "effective_from": "1930-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/2390/1/193003.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "069ff04276e3511062a4076c74de9971ca0e616b80eabc0849b4f379a04a5e82",
+          "raw_bytes_size": 377988
+        },
+        "doc_id": "sale-of-goods-1930",
+        "title": "Sale of Goods Act 1930",
+        "statute": "Sale of Goods Act 1930",
+        "year": 1930,
+        "subject_area": "business",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "sale_of_goods_1930",
+          "title_patterns": ["Sale of Goods Act 1930"],
+          "doc_ids": ["sale-of-goods-1930"],
+          "source_types": ["bare_act"],
+          "search_query": "Sale of Goods Act 1930 delivery of goods breach buyer seller price damages section 55"
+        },
+        "verbatim_status": "declared",
+        "text": "Sale of Goods Act 1930, Section 55\n\n55. Suit for price.—(1) Where under a contract of sale the property in the goods has passed to the \nbuyer and the buyer wrongfully neglects or refuses to pay for the goods according to the terms of the \ncontract, the seller may sue him for the price of the goods. \n\n\n \n \n14 \n \n(2) Where under a contract of sale the price is payable on a day certain irrespective of delivery and \nthe buyer wrongfully neglects or refuses to pay such pirce, the seller may sue him for the price although \nthe property in the goods has not passed and the goods have not been appropriated to the contract.",
+        "text_sha256": "cfb773dc46f19ded5a208c112b87ec6d9388ee5de292e0d5413899d5b1b45a49"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "sale_of_goods_1930_section_56",
+        "authority_id_expected": "authority_712ff6f224db04da10af",
+        "canonical_name": "Sale of Goods Act 1930",
+        "aliases": ["Sale of Goods Act, 1930"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "56",
+          "heading": "Damages for non-acceptance",
+          "canonical_anchor": "/sec-56",
+          "anchor_aliases": []
+        },
+        "effective_from": "1930-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/2390/1/193003.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "069ff04276e3511062a4076c74de9971ca0e616b80eabc0849b4f379a04a5e82",
+          "raw_bytes_size": 377988
+        },
+        "doc_id": "sale-of-goods-1930",
+        "title": "Sale of Goods Act 1930",
+        "statute": "Sale of Goods Act 1930",
+        "year": 1930,
+        "subject_area": "business",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "sale_of_goods_1930",
+          "title_patterns": ["Sale of Goods Act 1930"],
+          "doc_ids": ["sale-of-goods-1930"],
+          "source_types": ["bare_act"],
+          "search_query": "Sale of Goods Act 1930 delivery of goods breach buyer seller price damages section 55"
+        },
+        "verbatim_status": "declared",
+        "text": "Sale of Goods Act 1930, Section 56\n\n56. Damages for non-acceptance.—Where the buyer wrongfully neglects or refuses to accept and \npay for the goods, the seller may sue him for damages for non-acceptance.",
+        "text_sha256": "b0b0359e1fc7d8742f317d02219e50e8f96d58ed02c6e8571749d0f2d0f304d8"
+      },
+      "expected_previous_record_sha256": null
+    }
+  ]
+}

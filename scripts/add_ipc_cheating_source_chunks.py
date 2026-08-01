@@ -100,7 +100,7 @@ async def _upsert_chunk(conn: asyncpg.Connection, source_id: int, spec: dict) ->
             VALUES (
                 $1, 'ipc-1860', 'Indian Penal Code 1860',
                 'Indian Penal Code 1860', 1860, 'criminal',
-                DATE '1860-10-06', $2, true
+                DATE '1860-10-06', $2, false
             )
             RETURNING id
             """,
@@ -118,7 +118,9 @@ async def _upsert_chunk(conn: asyncpg.Connection, source_id: int, spec: dict) ->
                 subject_area = 'criminal',
                 as_at = DATE '1860-10-06',
                 metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
-                provenance_verified = true
+                -- This is a partial, manually reconstructed backfill. It is
+                -- useful for offline repair work but is not a provenance pass.
+                provenance_verified = false
             WHERE id = $3
             """,
             source_id,
@@ -156,7 +158,9 @@ async def _upsert_chunk(conn: asyncpg.Connection, source_id: int, spec: dict) ->
                 embedding_sparse = $4::jsonb,
                 chunk_strategy = 'section',
                 metadata = $5,
-                quarantined = false
+                quarantined = false,
+                provenance_verified = false,
+                provenance_verified_at = NULL
             WHERE id = $6
             """,
             len(spec["text"].split()),
@@ -173,11 +177,11 @@ async def _upsert_chunk(conn: asyncpg.Connection, source_id: int, spec: dict) ->
         INSERT INTO chunks (
             document_id, source_type, subject_area, anchor, paragraph_no,
             token_count, text, embedding, embedding_sparse, chunk_strategy,
-            as_at, metadata, quarantined
+            as_at, metadata, quarantined, provenance_verified
         )
         VALUES (
             $1, 'bare_act', 'criminal', $2, NULL, $3, $4, $5::halfvec,
-            $6::jsonb, 'section', DATE '1860-10-06', $7, false
+            $6::jsonb, 'section', DATE '1860-10-06', $7, false, false
         )
         """,
         doc_pk,

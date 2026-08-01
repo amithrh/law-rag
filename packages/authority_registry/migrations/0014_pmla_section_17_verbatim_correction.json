@@ -1,0 +1,78 @@
+{
+  "migration_id": "0014_pmla_section_17_verbatim_correction",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "prevention_of_money_laundering_act_2002_section_17",
+        "authority_id_expected": "authority_992d6e46a6701e73ce6a",
+        "canonical_name": "Prevention of Money Laundering Act 2002",
+        "aliases": [
+          "Prevention of Money-laundering Act, 2002",
+          "PMLA 2002"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "17",
+          "heading": "Search and seizure",
+          "canonical_anchor": "/sec-17",
+          "anchor_aliases": [
+            "/sec-17-a",
+            "/sec-17-b",
+            "/sec-17-c"
+          ]
+        },
+        "effective_from": "2005-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2024-08-30",
+        "publisher": {
+          "name": "Legislative Department, Ministry of Law and Justice",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/2036/5/A2003-15.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "d3699f0228f7b9cdf8311f9e8998032fb15e6570070b99a578eca3cb8fcd6413",
+          "raw_bytes_size": 504120
+        },
+        "doc_id": "pmla-2002",
+        "title": "Prevention of Money Laundering Act 2002",
+        "statute": "Prevention of Money Laundering Act 2002",
+        "year": 2002,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "pmla_2002_search_freeze",
+          "title_patterns": [
+            "Prevention of Money Laundering Act 2002",
+            "Prevention of Money-laundering Act, 2002",
+            "PMLA 2002"
+          ],
+          "doc_ids": [
+            "pmla-2002"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Prevention of Money Laundering Act 2002 section 17 subsection 1A freeze bank account copy order application 30 days Adjudicating Authority"
+        },
+        "verbatim_status": "declared",
+        "text": "17. Search and seizure.—(1) Where the Director or any other officer not below the rank of Deputy Director authorised by him for the purposes of this section, on the basis of information in his possession, has reason to believe (the reason for such belief to be recorded in writing) that any person—(i) has committed any act which constitutes money-laundering, or (ii) is in possession of any proceeds of crime involved in money-laundering, or (iii) is in possession of any records relating to money-laundering, or (iv) is in possession of any property related to crime, then, subject to the rules made in this behalf, he may authorise any officer subordinate to him to—(a) enter and search any building, place, vessel, vehicle or aircraft where he has reason to suspect that such records or proceeds of crime are kept; (b) break open the lock of any door, box, locker, safe, almirah or other receptacle for exercising the powers conferred by clause (a) where the keys thereof are not available; (c) seize any record or property found as a result of such search; (d) place marks of identification on such record or property, if required or make or cause to be made extracts or copies therefrom; (e) make a note or an inventory of such record or property; (f) examine on oath any person, who is found to be in possession or control of any record or property, in respect of all matters relevant for the purposes of any investigation under this Act. (1A) Where it is not practicable to seize such record or property, the officer authorised under sub-section (1), may make an order to freeze such property whereupon the property shall not be transferred or otherwise dealt with, except with the prior permission of the officer making such order, and a copy of such order shall be served on the person concerned: Provided that if, at any time before its confiscation under sub-section (5) or sub-section (7) of section 8 or section 58B or sub-section (2A) of section 60, it becomes practical to seize a frozen property, the officer authorised under sub-section (1) may seize such property. (2) The authority, who has been authorised under sub-section (1) shall, immediately after search and seizure or upon issuance of a freezing order, forward a copy of the reasons so recorded along with material in his possession, referred to in that sub-section, to the Adjudicating Authority in a sealed envelope, in the manner as may be prescribed and such Adjudicating Authority shall keep such reasons and material for such period, as may be prescribed. (4) The authority seizing any record or property under sub-section (1) or freezing any record or property under sub-section (1A) shall, within a period of thirty days from such seizure or freezing, as the case may be, file an application, requesting for retention of such record or property seized under sub-section (1) or for continuation of the order of freezing served under sub-section (1A), before the Adjudicating Authority.",
+        "text_sha256": "2485c0d83b6c3e63d71c440c654c619cda017225bc28c75b516c2bc87cc32234"
+      },
+      "expected_previous_record_sha256": "12a4b8043e385a647408cea4f365c8bc23bdf6429c2c98811b91c26b305bacd4"
+    }
+  ],
+  "workflow_operations": []
+}

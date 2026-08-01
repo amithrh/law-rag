@@ -1,0 +1,153 @@
+{
+  "migration_id": "0028_legal_services_authorities_lok_adalat_projection_repair",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "legal_services_authorities_act_1987_section_19",
+        "authority_id_expected": "authority_4311cfc807f876973217",
+        "canonical_name": "Legal Services Authorities Act 1987",
+        "aliases": ["Legal Services Authorities Act, 1987", "LSA Act 1987"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "19",
+          "heading": "Organisation of Lok Adalats",
+          "canonical_anchor": "/sec-19",
+          "anchor_aliases": []
+        },
+        "effective_from": "1994-10-29",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "1994-10-29",
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/1925/1/198739.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "3aae5d5c9f8c2ad100c0553c351af559e35fb36c3fc68a921fd1e64dd4a9318f",
+          "raw_bytes_size": 160490
+        },
+        "doc_id": "legal-services-authorities-1987",
+        "title": "Legal Services Authorities Act 1987",
+        "statute": "Legal Services Authorities Act 1987",
+        "year": 1987,
+        "subject_area": "constitutional",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "legal_services_authorities_1987_lok_adalat",
+          "title_patterns": ["Legal Services Authorities Act 1987"],
+          "doc_ids": ["legal-services-authorities-1987"],
+          "source_types": ["bare_act"],
+          "search_query": "Legal Services Authorities Act 1987 section 19 section 20 section 21 Lok Adalat cognizance referral award settlement"
+        },
+        "verbatim_status": "declared",
+        "text": "Legal Services Authorities Act 1987, Section 19\n\n19. Organisation of Lok Adalats.—(1) Every State Authority or District Authority or the Supreme \nCourt Legal Services Committee or every High Court Legal Services Committee or, as the case may be, \n                                                          \n1. Subs. by Act 59 of 1994, s. 12, for clause (b) (w.e.f. 29-10-1994). \n2. Subs. by s. 13, ibid., for clause (b) (w.e.f. 29-10-1994). \n3. Ins. by s. 13, ibid. (w.e.f. 29-10-1994). \n4. Ins. by s. 14, ibid. (w.e.f. 29-10-1994). \n5. Subs. by s. 15, ibid., for sections 19 and 20 (w.e.f. 29-10-1994). \n\n\n12 \n \nTaluk Legal Services Committee may organize Lok Adalats at such intervals and places and for \nexercising such jurisdiction and for such areas as it thinks fit. \n(2) Every Lok Adalat organised for an area shall consist of such number of— \n(a) serving or retired judicial officers; and \n(b) other persons,  \nof the area as may be specified by the State Authority or the District Authority or the Supreme Court \nLegal Services Committee or the High Court Legal Services Committee, or as the case may be, the Taluk \nLegal Services Committee, organising such Lok Adalat. \n(3) The experience and qualifications of other persons referred to in clause (b) of sub-section (2) for \nLok Adalats organised by the Supreme Court Legal Services Committee shall be such as may be \nprescribed by the Central Government in consultation with the Chief Justice of India. \n(4) The experience and qualifications of other persons referred to in clause (b) of sub-section (2) for \nLok Adalats other than referred to in sub-section (3) shall be such as may be prescribed by the State \nGovernment in consultation with the Chief Justice of the High Court. \n(5) A Lok Adalat shall have jurisdiction to determine and to arrive at a compromise or settlement \nbetween the parties to a dispute in respect of— \n(i) any case pending before; or \n(ii) any matter which is falling within the jurisdiction of, and is not brought before,  \nany Court for which the Lok Adalat is organised: \nProvided that the Lok Adalat shall have no jurisdiction in respect of any case or matter relating to an \noffence not compoundable under any law.",
+        "text_sha256": "9fc8e8428eff67014efb0cf739c2afa7e765d2e04c7bceaeb81326849bf7ef06"
+      },
+      "expected_previous_record_sha256": "5013f3d78ea82486367c403b6f1556c9458641b74c91b6a61c4103301f122a71"
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "legal_services_authorities_act_1987_section_20",
+        "authority_id_expected": "authority_73374f30d45eec49c931",
+        "canonical_name": "Legal Services Authorities Act 1987",
+        "aliases": ["Legal Services Authorities Act, 1987", "LSA Act 1987"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "20",
+          "heading": "Cognizance of cases by Lok Adalats",
+          "canonical_anchor": "/sec-20",
+          "anchor_aliases": []
+        },
+        "effective_from": "1994-10-29",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "1994-10-29",
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/1925/1/198739.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "3aae5d5c9f8c2ad100c0553c351af559e35fb36c3fc68a921fd1e64dd4a9318f",
+          "raw_bytes_size": 160490
+        },
+        "doc_id": "legal-services-authorities-1987",
+        "title": "Legal Services Authorities Act 1987",
+        "statute": "Legal Services Authorities Act 1987",
+        "year": 1987,
+        "subject_area": "constitutional",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "legal_services_authorities_1987_lok_adalat",
+          "title_patterns": ["Legal Services Authorities Act 1987"],
+          "doc_ids": ["legal-services-authorities-1987"],
+          "source_types": ["bare_act"],
+          "search_query": "Legal Services Authorities Act 1987 section 19 section 20 section 21 Lok Adalat cognizance referral award settlement"
+        },
+        "verbatim_status": "declared",
+        "text": "Legal Services Authorities Act 1987, Section 20\n\n20. Cognizance of cases by Lok Adalats.—(1) Where in any case referred to in clause (i) of               \nsub-section (5) of section 19,— \n(i)(a) the parties thereof agree; or \n(b) one of the parties thereof makes an application to the Court,  \nfor referring the case to the Lok Adalat for settlement and if such court isprima facie satisfied that there \nare chances of such settlement; or \n(ii) thecourt is satisfied that the matter is an appropriate one to be taken cognizance of by the Lok \nAdalat,  \nthe Court shall refer the case to the Lok Adalat: \nProvided that no case shall be referred to the Lok Adalat under sub-clause (b) of clause (i) or clause \n(ii) by such court except after giving a reasonable opportunity of being heard to the parties. \n(2) Notwithstanding anything contained in any cither law for the time being in force, the Authority or \nCommittee organising the Lok Adalat under sub-section (1) of section19 may, on receipt of an application \nfrom any one of the parties to any matter referred to in clause (ii) of sub-section (5) of section 19 that \nsuch matter needs to be determined by a Lok Adalat, refer such matter to the Lok Adalat, for \ndetermination: \nProvided that no matter shall be referred to the Lok Adalat except after giving a reasonable \nopportunity of being heard to the other party. \n(3) Where any case is referred to a Lok Adalat under sub-section (1) or where a reference has been \nmade to it under sub-section (2), the Lok Adalat shall proceed to dispose of the case or matter and arrive \nat a compromise or settlement between the parties. \n\n\n13 \n \n(4) Every Lok Adalat shall, while determining any reference before it under this Act, act with utmost \nexpedition to arrive at a compromise or settlement between the parties and shall be guided by the \nprinciples of justice, equity, fair play and other legal principles. \n(5) Where no award is made by the Lok Adalat on the ground that no compromise or settlementcould \nbe arrived at between the parties, the record of the case shall be returned by it to the court, from which the \nreference has been received under sub-section (1) for disposal in accordance with law. \n(6) Where no award is made by the Lok Adalat on the ground that no compromise or settlement could \nbe arrived at between the parties, in a matter referred to in sub-section (2), that Lok Adalat shall advice \nthe parties to seek remedy in a court. \n(7) Where the record of the case if returned under sub-section (5) to the court, such court shall \nproceed to deal with such case from the stage which was reached before such reference under sub-section \n(1).]",
+        "text_sha256": "4d8efed8062232f031fc5ff5f4138a533d985815fe5c2bf60b6dac5a28a6b268"
+      },
+      "expected_previous_record_sha256": "116ba5d14a4cdefe3e654329da1d0d08eb42a9ab9fa2f22babad0b6a6bb3ecba"
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "legal_services_authorities_act_1987_section_21",
+        "authority_id_expected": "authority_71a26d0ccbf7b61f6d84",
+        "canonical_name": "Legal Services Authorities Act 1987",
+        "aliases": ["Legal Services Authorities Act, 1987", "LSA Act 1987"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "21",
+          "heading": "Award of Lok Adalat",
+          "canonical_anchor": "/sec-21",
+          "anchor_aliases": []
+        },
+        "effective_from": "1994-10-29",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "1994-10-29",
+        "publisher": {"name": "India Code, Government of India", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/1925/1/198739.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "3aae5d5c9f8c2ad100c0553c351af559e35fb36c3fc68a921fd1e64dd4a9318f",
+          "raw_bytes_size": 160490
+        },
+        "doc_id": "legal-services-authorities-1987",
+        "title": "Legal Services Authorities Act 1987",
+        "statute": "Legal Services Authorities Act 1987",
+        "year": 1987,
+        "subject_area": "constitutional",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "legal_services_authorities_1987_lok_adalat",
+          "title_patterns": ["Legal Services Authorities Act 1987"],
+          "doc_ids": ["legal-services-authorities-1987"],
+          "source_types": ["bare_act"],
+          "search_query": "Legal Services Authorities Act 1987 section 19 section 20 section 21 Lok Adalat cognizance referral award settlement"
+        },
+        "verbatim_status": "declared",
+        "text": "Legal Services Authorities Act 1987, Section 21\n\n21. Award of Lok Adalat.—1[(1) Every award of the Lok Adalat shall be deemed to be a decree of a \ncivil court or, as the case may be, an order of any other court and where a compromise or settlement has \nbeen arrived at, by a Lok Adalat in a case referred to it under sub-section(1) of section 20, the court-fee \npaid in such case shall be refunded in the manner provided under the Court-fees Act, 1870 (7 of 1870).] \n(2) Every award made by a Lok Adalat shall be final and binding on all the parties to the dispute, and \nno appeal shall lie to any court against the award.",
+        "text_sha256": "038579822114caa40a4af5068c9291d3729735fb2167c9d206a1eac5217d236d"
+      },
+      "expected_previous_record_sha256": "45ceabe484923d970cd2edfbc8be2ac437631bc492939829046aa643ffe619be"
+    }
+  ]
+}

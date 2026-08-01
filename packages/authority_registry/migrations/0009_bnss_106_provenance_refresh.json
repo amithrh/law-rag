@@ -1,0 +1,45 @@
+{
+  "migration_id": "0009_bnss_106_provenance_refresh",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_106",
+        "authority_id_expected": "authority_4ddf10928ec61642a875",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": ["Bharatiya Nagarik Suraksha Sanhita, 2023", "BNSS 2023"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {"kind": "section", "number": "106", "heading": "Power of police officer to seize certain property", "canonical_anchor": "/sec-106", "anchor_aliases": []},
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {"name": "Legislative Department, Ministry of Law and Justice", "kind": "official_government"},
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {"tier": "canonical", "verification_method": "refetch_hash_and_text", "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe", "raw_bytes_size": 2033181},
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "bnss_2023_bank_account_legal_hold",
+          "title_patterns": ["Bharatiya Nagarik Suraksha Sanhita 2023", "Bharatiya Nagarik Suraksha Sanhita, 2023", "BNSS 2023"],
+          "doc_ids": ["bnss-2023"],
+          "source_types": ["bare_act"],
+          "search_query": "Bharatiya Nagarik Suraksha Sanhita 2023 section 106 Power of police officer to seize certain property"
+        },
+        "verbatim_status": "declared",
+        "text": "106. Power of police officer to seize certain property.--(1) Any police officer may seize any property which may be alleged or suspected to have been stolen, or which may be found under circumstances which create suspicion of the commission of any offence.\n(2) Such police officer, if subordinate to the officer in charge of a police station, shall forthwith report the seizure to that officer.\n(3) Every police officer acting under sub-section (1) shall forthwith report the seizure to the Magistrate having jurisdiction and where the property seized is such that it cannot be conveniently transported to the Court, or where there is difficulty in securing proper accommodation for the custody of such property, or where the continued retention of the property in police custody may not be considered necessary for the purpose of investigation, he may give custody thereof to any person on his executing a bond undertaking to produce the property before the Court as and when required and to give effect to the further orders of the Court as to the disposal of the same.",
+        "text_sha256": "368b9abff5f9e93706dfd8e58251e8ed621b040af193b74af2b4dda7e0c33ac8"
+      },
+      "expected_previous_record_sha256": "39feeac803d3e82de0a4521ed0076b51f809705476aab4b33c2e1d7602b545d3"
+    }
+  ],
+  "workflow_operations": []
+}

@@ -1,0 +1,276 @@
+{
+  "migration_id": "0023_bnss_173_175_fir_authorities",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2024-07-01",
+        "publisher": {
+          "name": "Ministry of Home Affairs, Government of India",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "verbatim_status": "declared",
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_173",
+        "authority_id_expected": "authority_34af1906c7f20fae0947",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "BNSS 2023",
+          "BNSS Section 173"
+        ],
+        "provision": {
+          "kind": "section",
+          "number": "173",
+          "heading": "Information in cognizable cases",
+          "canonical_anchor": "/sec-173-a",
+          "anchor_aliases": []
+        },
+        "retrieval": {
+          "source_pack_id": "bnss_2023_vehicle_theft_fir",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "BNSS Section 173 FIR information police station oral electronic cognizable offence"
+        },
+        "text": "Bharatiya Nagarik Suraksha Sanhita 2023, Section 173\n\n173. (1) Every information relating to the commission of a cognizable offence,\nirrespective of the area where the offence is committed, may be given orally or by electronic\ncommunication to an officer in charge of a police station, and if given—\n(i) orally, it shall be reduced to writing by him or under his direction, and be read\nover to the informant; and every such information, whether given in writing or reduced\nto writing as aforesaid, shall be signed by the person giving it;\n(ii) by electronic communication, it shall be taken on record by him on being\nsigned within three days by the person giving it,\nand the substance thereof shall be entered in a book to be kept by such officer in such form\nas the State Government may by rules prescribe in this behalf:\nProvided that if the information is given by the woman against whom an offence\nunder section 64, section 65, section 66, section 67, section 68, section 69, section 70,\nsection 71, section 74, section 75, section 76, section 77, section 78, section 79 or\nsection 124 of the Bharatiya Nyaya Sanhita, 2023 is alleged to have been committed or\nattempted, then such information shall be recorded, by a woman police officer or any\nwoman officer:\nProvided further that—\n(a) in the event that the person against whom an offence under section 64,\nsection 65, section 66, section 67, section 68, section 69, section 70, section 71,\nsection 74, section 75, section 76, section 77, section 78, section 79   or section 124 of\nthe Bharatiya Nyaya Sanhita, 2023 is alleged to have been committed or attempted, is\ntemporarily or permanently mentally or physically disabled, then such information\nshall be recorded by a police officer, at the residence of the person seeking to report\nsuch offence or at a convenient place of such person's choice, in the presence of an\ninterpreter or a special educator, as the case may be;\n(b) the recording of such information shall be videographed;\n(c) the police officer shall get the statement of the person recorded by a\nMagistrate under clause (a) of sub-section (6) of section 183 as soon as possible.\n(2) A copy of the information as recorded under sub-section (1) shall be given forthwith,\nfree of cost, to the informant or the victim.\n(3) Without prejudice to the provisions contained in section 175, on receipt of\ninformation relating to the commission of any cognizable offence, which is made punishable\nfor three years or more but less than seven years, the officer in charge of the police station\nmay with the prior permission from an officer not below the rank of Deputy Superintendent\nof Police, considering the nature and gravity of the offence,—\n(i) proceed to conduct preliminary enquiry to ascertain whether there exists a\nprima facie case for proceeding in the matter within a period of fourteen days; or\n(ii) proceed with investigation when there exists a prima facie case.\n(4) Any person aggrieved by a refusal on the part of an officer in charge of a police\nstation to record the information referred to in sub-section (1), may send the substance of\nsuch information, in writing and by post, to the Superintendent of Police concerned who, if\nsatisfied that such information discloses the commission of a cognizable offence, shall\neither investigate the case himself or direct an investigation to be made by any police officer\nsubordinate to him, in the manner provided by this Sanhita, and such officer shall have all\nthe powers of an officer in charge of the police station in relation to that offence failing\nwhich such aggrieved person may make an application to the Magistrate.",
+        "text_sha256": "ae19bedb7b5079c4334e3c0812842e12ddcac447240015e6596c020c99f2022d"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2024-07-01",
+        "publisher": {
+          "name": "Ministry of Home Affairs, Government of India",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "verbatim_status": "declared",
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_paragraph_173_4",
+        "authority_id_expected": "authority_85fac6e1af26c07fb512",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "BNSS 2023",
+          "BNSS Section 173(4)"
+        ],
+        "provision": {
+          "kind": "paragraph",
+          "number": "173(4)",
+          "heading": "Information in cognizable cases (post-refusal escalation)",
+          "canonical_anchor": "/sec-173-c",
+          "anchor_aliases": []
+        },
+        "retrieval": {
+          "source_pack_id": "bnss_2023_vehicle_theft_fir",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "BNSS Section 173 Superintendent of Police written post Magistrate police refusal FIR"
+        },
+        "text": "Bharatiya Nagarik Suraksha Sanhita 2023, Section 173(4)\n\n(4) Any person aggrieved by a refusal on the part of an officer in charge of a police\nstation to record the information referred to in sub-section (1), may send the substance of\nsuch information, in writing and by post, to the Superintendent of Police concerned who, if\nsatisfied that such information discloses the commission of a cognizable offence, shall\neither investigate the case himself or direct an investigation to be made by any police officer\nsubordinate to him, in the manner provided by this Sanhita, and such officer shall have all\nthe powers of an officer in charge of the police station in relation to that offence failing\nwhich such aggrieved person may make an application to the Magistrate.",
+        "text_sha256": "40b48d8788c88df5d3d8a7813262f763de7e57f7a1f18e31d7f0c3a653751ab8"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "effective_from": "2024-07-01",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": "2024-07-01",
+        "publisher": {
+          "name": "Ministry of Home Affairs, Government of India",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5e60e2afe30d0fe7eca4f8126301146b76c86a444e690581f81eb564843517fe",
+          "raw_bytes_size": 2033181
+        },
+        "doc_id": "bnss-2023",
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "statute": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "year": 2023,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "verbatim_status": "declared",
+        "canonical_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_175",
+        "authority_id_expected": "authority_5b58f83601c4ab714da1",
+        "canonical_name": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "aliases": [
+          "BNSS 2023",
+          "BNSS Section 175"
+        ],
+        "provision": {
+          "kind": "section",
+          "number": "175",
+          "heading": "Police officer power to investigate cognizable case and Magistrate order",
+          "canonical_anchor": "/sec-175",
+          "anchor_aliases": []
+        },
+        "retrieval": {
+          "source_pack_id": "bnss_2023_vehicle_theft_fir",
+          "title_patterns": [
+            "Bharatiya Nagarik Suraksha Sanhita 2023"
+          ],
+          "doc_ids": [
+            "bnss-2023"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "BNSS Section 175 Magistrate investigation cognizable case police refusal FIR"
+        },
+        "text": "Bharatiya Nagarik Suraksha Sanhita 2023, Section 175\n\n175. (1) Any officer in charge of a police station may, without the order of a Magistrate,\ninvestigate any cognizable case which a Court having jurisdiction over the local area within\nthe limits of such station would have power to inquire into or try under the provisions of\nChapter XIV:\nProvided that considering the nature and gravity of the offence, the Superintendent\nof Police may require the Deputy Superintendent of Police to investigate the case.\n(2) No proceeding of a police officer in any such case shall at any stage be called in\nquestion on the ground that the case was one which such officer was not empowered under\nthis section to investigate.\n(3) Any Magistrate empowered under section 210 may, after considering the application\nsupported by an affidavit made under sub-section (4) of section 173, and after making such\ninquiry as he thinks necessary and submission made in this regard by the police officer,\norder such an investigation as above-mentioned.\n(4) Any Magistrate empowered under section 210, may, upon receiving a complaint\nagainst a public servant arising in course of the discharge of his official duties, order\ninvestigation, subject to—\n(a) receiving a report containing facts and circumstances of the incident from\nthe officer superior to him; and\n(b) after consideration of the assertions made by the public servant as to the\nsituation that led to the incident so alleged.",
+        "text_sha256": "f28374f89fb1f57022e455e2f4b0a0d1253f0b23b77dbfbb7f24bd41a63dfd51"
+      },
+      "expected_previous_record_sha256": null
+    }
+  ],
+  "workflow_operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "vehicle_theft_fir_refusal",
+        "owner_token": "authority_graph:vehicle_theft_fir_refusal",
+        "condition_ids": [
+          "vehicle_theft_bnss_needed",
+          "vehicle_theft_crpc_needed"
+        ],
+        "authorities": [
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_173",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "vehicle_theft_bnss_needed"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_paragraph_173_4",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "vehicle_theft_bnss_needed"
+            ]
+          },
+          {
+            "registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_175",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "vehicle_theft_bnss_needed"
+            ]
+          },
+          {
+            "registry_key": "code_of_criminal_procedure_1973_section_154",
+            "role": "legal_basis",
+            "required": false,
+            "condition_ids": [
+              "vehicle_theft_crpc_needed"
+            ]
+          }
+        ],
+        "forums": [
+          "police station",
+          "Superintendent of Police",
+          "Judicial Magistrate",
+          "District Legal Services Authority"
+        ],
+        "remedies": [
+          "written FIR information and free copy",
+          "written escalation to the Superintendent of Police",
+          "application to the Magistrate where the statutory conditions are met"
+        ],
+        "deadline_rules": [
+          "Preserve the incident date, complaint date, acknowledgement, and refusal proof; limitation and transition questions require a lawyer to verify the exact facts."
+        ],
+        "documents": [
+          "written complaint",
+          "acknowledgement or refusal proof",
+          "vehicle ownership and registration papers",
+          "identity proof",
+          "photos, CCTV, and witness details"
+        ],
+        "escalation": [
+          "Superintendent of Police",
+          "Judicial Magistrate",
+          "District Legal Services Authority or criminal lawyer"
+        ]
+      },
+      "expected_previous_record_sha256": null
+    }
+  ]
+}

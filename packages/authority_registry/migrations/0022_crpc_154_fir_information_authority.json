@@ -1,0 +1,60 @@
+{
+  "migration_id": "0022_crpc_154_fir_information_authority",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_154",
+        "authority_id_expected": "authority_6358e656222ff6dcdae9",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": ["Code of Criminal Procedure, 1973", "CrPC 1973"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "154",
+          "heading": "Information in cognizable cases",
+          "canonical_anchor": "/sec-154",
+          "anchor_aliases": []
+        },
+        "effective_from": "1974-04-01",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+          "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."
+        },
+        "consolidation_as_at": null,
+        "publisher": {"name": "Legislative Department, Ministry of Law and Justice", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/15272/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5bb6514251a9ec6375b2c894cef5280dab0d1c3cca1e0f4a1e57f29b54033d72",
+          "raw_bytes_size": 1879339
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973",
+          "title_patterns": ["Code of Criminal Procedure 1973", "Code of Criminal Procedure, 1973", "CrPC 1973"],
+          "doc_ids": ["crpc-1973"],
+          "source_types": ["bare_act"],
+          "search_query": "Code of Criminal Procedure 1973 section 154 information in cognizable cases FIR police refusal Superintendent of Police"
+        },
+        "verbatim_status": "declared",
+        "text": "154. Information in cognizable cases.—(1) Every information relating to the commission of a cognizable offence, if given orally to an officer in charge of a police station, shall be reduced to writing by him or under his direction, and be read over to the informant; and every such information, whether given in writing or reduced to writing as aforesaid, shall be signed by the person giving it, and the substance thereof shall be entered in a book to be kept by such officer in such form as the State Government may prescribe in this behalf: 1[Provided that if the information is given by the woman against whom an offence under section 326A, section 326B, section 354, section 354A, section 354B, section 354C, section 354D, section 376, 2[section 376A, section 376AB, section 376B, section 376C, section 376D, section 376DA, section 376DB], section 376E or section 509 of the Indian Penal Code (45 of 1860) is alleged to have been committed or attempted, then such information shall be recorded, by a woman police officer or any woman officer: Provided further that— (a) in the event that the person against whom an offence under section 354, section 354A, section 354B, section 354C, section 354D, section 376, 1[section 376A, section 376AB, section 376B, section 376C, section 376D, section 376DA, section 376DB], section 376E or section 509 of the Indian Penal Code (45 of 1860) is alleged to have been committed or attempted, is temporarily or permanently mentally or physically disabled, then such information shall be recorded by a police officer, at the residence of the person seeking to report such offence or at a convenient place of such person’s choice, in the presence of an interpreter or a special educator, as the case may be; (b) the recording of such information shall be video graphed; (c) the police officer shall get the statement of the person recorded by a Judicial Magistrate under clause (a) of sub-section (5A) of section 164 as soon as possible.] (2) A copy of the information as recorded under sub-section (1) shall be given forthwith, free of cost, to the informant. (3) Any person aggrieved by a refusal on the part of an officer in charge of a police station to record the information referred to in sub-section (1) may send the substance of such information, in writing and by post, to the Superintendent of Police concerned who, if satisfied that such information discloses the commission of a cognizable offence, shall either investigate the case himself or direct an investigation to be made by any police officer subordinate to him, in the manner provided by this Code, and such officer shall have all the powers of an officer in charge of the police station in relation to that offence. 1. Ins. by Act 13 of 2013, s. 13 (w.e.f. 3-2-2013). 2. Subs. by Act 22 of 2018, s. 11, for “section 376A, section 376B, section 376C, section 376D” (w.e.f. 21-4-2019). 79",
+        "text_sha256": "f25920ebc5a8895de7d0ac0b46eb24bcb7f520f0f310159350dac3e8922e65d7"
+      },
+      "expected_previous_record_sha256": null
+    }
+  ]
+}

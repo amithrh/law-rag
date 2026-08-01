@@ -1,0 +1,54 @@
+{
+  "migration_id": "0018_uapa_statute_only_workflow",
+  "schema_version": 1,
+  "operations": [],
+  "workflow_operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "uapa_prima_facie_bail",
+        "owner_token": "authority_graph:uapa_prima_facie_bail",
+        "condition_ids": [
+          "uapa_regular_bail_43d5",
+          "uapa_default_bail_extension"
+        ],
+        "authorities": [
+          {
+            "registry_key": "unlawful_activities_prevention_act_1967_section_43d",
+            "role": "legal_basis",
+            "required": true,
+            "answer_must_cite": true,
+            "condition_ids": []
+          }
+        ],
+        "forums": [
+          "jurisdictional Special Court or trial court",
+          "High Court for the legally available bail remedy",
+          "District Legal Services Authority or UAPA criminal-defence lawyer"
+        ],
+        "remedies": [
+          "regular bail addressing the Section 43D(5) prima-facie filter where it applies",
+          "default bail based on the remand, filing, prosecutor-report, and extension-order timeline"
+        ],
+        "deadline_rules": [
+          "For the Section 43D investigation-period lane, calculate the statutory timeline from the actual remand record and verify any Public Prosecutor report and court extension order before claiming default bail.",
+          "Long custody alone does not satisfy or displace the Section 43D(5) prima-facie test; any constitutional delay argument requires a separately registered and verified current precedent."
+        ],
+        "documents": [
+          "FIR and exact UAPA sections",
+          "arrest and first-remand dates with remand orders",
+          "charge-sheet or filing status",
+          "Public Prosecutor extension report and Special Court order if any",
+          "prior bail rejection order and the prosecution material relied on for prima-facie findings"
+        ],
+        "escalation": [
+          "identify whether the immediate issue is regular bail or default bail",
+          "obtain the complete remand and extension record before calculating a default-bail deadline",
+          "use Special Court or High Court counsel and DLSA support for the fact-specific application"
+        ]
+      },
+      "expected_previous_record_sha256": "e510e8f18932066f00885149750dbcd4d7402813866d62078c04f6e40dd4b06e"
+    }
+  ]
+}

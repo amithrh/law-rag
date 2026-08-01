@@ -1,0 +1,39 @@
+{
+  "migration_id": "0010_crpc_102_provenance_refresh",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_102",
+        "authority_id_expected": "authority_f83eae5f72492ba6cb7c",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": ["Code of Criminal Procedure, 1973", "CrPC 1973"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {"kind": "section", "number": "102", "heading": "Power of police officer to seize certain property", "canonical_anchor": "/sec-102", "anchor_aliases": []},
+        "effective_from": "1974-04-01",
+        "effective_to": "2024-06-30",
+        "savings": {"authority": "Bharatiya Nagarik Suraksha Sanhita, 2023", "provision": "Section 531", "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf", "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."},
+        "consolidation_as_at": null,
+        "publisher": {"name": "Legislative Department, Ministry of Law and Justice", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/15272/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {"tier": "canonical", "verification_method": "refetch_hash_and_text", "raw_sha256": "5bb6514251a9ec6375b2c894cef5280dab0d1c3cca1e0f4a1e57f29b54033d72", "raw_bytes_size": 1879339},
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {"source_pack_id": "crpc_1973_bank_account_legal_hold", "title_patterns": ["Code of Criminal Procedure 1973", "Code of Criminal Procedure, 1973", "CrPC 1973"], "doc_ids": ["crpc-1973"], "source_types": ["bare_act"], "search_query": "Code of Criminal Procedure 1973 section 102 Power of police officer to seize certain property"},
+        "verbatim_status": "declared",
+        "text": "102. Power of police officer to seize certain property.--(1) Any police officer, may seize any property which may be alleged or suspected to have been stolen, or which may be found under circumstances which create suspicion of the commission of any offence.\n(2) Such police officer, if subordinate to the officer in charge of a police station, shall forthwith report the seizure to that officer.\n(3) Every police officer acting under sub-section (1) shall forthwith report the seizure to the Magistrate having jurisdiction and where the property seized is such that it cannot be conveniently transported to the Court, he may give custody thereof to any person on his executing a bond undertaking to produce the property before the Court as and when required and to give effect to the further orders of the Court as to the disposal of the same.",
+        "text_sha256": "fa30d689954fc2014da44925b38fa6b1a6f53f205e3a94c2f7b53686ea0b0611"
+      },
+      "expected_previous_record_sha256": "53146340dabb878b261b59b2ee3f26df56edfe899ab42fa461de891cd6ec298a"
+    }
+  ],
+  "workflow_operations": []
+}

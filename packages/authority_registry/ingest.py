@@ -141,6 +141,15 @@ async def _project_record(
     embed: EmbeddingProvider,
 ) -> None:
     projection = build_projection(record)
+    previous_source_hash = await conn.fetchval(
+        """
+        SELECT raw_sha256
+        FROM sources
+        WHERE canonical_url_hash = $1
+        FOR UPDATE
+        """,
+        projection.canonical_url_hash,
+    )
     existing_projections = await conn.fetch(
         """
         SELECT da.document_id, da.chunk_id, da.authority_id, da.canonical_key,
@@ -188,6 +197,28 @@ async def _project_record(
         record.provenance.raw_bytes_size,
         json.dumps(projection.source_metadata),
     )
+
+    # A changed official file means every projection from that source needs a
+    # fresh audit. Updating just the newly migrated provision would leave
+    # neighbouring previously verified chunks eligible against bytes that have
+    # not been rechecked.
+    if previous_source_hash and previous_source_hash != record.provenance.raw_sha256:
+        await conn.execute(
+            """
+            UPDATE chunks
+            SET provenance_verified = false, provenance_verified_at = NULL
+            WHERE document_id IN (SELECT id FROM documents WHERE source_id = $1)
+            """,
+            source_id,
+        )
+        await conn.execute(
+            """
+            UPDATE documents
+            SET provenance_verified = false, provenance_verified_at = NULL
+            WHERE source_id = $1
+            """,
+            source_id,
+        )
 
     document_id = await conn.fetchval(
         "SELECT id FROM documents WHERE doc_id = $1 FOR UPDATE",
@@ -245,18 +276,22 @@ async def _project_record(
         f"{record.doc_id}{anchor}{version_suffix}"
         for anchor in record.provision.all_anchors
     )
-    chunk_id = await conn.fetchval(
+    chunk_rows = await conn.fetch(
         """
         SELECT id
         FROM chunks
         WHERE document_id = $1 AND anchor = ANY($2::text[])
         ORDER BY id
-        LIMIT 1
         FOR UPDATE
         """,
         document_id,
         list(anchors),
     )
+    if len(chunk_rows) > 1:
+        raise RuntimeError(
+            f"authority {record.canonical_key} has duplicate live chunk projections"
+        )
+    chunk_id = chunk_rows[0]["id"] if chunk_rows else None
     dense, sparse = await embed(record.text)
     canonical_anchor = (
         f"{record.doc_id}{record.provision.canonical_anchor}{version_suffix}"
@@ -315,6 +350,55 @@ async def _project_record(
             record.consolidation_as_at,
             json.dumps(projection.chunk_metadata),
             chunk_id,
+        )
+
+    # A dated correction replaces an undated legacy projection for the same
+    # provision. Keep explicitly dated historical snapshots: they may be the
+    # legally correct version for an earlier event date and must remain
+    # available to temporal retrieval.
+    if record.consolidation_as_at is not None:
+        retired_anchors = [
+            f"{record.doc_id}{anchor}"
+            for anchor in (
+                record.provision.canonical_anchor,
+                f"{record.provision.canonical_anchor}-official",
+                *record.provision.anchor_aliases,
+            )
+        ]
+        await conn.execute(
+            """
+            UPDATE chunks AS c
+            SET quarantined = true,
+                provenance_verified = false,
+                provenance_verified_at = NULL,
+                metadata = (c.metadata || $1::jsonb)
+                    || jsonb_build_object(
+                        'authority_projection_retired_by_migration',
+                        COALESCE(
+                            c.metadata->>'authority_projection_retired_by_migration',
+                            $5
+                        )
+                    )
+            WHERE c.document_id = $2
+              AND c.id <> $3
+              AND EXISTS (
+                  SELECT 1
+                  FROM unnest($4::text[]) AS retired(anchor)
+                  WHERE c.anchor = retired.anchor
+                     OR c.anchor LIKE retired.anchor || '@%'
+              )
+              AND c.as_at IS NULL
+            """,
+            json.dumps(
+                {
+                    "authority_projection_retired": True,
+                    "authority_projection_replaced_by_chunk_id": chunk_id,
+                }
+            ),
+            document_id,
+            chunk_id,
+            retired_anchors,
+            migration_id,
         )
 
     replaces_same_snapshot = (

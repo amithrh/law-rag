@@ -28,9 +28,11 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote
 
 import asyncpg
 import pymupdf
@@ -51,7 +53,29 @@ OFFICIAL_PDF_ORIGINS = {
     "rbi",
     "mha_gazette",
     "legislative_department",
+    "tihar_prisons_delhi",
+    "socialjustice.gov.in",
 }
+
+
+def local_official_pdf_path(url: str) -> Path | None:
+    """Allow only repository-owned cached official PDFs for local audits."""
+    if not url.startswith("file://"):
+        return None
+    path = Path(unquote(url.removeprefix("file://"))).resolve()
+    allowed_root = (ROOT / "data" / "raw" / "acts").resolve()
+    try:
+        path.relative_to(allowed_root)
+    except ValueError:
+        return None
+    return path if path.is_file() and path.suffix.lower() == ".pdf" else None
+
+
+def is_verifiable_official_source(source_row: dict) -> bool:
+    return (
+        source_row["origin"] in OFFICIAL_PDF_ORIGINS
+        or local_official_pdf_path(source_row["url"]) is not None
+    )
 
 
 def load_env(p: str = ".env") -> dict:
@@ -109,11 +133,11 @@ def verification_scope_updates(
                 matched.update(
                     verdict[key]
                     for verdict in target_verdicts
-                    if verdict.get("verification_pass") is passed
+                    if verdict.get("verification_pass") == passed
                     and verdict.get(key) is not None
                 )
                 continue
-            if row.get("verification_pass") is passed:
+            if row.get("verification_pass") == passed:
                 matched.update(
                     target[position]
                     for target in row.get("audit_targets", [])
@@ -129,36 +153,183 @@ def verification_scope_updates(
     )
 
 
+async def apply_verification_updates(conn, audit_rows: list[dict]) -> None:
+    """Apply only the document/chunk scopes actually compared by the audit.
+
+    A legacy Act is audited at document scope by comparing the complete set of
+    its non-quarantined chunks with the selected official artifact. Retrieval,
+    however, gates on ``chunks.provenance_verified``. Propagating a passed
+    document verdict to those same chunks is therefore part of the document
+    promotion contract. A failed document clears every non-quarantined chunk
+    so an earlier promotion cannot survive a later drift finding.
+
+    Registry-mapped authorities remain chunk-scoped and are updated only by
+    their per-chunk verdicts from ``verification_scope_updates``.
+    """
+    (
+        passed_document_ids,
+        failed_document_ids,
+        passed_chunk_ids,
+        failed_chunk_ids,
+    ) = verification_scope_updates(audit_rows)
+    # A document and its chunks are one promotion unit. Keep every update in
+    # one transaction so a failed chunk update cannot leave a stale document
+    # or chunk marked as production-eligible.
+    async with conn.transaction():
+        if passed_document_ids:
+            await conn.execute("""
+                UPDATE documents
+                SET provenance_verified = true, provenance_verified_at = now()
+                WHERE id = ANY($1::bigint[])
+            """, passed_document_ids)
+            await conn.execute("""
+                UPDATE chunks
+                SET provenance_verified = true, provenance_verified_at = now()
+                WHERE document_id = ANY($1::bigint[])
+                  AND NOT quarantined
+                  AND NOT EXISTS (
+                      SELECT 1 FROM document_authorities da
+                      WHERE da.chunk_id = chunks.id
+                  )
+            """, passed_document_ids)
+        if failed_document_ids:
+            await conn.execute("""
+                UPDATE documents
+                SET provenance_verified = false, provenance_verified_at = NULL
+                WHERE id = ANY($1::bigint[])
+            """, failed_document_ids)
+            await conn.execute("""
+                UPDATE chunks
+                SET provenance_verified = false, provenance_verified_at = NULL
+                WHERE document_id = ANY($1::bigint[])
+                  AND NOT EXISTS (
+                      SELECT 1 FROM document_authorities da
+                      WHERE da.chunk_id = chunks.id
+                  )
+            """, failed_document_ids)
+        if passed_chunk_ids:
+            await conn.execute("""
+                UPDATE chunks
+                SET provenance_verified = true, provenance_verified_at = now()
+                WHERE id = ANY($1::bigint[]) AND NOT quarantined
+            """, passed_chunk_ids)
+        if failed_chunk_ids:
+            await conn.execute("""
+                UPDATE chunks
+                SET provenance_verified = false, provenance_verified_at = NULL
+                WHERE id = ANY($1::bigint[])
+            """, failed_chunk_ids)
+
+
 # --- Re-fetch helpers ------------------------------------------------------
 
-def refetch_act_pdf(url: str) -> tuple[bytes, str, int] | tuple[None, str, int]:
-    """Re-download an act PDF from IndiaCode. Returns (bytes, status, http_code)."""
-    if "/handle/" in url:
-        # Handle pages — find the actual /bitstream/ link
-        r = subprocess.run(
-            ["curl", "-sS", "-L", "--compressed", "--max-time", "20", *CURL_HEADERS, url],
-            capture_output=True, text=True, timeout=30,
-        )
-        # Crude regex extract of first .pdf bitstream link
-        m = re.search(r'href="(/bitstream/\d+/\d+/\d+/[^"]+\.pdf)"', r.stdout)
-        if not m:
-            return None, "no_pdf_link", 0
-        url = "https://www.indiacode.nic.in" + m.group(1)
+def india_code_pdf_links(html: str) -> list[str]:
+    """Return distinct PDF bitstream links from an India Code handle page.
 
-    out_path = Path("/tmp/verify_provenance.pdf")
-    r = subprocess.run(
-        ["curl", "-sS", "-L", "--compressed", "--max-time", "60",
-         "-o", str(out_path), "-w", "%{http_code}",
-         *CURL_HEADERS, url],
-        capture_output=True, text=True, timeout=70,
+    India Code pages are not consistently formatted: some have whitespace
+    after the opening quote and some use single quotes. Keep discovery
+    tolerant, but restrict it to the India Code bitstream path so an
+    unrelated link cannot become an authority artifact.
+    """
+    links = re.findall(
+        r"href\s*=\s*[\"']\s*(/bitstream/\d+/\d+/\d+/[^\"']+?\.pdf)",
+        html,
+        flags=re.IGNORECASE,
     )
-    http_code = (r.stdout or "").strip()
-    if not out_path.exists() or out_path.stat().st_size < 1000:
+    out: list[str] = []
+    seen: set[str] = set()
+    for link in links:
+        link = link.strip()
+        if link not in seen:
+            seen.add(link)
+            out.append(link)
+    return out
+
+
+def _download_pdf(url: str) -> tuple[bytes, str, int] | tuple[None, str, int]:
+    """Download one PDF URL and reject missing/non-PDF-sized responses."""
+    with tempfile.NamedTemporaryFile(
+        prefix="law-rag-verify-", suffix=".pdf", delete=False
+    ) as temp:
+        out_path = Path(temp.name)
+    try:
+        try:
+            r = subprocess.run(
+                ["curl", "-sS", "-L", "--compressed", "--max-time", "60",
+                 "-o", str(out_path), "-w", "%{http_code}",
+                 *CURL_HEADERS, url],
+                capture_output=True, text=True, timeout=70,
+            )
+        except subprocess.TimeoutExpired:
+            return None, "timeout", 0
+        http_code = (r.stdout or "").strip()
+        if not out_path.exists() or out_path.stat().st_size < 1000:
+            return None, f"http_{http_code}", int(http_code) if http_code.isdigit() else 0
+        data = out_path.read_bytes()
+        return data, "ok", int(http_code) if http_code.isdigit() else 200
+    finally:
         out_path.unlink(missing_ok=True)
-        return None, f"http_{http_code}", int(http_code) if http_code.isdigit() else 0
-    data = out_path.read_bytes()
-    out_path.unlink()
-    return data, "ok", int(http_code) if http_code.isdigit() else 200
+
+
+def refetch_act_pdfs(
+    url: str,
+) -> list[tuple[bytes, str, int, str]]:
+    """Re-download all candidate act PDFs and retain their resolved URLs.
+
+    A handle page can contain English and Hindi artifacts, or an obsolete
+    duplicate. Returning all candidates lets the audit layer choose by the
+    stored hash/text rather than trusting page order.
+    """
+    candidate_urls = [url]
+    if "/handle/" in url:
+        links: list[str] = []
+        discovered: list[str] = []
+        # India Code occasionally serves an incomplete handle page during a
+        # rate-limited request. Retry discovery and accumulate candidates;
+        # artifact downloads stay bounded and fail closed after three misses.
+        for attempt in range(3):
+            try:
+                r = subprocess.run(
+                    ["curl", "-sS", "-L", "--compressed", "--max-time", "20", *CURL_HEADERS, url],
+                    capture_output=True, text=True, timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                r = None
+            links = india_code_pdf_links(r.stdout) if r is not None else []
+            for link in links:
+                if link not in discovered:
+                    discovered.append(link)
+            if attempt < 2:
+                time.sleep(0.5)
+        if not discovered:
+            return []
+        candidate_urls = [
+            "https://www.indiacode.nic.in" + link for link in discovered
+        ]
+
+    results = []
+    for candidate_url in candidate_urls:
+        for attempt in range(3):
+            data, status, http_code = _download_pdf(candidate_url)
+            if data is not None:
+                results.append((data, status, http_code, candidate_url))
+                break
+            if attempt < 2:
+                time.sleep(0.5)
+    return results
+
+
+def refetch_act_pdf(url: str) -> tuple[bytes, str, int] | tuple[None, str, int]:
+    """Backward-compatible single-artifact fetch helper.
+
+    New audits use :func:`refetch_act_pdfs` so handle-page candidates can be
+    scored against the stored authority text.
+    """
+    results = refetch_act_pdfs(url)
+    if not results:
+        return None, "no_pdf_link" if "/handle/" in url else "download_failed", 0
+    data, status, http_code, _ = results[0]
+    return data, status, http_code
 
 
 HF_CACHE_ROOT = Path.home() / ".cache" / "huggingface" / "hub"
@@ -211,7 +382,37 @@ def refetch_sc_canonical_spot(case_id: str) -> tuple[bytes, str, int] | tuple[No
     return None, "canonical_spot_needs_playwright", 0
 
 
-def text_similarity(stored: str, refetched: str) -> float:
+_INGESTED_SECTION_PREFIX_RE = re.compile(
+    r"^\s*(?P<title>[^.\n]{2,200}),\s+Section\s+[0-9A-Za-z()/-]+\s*(?:\n+|$)",
+    flags=re.IGNORECASE,
+)
+
+
+def _strip_ingested_section_prefix(
+    text: str,
+    *,
+    expected_title: str | None = None,
+) -> str:
+    """Remove only the exact document title prefix added by the chunker."""
+    match = _INGESTED_SECTION_PREFIX_RE.match(text)
+    if not match or not expected_title:
+        return text
+    prefix_title = match.group("title").strip()
+
+    def normalize_title(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+    if normalize_title(prefix_title) != normalize_title(expected_title):
+        return text
+    return text[match.end():]
+
+
+def text_similarity(
+    stored: str,
+    refetched: str,
+    *,
+    expected_title: str | None = None,
+) -> float:
     """Return what fraction of the 4-grams in `stored` are present in
     `refetched`. 1.0 means every n-gram we have is in the canonical source
     (i.e. we haven't fabricated content). Asymmetric on purpose: we don't
@@ -227,11 +428,59 @@ def text_similarity(stored: str, refetched: str) -> float:
         toks = s.split()
         return set(tuple(toks[i:i + n]) for i in range(len(toks) - n + 1)) if len(toks) >= n else set()
 
-    s, r = ngrams(stored), ngrams(refetched)
+    s, r = ngrams(
+        _strip_ingested_section_prefix(stored, expected_title=expected_title)
+    ), ngrams(refetched)
     if not s:
         return 0.0
     overlap = len(s & r)
     return overlap / len(s)
+
+
+def document_scope_verdict(
+    document_chunks: list[dict],
+    refetched_text: str,
+    hash_pass: bool,
+    *,
+    threshold: float = 0.90,
+    expected_title: str | None = None,
+) -> dict:
+    """Require every stored live chunk to match the official artifact.
+
+    Document-level promotion is convenient for legacy Acts, but a single
+    corrupted chunk must not be hidden by aggregate document similarity.
+    """
+    similarities = [
+        text_similarity(
+            chunk["text"],
+            refetched_text,
+            expected_title=expected_title,
+        )
+        for chunk in document_chunks
+    ]
+    text_match = bool(similarities) and all(
+        similarity >= threshold for similarity in similarities
+    )
+    return {
+        "text_similarity": min(similarities, default=0.0),
+        "text_match": text_match,
+        "verification_pass": bool(text_match and hash_pass),
+        "chunk_similarities": similarities,
+    }
+
+
+def exact_sha_match(expected: str | None, actual: str) -> bool:
+    """Only a pinned source hash can satisfy the artifact identity gate."""
+    return bool(expected) and expected == actual
+
+
+def select_act_candidate(candidates: list[dict], expected_sha: str | None) -> dict:
+    """Choose an artifact deterministically, preferring a pinned exact hash."""
+    exact_hashes = [
+        candidate for candidate in candidates
+        if exact_sha_match(expected_sha, candidate["sha"])
+    ]
+    return max(exact_hashes or candidates, key=lambda candidate: candidate["score"])
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> tuple[str, int] | tuple[None, int]:
@@ -271,8 +520,10 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
     origin = source_row["origin"]
 
     # Registry-mapped authorities are audited at the exact document/chunk
-    # projection. Legacy sources retain a bounded sample, but verification is
-    # still granted only to the documents actually compared below.
+    # projection. Legacy sources are audited per document over the complete
+    # non-quarantined chunk set; a concatenated sample must never allow one
+    # document to mask another.
+    doc_chunks: dict[int, list] = {}
     mapped_targets = await conn.fetch("""
         SELECT da.document_id, da.chunk_id
         FROM document_authorities da
@@ -282,53 +533,114 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
     if mapped_targets:
         out["scope"] = "chunk"
         chunks = await conn.fetch("""
-            SELECT c.id AS chunk_id, c.text, c.document_id
+            SELECT c.id AS chunk_id, c.text, c.document_id, d.title AS document_title
             FROM chunks c
+            JOIN documents d ON d.id = c.document_id
             WHERE c.id = ANY($1::bigint[]) AND NOT c.quarantined
             ORDER BY c.id
         """, [target["chunk_id"] for target in mapped_targets])
     else:
         chunks = await conn.fetch("""
-            SELECT c.id AS chunk_id, c.text, c.document_id
+            SELECT c.id AS chunk_id, c.text, c.document_id, d.title AS document_title
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
             WHERE d.source_id = $1 AND NOT c.quarantined
             ORDER BY c.id
-            LIMIT 500
         """, source_row["id"])
+        for chunk in chunks:
+            doc_chunks.setdefault(chunk["document_id"], []).append(chunk)
     if not chunks:
         out["refetch_status"] = "no_chunks_stored"
         return out
-    out["audit_targets"] = [
-        (chunk["document_id"], chunk["chunk_id"])
-        for chunk in chunks
-    ]
-    stored_text = " ".join(c["text"] for c in chunks)
+    if mapped_targets:
+        out["audit_targets"] = [
+            (chunk["document_id"], chunk["chunk_id"])
+            for chunk in chunks
+        ]
+        stored_text = " ".join(c["text"] for c in chunks)
+    else:
+        out["audit_targets"] = [
+            (document_id, None)
+            for document_id in sorted(doc_chunks)
+        ]
+        stored_text = ""
 
     # Re-fetch
-    if origin in OFFICIAL_PDF_ORIGINS and refetch_acts:
-        data, status, _ = refetch_act_pdf(source_row["url"])
-        out["refetch_status"] = status
-        if data is None:
+    if is_verifiable_official_source(source_row) and refetch_acts:
+        candidates = refetch_act_pdfs(source_row["url"])
+        out["refetch_status"] = "ok" if candidates else (
+            "no_pdf_link" if "/handle/" in source_row["url"] else "download_failed"
+        )
+        if not candidates:
             return out
-        out["refetch_size"] = len(data)
-        sha = hashlib.sha256(data).hexdigest()
-        out["refetch_hash"] = sha
-        if source_row.get("raw_sha256"):
-            out["sha_match"] = (sha == source_row["raw_sha256"])
-        text, pages = extract_pdf_text(data)
-        out["refetch_pages"] = pages
-        if text is None:
+
+        # Select the artifact after extraction. Handle pages may publish
+        # multiple language/duplicate PDFs, so page order is not evidence.
+        candidate_scores = []
+        for data, status, http_code, candidate_url in candidates:
+            text, pages = extract_pdf_text(data)
+            if text is None:
+                continue
+            sha = hashlib.sha256(data).hexdigest()
+            if mapped_targets:
+                score = min(
+                    (
+                        text_similarity(
+                            chunk["text"],
+                            text,
+                            expected_title=chunk["document_title"],
+                        )
+                        for chunk in chunks
+                    ),
+                    default=0.0,
+                )
+            else:
+                score = min(
+                    (
+                        document_scope_verdict(
+                            document_chunks,
+                            text,
+                            True,
+                            expected_title=document_chunks[0]["document_title"],
+                        )["text_similarity"]
+                        for document_chunks in doc_chunks.values()
+                    ),
+                    default=0.0,
+                )
+            candidate_scores.append({
+                "data": data,
+                "text": text,
+                "pages": pages,
+                "sha": sha,
+                "url": candidate_url,
+                "score": score,
+                "sha_match": exact_sha_match(source_row.get("raw_sha256"), sha),
+            })
+        if not candidate_scores:
             out["refetch_status"] = "parse_failed"
             return out
-        hash_pass = (
-            not source_row.get("raw_sha256")
-            or out["sha_match"] is True
+
+        selected = select_act_candidate(
+            candidate_scores, source_row.get("raw_sha256")
         )
+        data = selected["data"]
+        text = selected["text"]
+        out["refetch_size"] = len(data)
+        out["refetch_hash"] = selected["sha"]
+        out["sha_match"] = selected["sha_match"] is True
+        out["refetch_pages"] = selected["pages"]
+        # A text match proves extraction consistency, not artifact identity.
+        # Missing a pinned source hash is diagnostic-only and can never
+        # promote a document or registry chunk into production retrieval.
+        hash_pass = out["sha_match"] is True
         if mapped_targets:
             out["target_verdicts"] = []
             for chunk in chunks:
-                sim = text_similarity(chunk["text"], text)
+                sim = text_similarity(
+                    chunk["text"],
+                    text,
+                    expected_title=chunk["document_title"],
+                )
                 text_match = sim >= 0.90
                 out["target_verdicts"].append({
                     "document_id": chunk["document_id"],
@@ -355,11 +667,43 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
                 f"stored_chunks={len(chunks)}"
             )
         else:
-            sim = text_similarity(stored_text, text)
-            out["text_similarity"] = sim
-            out["text_match"] = sim >= 0.90
-            out["verification_pass"] = bool(out["text_match"] and hash_pass)
-            out["notes"] = f"sim={sim:.3f} stored_chunks={len(chunks)}"
+            out["target_verdicts"] = []
+            for document_id, document_chunks in sorted(doc_chunks.items()):
+                document_verdict = document_scope_verdict(
+                    document_chunks,
+                    text,
+                    hash_pass,
+                    expected_title=document_chunks[0]["document_title"],
+                )
+                out["target_verdicts"].append({
+                    "document_id": document_id,
+                    "chunk_id": None,
+                    "text_similarity": document_verdict["text_similarity"],
+                    "text_match": document_verdict["text_match"],
+                    "verification_pass": document_verdict["verification_pass"],
+                })
+            similarities = [
+                verdict["text_similarity"]
+                for verdict in out["target_verdicts"]
+            ]
+            out["text_similarity"] = min(similarities, default=0.0)
+            out["text_match"] = all(
+                verdict["text_match"]
+                for verdict in out["target_verdicts"]
+            )
+            out["verification_pass"] = all(
+                verdict["verification_pass"]
+                for verdict in out["target_verdicts"]
+            )
+            out["notes"] = (
+                f"per_document_similarities={similarities}; "
+                f"stored_documents={len(doc_chunks)}; "
+                f"stored_chunks={len(chunks)}"
+            )
+        out["notes"] = (
+            f"{out['notes']}; candidates={len(candidate_scores)}; "
+            f"selected={selected['url']} score={selected['score']:.3f}"
+        )
     elif origin.startswith("hf:") and "Rahul1872" in origin:
         # SC via HF Rahul1872. Extraction-consistency check: re-extract the
         # original PDF from the local HF tar cache and compare against the
@@ -415,7 +759,7 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
         """, source_row["id"])
         out["audit_targets"] = [(doc["id"], None) for doc in sample_docs]
         out["scope"] = "document"
-        per_doc_results = []
+        per_doc_results: list[dict] = []
         for doc in sample_docs:
             meta = doc["metadata"] if isinstance(doc["metadata"], dict) else (
                 json.loads(doc["metadata"]) if doc["metadata"] else {}
@@ -423,42 +767,82 @@ async def audit_source(conn, source_row: dict, *, refetch_acts: bool) -> dict:
             case_id = (meta.get("case_id") or "").strip()
             filename = caseid_to_filename.get(case_id)
             if not filename:
-                per_doc_results.append((doc["id"], None, f"no_filename_for_case_id={case_id!r}"))
+                per_doc_results.append({
+                    "document_id": doc["id"],
+                    "text_similarity": 0.0,
+                    "text_match": False,
+                    "verification_pass": False,
+                    "status": f"no_filename_for_case_id={case_id!r}",
+                })
                 continue
             pdf_bytes, status = extract_sc_pdf_from_tar(tar_path, filename)
             if pdf_bytes is None:
-                per_doc_results.append((doc["id"], None, status))
+                per_doc_results.append({
+                    "document_id": doc["id"],
+                    "text_similarity": 0.0,
+                    "text_match": False,
+                    "verification_pass": False,
+                    "status": status,
+                })
                 continue
             text, _ = extract_pdf_text(pdf_bytes)
             if text is None:
-                per_doc_results.append((doc["id"], None, "extract_failed"))
+                per_doc_results.append({
+                    "document_id": doc["id"],
+                    "text_similarity": 0.0,
+                    "text_match": False,
+                    "verification_pass": False,
+                    "status": "extract_failed",
+                })
                 continue
-            # Compare against this judgment's stored chunks
+            # Compare every live chunk in this sampled judgment independently;
+            # aggregate document similarity must not hide one corrupted chunk.
             doc_chunks = await conn.fetch(
-                "SELECT text FROM chunks WHERE document_id=$1 AND NOT quarantined LIMIT 200",
+                "SELECT text FROM chunks WHERE document_id=$1 AND NOT quarantined ORDER BY id",
                 doc["id"],
             )
-            stored = " ".join(c["text"] for c in doc_chunks)
-            sim = text_similarity(stored, text)
-            per_doc_results.append((doc["id"], sim, "ok"))
+            verdict = document_scope_verdict(
+                list(doc_chunks),
+                text,
+                False,
+                threshold=0.85,
+                expected_title=doc["title"],
+            )
+            per_doc_results.append({
+                "document_id": doc["id"],
+                "text_similarity": verdict["text_similarity"],
+                "text_match": verdict["text_match"],
+                "verification_pass": verdict["verification_pass"],
+                "chunk_count": len(doc_chunks),
+                "chunk_similarities": verdict["chunk_similarities"],
+                "status": "ok",
+            })
 
-        # Aggregate using MEDIAN to be robust to a single bad sample
-        # (e.g. concurrent tar write during a long-running ingest).
-        scored = sorted(s for _, s, st in per_doc_results if s is not None)
-        if scored:
-            median_sim = scored[len(scored) // 2]
-            avg_sim = sum(scored) / len(scored)
-            out["text_similarity"] = median_sim
-            # Threshold 0.85: chunker prepends section/para headings that
-            # weren't in the original PDF, so even a perfect ingest won't
-            # hit 1.0 on n-gram recall. 0.85 ≈ 85% of stored 4-grams must
-            # exist in source PDF — comfortable margin above noise.
-            out["text_match"] = median_sim >= 0.85
-            out["verification_pass"] = out["text_match"]
+        if per_doc_results and any(item["status"] == "ok" for item in per_doc_results):
+            out["target_verdicts"] = [
+                {
+                    "document_id": item["document_id"],
+                    "chunk_id": None,
+                    "text_similarity": item["text_similarity"],
+                    "text_match": item["text_match"],
+                    "verification_pass": item["verification_pass"],
+                }
+                for item in per_doc_results
+            ]
+            out["text_similarity"] = min(
+                item["text_similarity"] for item in per_doc_results
+            )
+            out["text_match"] = all(
+                item["text_match"] for item in per_doc_results
+            )
+            # HF extraction consistency is diagnostic only: without a
+            # canonical publisher artifact/hash it cannot promote production
+            # provenance, even when every sampled chunk matches the cache.
+            out["verification_pass"] = False
             out["refetch_status"] = "ok"
             out["notes"] = (
-                f"extraction-consistency over {len(scored)} samples: "
-                f"median={median_sim:.3f}, mean={avg_sim:.3f}; "
+                f"extraction-consistency over {len(per_doc_results)} sampled "
+                "documents with per-live-chunk matching; "
                 f"per-doc: {per_doc_results}"
             )
         else:
@@ -480,6 +864,11 @@ async def main():
                         help="skip the act re-download (useful for offline runs)")
     parser.add_argument("--source-id", type=int,
                         help="audit one exact source id")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit nonzero unless every requested source passes verification",
+    )
     args = parser.parse_args()
 
     env = load_env()
@@ -515,23 +904,32 @@ async def main():
     log(f"auditing {len(sources)} sources")
 
     refetch_acts = not args.no_refetch_acts
-    pass_count = 0
-    fail_count = 0
+    verified_count = 0
+    text_match_only_count = 0
+    failed_count = 0
     deferred_count = 0
     audit_rows = []
     for i, src in enumerate(sources, 1):
         log(f"[{i}/{len(sources)}] {src['origin']} {src['url'][:60]}…  tier={src['provenance_tier']}")
         verdict = await audit_source(conn, dict(src), refetch_acts=refetch_acts)
         audit_rows.append(verdict)
-        if verdict["text_match"] is True:
-            pass_count += 1
+        # A text match alone is useful diagnostic evidence, but it is not a
+        # provenance verification pass when the official file has drifted.
+        if verdict.get("verification_pass") is True:
+            verified_count += 1
+        elif verdict["text_match"] is True:
+            text_match_only_count += 1
         elif verdict["text_match"] is False:
-            fail_count += 1
+            failed_count += 1
         else:
             deferred_count += 1
         if i % 5 == 0:
-            log(f"  progress: pass={pass_count} fail={fail_count} deferred={deferred_count}")
-        if refetch_acts and src["origin"] in OFFICIAL_PDF_ORIGINS:
+            log(
+                "  progress: "
+                f"verified={verified_count} text_only={text_match_only_count} "
+                f"failed={failed_count} deferred={deferred_count}"
+            )
+        if refetch_acts and is_verifiable_official_source(dict(src)):
             time.sleep(1.5)  # polite rate-limit
 
     # Persist audit rows
@@ -547,45 +945,39 @@ async def main():
         log(f"persisted {len(persistence_rows)} document-scoped audit rows")
 
     # Verification is document-scoped. A source-level verdict must never mark
-    # every document attached to a shared source as verified.
+    # every document attached to a shared source as verified. A passed legacy
+    # document also promotes its compared non-quarantined chunks because the
+    # production retrieval gate is chunk-scoped.
     (
         passed_document_ids,
         failed_document_ids,
         passed_chunk_ids,
         failed_chunk_ids,
     ) = verification_scope_updates(audit_rows)
+    await apply_verification_updates(conn, audit_rows)
     if passed_document_ids:
-        await conn.execute("""
-            UPDATE documents
-            SET provenance_verified = true, provenance_verified_at = now()
-            WHERE id = ANY($1::bigint[])
-        """, passed_document_ids)
         log(f"marked {len(passed_document_ids)} audited documents as verified")
     if failed_document_ids:
-        await conn.execute("""
-            UPDATE documents
-            SET provenance_verified = false, provenance_verified_at = NULL
-            WHERE id = ANY($1::bigint[])
-        """, failed_document_ids)
         log(f"cleared verification on {len(failed_document_ids)} drifted documents")
+    if passed_document_ids:
+        log(
+            f"marked non-quarantined chunks for {len(passed_document_ids)} "
+            "verified documents"
+        )
+    if failed_document_ids:
+        log(
+            f"cleared non-quarantined chunks for {len(failed_document_ids)} "
+            "drifted documents"
+        )
     if passed_chunk_ids:
-        await conn.execute("""
-            UPDATE chunks
-            SET provenance_verified = true, provenance_verified_at = now()
-            WHERE id = ANY($1::bigint[])
-        """, passed_chunk_ids)
         log(f"marked {len(passed_chunk_ids)} audited authority chunks as verified")
     if failed_chunk_ids:
-        await conn.execute("""
-            UPDATE chunks
-            SET provenance_verified = false, provenance_verified_at = NULL
-            WHERE id = ANY($1::bigint[])
-        """, failed_chunk_ids)
         log(f"cleared verification on {len(failed_chunk_ids)} drifted authority chunks")
 
     log(f"\n=== Summary ===")
-    log(f"  pass:     {pass_count}")
-    log(f"  fail:     {fail_count}")
+    log(f"  verified: {verified_count}")
+    log(f"  text only:{text_match_only_count}  (hash or another verification gate failed)")
+    log(f"  failed:   {failed_count}")
     log(f"  deferred: {deferred_count}  (needs India-region or other verifier)")
     log(f"  total:    {len(sources)}")
 
@@ -600,6 +992,13 @@ async def main():
         log(f"  tier={r['provenance_tier']:11s} verified={r['provenance_verified']}: {r['docs']} docs")
 
     await conn.close()
+    if args.strict and (
+        verified_count != len(sources)
+        or text_match_only_count
+        or failed_count
+        or deferred_count
+    ):
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

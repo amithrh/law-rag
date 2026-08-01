@@ -8,6 +8,7 @@ import pytest
 
 from authority_registry.ingest import (
     AuthorityMigrationConflict,
+    _project_record,
     apply_authority_migration,
     build_projection,
 )
@@ -28,6 +29,8 @@ class FakeConnection:
         self.executed: list[tuple[str, tuple]] = []
         self.document_id: int | None = None
         self.chunk_id: int | None = None
+        self.chunk_rows: list[dict] | None = None
+        self.source_hash: str | None = None
 
     def transaction(self):
         return _Transaction()
@@ -36,7 +39,10 @@ class FakeConnection:
         normalized = " ".join(sql.split())
         if "SELECT manifest_sha256" in normalized:
             return self.applied.get(args[0])
+        if "SELECT raw_sha256 FROM sources" in normalized:
+            return self.source_hash
         if "INSERT INTO sources" in normalized:
+            self.source_hash = args[5]
             return 11
         if "SELECT id FROM documents" in normalized:
             return self.document_id
@@ -52,6 +58,10 @@ class FakeConnection:
 
     async def fetch(self, sql, *args):
         normalized = " ".join(sql.split())
+        if "FROM chunks" in normalized:
+            if self.chunk_rows is not None:
+                return self.chunk_rows
+            return [{"id": self.chunk_id}] if self.chunk_id is not None else []
         if "FROM document_authorities" in normalized:
             return []
         raise AssertionError(f"unexpected fetch SQL: {normalized}")
@@ -78,8 +88,41 @@ async def test_authority_migration_is_idempotent_and_never_self_verifies():
     assert first.records_applied == 1
     assert second.status == "no_op"
     assert second.records_applied == 0
+
+
+@pytest.mark.asyncio
+async def test_source_hash_change_invalidates_all_existing_source_projections():
+    record = load_authority_migrations()[0].manifest.operations[0].record
+    conn = FakeConnection()
+
+    await _project_record(conn, record, migration_id="first", embed=_embed)
+    refreshed = record.model_copy(
+        update={
+            "provenance": record.provenance.model_copy(
+                update={"raw_sha256": "f" * 64}
+            )
+        }
+    )
+    await _project_record(conn, refreshed, migration_id="refresh", embed=_embed)
+
+    invalidations = [sql for sql, _args in conn.executed if "UPDATE chunks" in sql]
+    assert any("provenance_verified = false" in sql for sql in invalidations)
+    assert any(
+        "UPDATE documents" in sql and "provenance_verified = false" in sql
+        for sql, _args in conn.executed
+    )
     document_sql = " ".join(sql for sql, _ in conn.executed if "documents" in sql)
     assert "provenance_verified = true" not in document_sql
+
+
+@pytest.mark.asyncio
+async def test_authority_projection_refuses_duplicate_live_chunk_projections():
+    record = load_authority_migrations()[0].manifest.operations[0].record
+    conn = FakeConnection()
+    conn.chunk_rows = [{"id": 33}, {"id": 34}]
+
+    with pytest.raises(RuntimeError, match="duplicate live chunk projections"):
+        await _project_record(conn, record, migration_id="duplicate-probe", embed=_embed)
 
 
 @pytest.mark.asyncio

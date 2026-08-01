@@ -1,0 +1,115 @@
+{
+  "migration_id": "0019_crpc_device_return_authority",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_451",
+        "authority_id_expected": "authority_b56a3ee70bc63e048163",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": ["Code of Criminal Procedure, 1973", "CrPC 1973"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "451",
+          "heading": "Order for custody and disposal of property pending trial in certain cases",
+          "canonical_anchor": "/sec-451",
+          "anchor_aliases": []
+        },
+        "effective_from": "1974-04-01",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+          "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."
+        },
+        "consolidation_as_at": null,
+        "publisher": {"name": "Legislative Department, Ministry of Law and Justice", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/15272/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5bb6514251a9ec6375b2c894cef5280dab0d1c3cca1e0f4a1e57f29b54033d72",
+          "raw_bytes_size": 1879339
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973",
+          "title_patterns": ["Code of Criminal Procedure 1973", "Code of Criminal Procedure, 1973", "CrPC 1973"],
+          "doc_ids": ["crpc-1973"],
+          "source_types": ["bare_act"],
+          "search_query": "Code of Criminal Procedure 1973 section 451 custody and disposal of property pending trial"
+        },
+        "verbatim_status": "declared",
+        "text": "451. Order for custody and disposal of property pending trial in certain cases.—When any property is produced before any Criminal Court during any inquiry or trial, the Court may make such order as it thinks fit for the proper custody of such property pending the conclusion of the inquiry or trial, and, if the property is subject to speedy and natural decay, or if it is otherwise expedient so to do, the Court may, after recording such evidence as it thinks necessary, order it to be sold or otherwise disposed of.\nExplanation.—For the purposes of this section, “property” includes—\n(a) property of any kind or document which is produced before the Court or which is in its custody;\n(b) any property regarding which an offence appears to have been committed or which appears to have been used for the commission of any offence.",
+        "text_sha256": "9847cbaf8a0323dad0f36060394cbd5498e4a6a4915e1125171e39db6368ce6f"
+      },
+      "expected_previous_record_sha256": null
+    },
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "code_of_criminal_procedure_1973_section_457",
+        "authority_id_expected": "authority_316cb0d8a467b1d9a046",
+        "canonical_name": "Code of Criminal Procedure 1973",
+        "aliases": ["Code of Criminal Procedure, 1973", "CrPC 1973"],
+        "authority_type": "statute",
+        "jurisdiction": {"country": "IN", "level": "national", "state_code": null},
+        "provision": {
+          "kind": "section",
+          "number": "457",
+          "heading": "Procedure by police upon seizure of property",
+          "canonical_anchor": "/sec-457",
+          "anchor_aliases": []
+        },
+        "effective_from": "1974-04-01",
+        "effective_to": "2024-06-30",
+        "savings": {
+          "authority": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+          "provision": "Section 531",
+          "canonical_url": "https://www.mha.gov.in/sites/default/files/250884_2_english_01042024.pdf",
+          "effect": "CrPC continues for an appeal, application, trial, inquiry, or investigation pending immediately before 1 July 2024."
+        },
+        "consolidation_as_at": null,
+        "publisher": {"name": "Legislative Department, Ministry of Law and Justice", "kind": "official_government"},
+        "canonical_url": "https://www.indiacode.nic.in/bitstream/123456789/15272/1/the_code_of_criminal_procedure%2C_1973.pdf",
+        "source_origin": "indiacode",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "5bb6514251a9ec6375b2c894cef5280dab0d1c3cca1e0f4a1e57f29b54033d72",
+          "raw_bytes_size": 1879339
+        },
+        "doc_id": "crpc-1973",
+        "title": "Code of Criminal Procedure 1973",
+        "statute": "Code of Criminal Procedure 1973",
+        "year": 1973,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "crpc_1973",
+          "title_patterns": ["Code of Criminal Procedure 1973", "Code of Criminal Procedure, 1973", "CrPC 1973"],
+          "doc_ids": ["crpc-1973"],
+          "source_types": ["bare_act"],
+          "search_query": "Code of Criminal Procedure 1973 section 457 procedure by police upon seizure of property"
+        },
+        "verbatim_status": "declared",
+        "text": "457. Procedure by police upon seizure of property.—(1) Whenever the seizure of property by any police officer is reported to a Magistrate under the provisions of this Code, and such property is not produced before a Criminal Court during an inquiry or trial, the Magistrate may make such order as he thinks fit respecting the disposal of such property or the delivery of such property to the person entitled to the possession thereof, or if such person cannot be ascertained, respecting the custody and production of such property.\n(2) If the person so entitled is known, the Magistrate may order the property to be delivered to him on such conditions (if any) as the Magistrate thinks fit and if such person is unknown, the Magistrate may detain it and shall, in such case, issue a proclamation specifying the articles of which such property consists, and requiring any person who may have a claim thereto, to appear before him and establish his claim within six months from the date of such proclamation.",
+        "text_sha256": "cecdd07e21af9a63e45bea695dbe207683911f2d623c7b9b167f3d30d7cf3ec8"
+      },
+      "expected_previous_record_sha256": null
+    }
+  ],
+  "workflow_operations": []
+}

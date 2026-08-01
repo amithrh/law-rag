@@ -1,0 +1,127 @@
+{
+  "migration_id": "0017_uapa_43d_bail_authority",
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "canonical_key": "unlawful_activities_prevention_act_1967_section_43d",
+        "authority_id_expected": "authority_4a9efaf22e5cf2d3d226",
+        "canonical_name": "Unlawful Activities (Prevention) Act 1967",
+        "aliases": [
+          "Unlawful Activities (Prevention) Act, 1967",
+          "UAPA 1967"
+        ],
+        "authority_type": "statute",
+        "jurisdiction": {
+          "country": "IN",
+          "level": "national",
+          "state_code": null
+        },
+        "provision": {
+          "kind": "section",
+          "number": "43D",
+          "heading": "Modified application of certain provisions of the Code",
+          "canonical_anchor": "/sec-43d",
+          "anchor_aliases": [
+            "/sec-43D"
+          ]
+        },
+        "effective_from": "2008-12-31",
+        "effective_to": null,
+        "savings": null,
+        "consolidation_as_at": null,
+        "publisher": {
+          "name": "Ministry of Home Affairs, Government of India",
+          "kind": "official_government"
+        },
+        "canonical_url": "https://www.mha.gov.in/sites/default/files/A1967-37.pdf",
+        "source_origin": "mha_gazette",
+        "provenance": {
+          "tier": "canonical",
+          "verification_method": "refetch_hash_and_text",
+          "raw_sha256": "15201c51c6e8168eb22245296353b38ba1f63bb17ecdde52689a4a8021eac98f",
+          "raw_bytes_size": 462441
+        },
+        "doc_id": "uapa-1967",
+        "title": "Unlawful Activities (Prevention) Act 1967",
+        "statute": "Unlawful Activities (Prevention) Act 1967",
+        "year": 1967,
+        "subject_area": "criminal",
+        "source_type": "bare_act",
+        "retrieval": {
+          "source_pack_id": "uapa_1967",
+          "title_patterns": [
+            "Unlawful Activities (Prevention) Act 1967",
+            "Unlawful Activities (Prevention) Act, 1967",
+            "UAPA 1967"
+          ],
+          "doc_ids": [
+            "uapa-1967"
+          ],
+          "source_types": [
+            "bare_act"
+          ],
+          "search_query": "Unlawful Activities Prevention Act 1967 section 43D bail prima facie true Public Prosecutor ninety days one hundred and eighty days"
+        },
+        "verbatim_status": "declared",
+        "text": "43D. Modified application of certain provisions of the Code.—(1) Notwithstanding anything contained in the Code or any other law, every offence punishable under this Act shall be deemed to be a cognizable offence within the meaning of clause (c) of section 2 of the Code, and ‘cognizable case’ as defined in that clause shall be construed accordingly.\n(2) Section 167 of the Code shall apply in relation to a case involving an offence punishable under this Act subject to the modification that in sub-section (2),—\n(a) the references to ‘fifteen days’, ‘ninety days’ and ‘sixty days’, wherever they occur, shall be construed as references to ‘thirty days’, ‘ninety days’ and ‘ninety days’ respectively; and\n(b) after the proviso, the following provisos shall be inserted, namely:—\n‘Provided further that if it is not possible to complete the investigation within the said period of ninety days, the Court may if it is satisfied with the report of the Public Prosecutor indicating the progress of the investigation and the specific reasons for the detention of the accused beyond the said period of ninety days, extend the said period up to one hundred and eighty days:\nProvided also that if the police officer making the investigation under this Act, requests, for the purposes of investigation, for police custody from judicial custody of any person in judicial custody, he shall file an affidavit stating the reasons for doing so and shall also explain the delay, if any, for requesting such police custody.’\n(3) Section 268 of the Code shall apply in relation to a case involving an offence punishable under this Act subject to the modification that—\n(a) the reference in sub-section (1) thereof—\n(i) to ‘the State Government’ shall be construed as a reference to ‘the Central Government or the State Government.’;\n(ii) to ‘order of the State Government’ shall be construed as a reference to ‘order of the Central Government or the State Government, as the case may be’; and\n(b) the reference in sub-section (2) thereof, to ‘the State Government’ shall be construed as a reference to ‘the Central Government or the State Government, as the case may be’.\n(4) Nothing in section 438 of the Code shall apply in relation to any case involving the arrest of any person accused of having committed an offence punishable under this Act.\n(5) Notwithstanding anything contained in the Code, no person accused of an offence punishable under Chapters IV and VI of this Act shall, if in custody, be released on bail or on his own bond unless the Public Prosecutor has been given an opportunity of being heard on the application for such release:\nProvided that such accused person shall not be released on bail or on his own bond if the Court, on a perusal of the case diary or the report made under section 173 of the Code is of the opinion that there are reasonable grounds for believing that the accusation against such person is prima facie true.\n(6) The restrictions on granting of bail specified in sub-section (5) is in addition to the restrictions under the Code or any other law for the time being in force on granting of bail.\n(7) Notwithstanding anything contained in sub-sections (5) and (6), no bail shall be granted to a person accused of an offence punishable under this Act, if he is not an Indian citizen and has entered the country unauthorisedly or illegally except in very exceptional circumstances and for reasons to be recorded in writing.",
+        "text_sha256": "b7940317356f332c0ce589808a60b026c5cf6540cd92a802f947c4476166feb7"
+      },
+      "expected_previous_record_sha256": null
+    }
+  ],
+  "workflow_operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "uapa_prima_facie_bail",
+        "owner_token": "authority_graph:uapa_prima_facie_bail",
+        "condition_ids": [
+          "uapa_regular_bail_43d5",
+          "uapa_default_bail_extension",
+          "uapa_prolonged_custody_article21"
+        ],
+        "authorities": [
+          {
+            "registry_key": "unlawful_activities_prevention_act_1967_section_43d",
+            "role": "legal_basis",
+            "required": true,
+            "answer_must_cite": true,
+            "condition_ids": []
+          }
+        ],
+        "forums": [
+          "jurisdictional Special Court or trial court",
+          "High Court for the legally available bail or constitutional remedy",
+          "District Legal Services Authority or UAPA criminal-defence lawyer"
+        ],
+        "remedies": [
+          "regular bail addressing the Section 43D(5) prima-facie filter where it applies",
+          "default bail based on the remand, filing, prosecutor-report, and extension-order timeline",
+          "a separately supported prolonged-incarceration or speedy-trial liberty argument"
+        ],
+        "deadline_rules": [
+          "For the Section 43D investigation-period lane, calculate the statutory timeline from the actual remand record and verify any Public Prosecutor report and court extension order before claiming default bail.",
+          "Do not treat long custody alone as satisfying or displacing the Section 43D(5) prima-facie test; delay-based constitutional relief is a separate, precedent-sensitive lane."
+        ],
+        "documents": [
+          "FIR and exact UAPA sections",
+          "arrest and first-remand dates with remand orders",
+          "charge-sheet or filing status",
+          "Public Prosecutor extension report and Special Court order if any",
+          "prior bail rejection order and the prosecution material relied on for prima-facie findings",
+          "trial order sheets, witness progress, and custody certificate for a delay-based argument"
+        ],
+        "escalation": [
+          "identify whether the immediate issue is regular bail, default bail, or prolonged-custody relief",
+          "obtain the complete remand and extension record before calculating a default-bail deadline",
+          "use Special Court or High Court counsel and DLSA support for the fact-specific application"
+        ]
+      },
+      "expected_previous_record_sha256": null
+    }
+  ]
+}

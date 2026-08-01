@@ -1,0 +1,35 @@
+{
+  "migration_id": "0021_bnss_section_531_savings",
+  "schema_version": 1,
+  "operations": [],
+  "workflow_operations": [
+    {
+      "op": "upsert",
+      "record": {
+        "schema_version": 1,
+        "scenario_id": "police_seized_device_return",
+        "owner_token": "common_workflow_contracts:police_seized_device_return",
+        "condition_ids": [
+          "device_return_bnss_531_needed",
+          "device_return_bnss_497_needed",
+          "device_return_bnss_503_needed",
+          "device_return_crpc_451_needed",
+          "device_return_crpc_457_needed"
+        ],
+        "authorities": [
+          {"registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_531", "role": "legal_basis", "required": false, "answer_must_cite": true, "condition_ids": ["device_return_bnss_531_needed"]},
+          {"registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_497", "role": "legal_basis", "required": false, "answer_must_cite": true, "condition_ids": ["device_return_bnss_497_needed"]},
+          {"registry_key": "bharatiya_nagarik_suraksha_sanhita_2023_section_503", "role": "legal_basis", "required": false, "answer_must_cite": true, "condition_ids": ["device_return_bnss_503_needed"]},
+          {"registry_key": "code_of_criminal_procedure_1973_section_451", "role": "legal_basis", "required": false, "answer_must_cite": true, "condition_ids": ["device_return_crpc_451_needed"]},
+          {"registry_key": "code_of_criminal_procedure_1973_section_457", "role": "legal_basis", "required": false, "answer_must_cite": true, "condition_ids": ["device_return_crpc_457_needed"]}
+        ],
+        "forums": ["investigating officer", "criminal court or Magistrate supervising property custody", "District Legal Services Authority"],
+        "remedies": ["return or delivery of the seized device", "interim custody", "court-supervised copying, imaging, or preservation directions"],
+        "deadline_rules": ["Confirm the investigation/proceeding pending status immediately before 1 July 2024, the seizure date, and whether the device was produced before the court before selecting the governing provision."],
+        "documents": ["seizure memo", "case or FIR number", "investigation commencement or first-remand record", "court production or custody record", "device identifiers", "ownership or authorised-use proof", "written return or copying request"],
+        "escalation": ["investigating officer", "jurisdictional Magistrate or criminal court", "District Legal Services Authority or criminal lawyer"]
+      },
+      "expected_previous_record_sha256": "02cacac95432839f41de28977c53bc75f096d82c246a53c06c1e957ae6347870"
+    }
+  ]
+}
