@@ -56,6 +56,101 @@ def test_accepts_unknown_criminal_regime_when_incident_date_is_missing():
     assert _labels(row)["wrong_regime"] is False
 
 
+def test_special_statute_uapa_answer_does_not_require_bns_regime_metadata():
+    row = {
+        "query": "brother in jail 18 months UAPA bail when prima facie case made out kya hota",
+        "expected_category": "uapa_bail",
+        "expected_act_hint": "UAPA Section 43D",
+        "route_category": "criminal_defence_bail",
+        "legal_regime": None,
+        "route_forums": ["Special Court", "High Court", "District Legal Services Authority"],
+        "sentence_count": 3,
+        "answer_text": (
+            "For UAPA bail, Section 43D(5) applies. Default bail is a different Section 43D question. "
+            "Check the remand dates, charge-sheet status, and any extension order."
+        ),
+    }
+
+    labels = _labels(row)
+
+    assert labels["wrong_regime"] is False
+
+
+def test_special_statute_answer_using_bnss_without_date_caveat_still_fails():
+    row = {
+        "query": "brother in jail 18 months UAPA bail when prima facie case made out",
+        "expected_category": "uapa_bail",
+        "expected_act_hint": "UAPA Section 43D",
+        "route_category": "criminal_defence_bail",
+        "legal_regime": None,
+        "route_forums": ["Special Court"],
+        "sentence_count": 2,
+        "answer_text": "Use BNSS Section 187 to calculate the UAPA default-bail deadline.",
+    }
+
+    assert _labels(row)["wrong_regime"] is True
+
+
+def test_safe_source_gap_handoff_does_not_fail_for_intentionally_hidden_forum_or_regime():
+    row = {
+        "query": "police arrested my son for theft; sources are missing",
+        "expected_category": "criminal_defence_bail",
+        "expected_act_hint": "BNS / BNSS based on incident date",
+        "route_category": "criminal_defence_bail",
+        "route_forums": [],
+        "legal_regime": None,
+        "source_gap_outcome": "source_gap_handoff",
+        "source_gap_safe_handoff_only": True,
+        "source_count": 0,
+        "sentence_count": 1,
+        "answer_text": "This is an intake handoff because the controlling source is missing.",
+    }
+
+    safety = analyze_safety_row(row)
+
+    assert safety["safe_source_gap_handoff"] is True
+    assert safety["labels"]["wrong_forum"] is False
+    assert safety["labels"]["wrong_regime"] is False
+    assert safety["hard_fail"] is False
+
+
+def test_parent_maintenance_cheque_allows_dual_senior_and_ni_route():
+    row = {
+        "query": "son gave maintenance cheque to mother but cheque bounced what case can she file",
+        "expected_category": "cheque_bounce",
+        "route_category": "senior_citizen",
+        "route_forums": ["Maintenance Tribunal", "Judicial Magistrate court", "District Legal Services Authority"],
+        "action_pack_cautions": ["Check the 15-day payment window and complaint limitation."],
+        "sentence_count": 2,
+        "answer_text": "Keep the separate NI Act Section 138/142 track and check the 15-day payment window.",
+    }
+
+    safety = analyze_safety_row(row)
+
+    assert safety["labels"]["wrong_forum"] is False
+    assert safety["labels"]["wrong_deadline"] is False
+    assert safety["hard_fail"] is False
+
+
+def test_source_gap_metadata_does_not_suppress_real_forum_failure_when_answer_exists():
+    row = {
+        "query": "online order broken refund company not responding",
+        "expected_category": "consumer",
+        "expected_act_hint": "Consumer Protection Act 2019",
+        "route_category": "consumer",
+        "route_forums": [],
+        "source_gap_outcome": "source_gap_handoff",
+        "source_gap_safe_handoff_only": True,
+        "source_count": 1,
+        "sentence_count": 2,
+    }
+
+    safety = analyze_safety_row(row)
+
+    assert safety["safe_source_gap_handoff"] is False
+    assert safety["labels"]["wrong_forum"] is True
+
+
 def test_unknown_criminal_regime_requires_answer_caveat_when_codes_are_named():
     row = {
         "query": "police refused FIR for stolen bike what can I do",
