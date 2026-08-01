@@ -1,9 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // SSE works best when the dev proxy forwards directly to the FastAPI on :8000
-  // so the browser sees a single origin. Override API_BASE for prod (nginx, etc).
+  // Keep health/index calls same-origin. Protected answer/search calls use the
+  // server-side proxy in app/api so the browser never receives the API secret.
   async rewrites() {
-    const apiBase = process.env.API_BASE || "http://127.0.0.1:8000";
+    const apiBase = process.env.API_INTERNAL_URL || process.env.API_BASE || "http://127.0.0.1:8000";
     return [
       { source: "/api/:path*", destination: `${apiBase}/:path*` },
     ];

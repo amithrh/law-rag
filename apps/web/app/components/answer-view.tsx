@@ -1,17 +1,24 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { readSse } from "../lib/sse";
+import { parseSseData, readSse } from "../lib/sse";
+import { isCurrentRequest } from "../lib/request-guard";
 import {
+  applyAnswerEvent,
+  INITIAL_ANSWER_STATE,
+  type AnswerState,
   canRevealPlannedAnswer,
-  parseMatterPlan,
+  isSafeSourceGapHandoff,
+  parseTimingEvent,
   PlannedSentenceGate,
 } from "../lib/matter-plan";
 import type {
   CoverageEvent,
   DisclaimerEvent,
   ErrorEvent as ApiErrorEvent,
+  IntakeEvent,
   MatterPlanEvent,
+  MatterRouteEvent,
   PassageEvent,
   RefusedEvent,
   RelevanceEvent,
@@ -25,63 +32,8 @@ import { CoverageChip } from "./coverage-chip";
 import { IndexStatus } from "./index-status";
 import { SentenceLine } from "./sentence-line";
 
-// A timeline entry: either a real cited sentence or a gap marker
-// produced when the server suppressed an uncited sentence. The UI
-// renders gap markers as "…" so the reader can see that content was
-// dropped (rather than silently disappearing from the answer).
-type TimelineEntry =
-  | { kind: "sentence"; sentence: SentenceEvent }
-  | { kind: "gap" };
-
-interface AnswerState {
-  pending: boolean;
-  matterPlan: MatterPlanEvent | null;
-  planContractError: string | null;
-  coverage: CoverageEvent | null;
-  sourceGap: SourceGapEvent | null;
-  passages: PassageEvent[];
-  // Server-authored authoritative source list (round-3). The UI prefers
-  // this over `passages` when present — it's emitted at end-of-stream
-  // and may diverge from the early retrieval snapshot once we add
-  // post-filtering / redaction.
-  sources: SourcesEvent | null;
-  timeline: TimelineEntry[];
-  // Convenience: sentences-only view for components that don't care
-  // about gaps. Derived from `timeline` on read.
-  sentences: SentenceEvent[];
-  stop: StopEvent | null;
-  refused: RefusedEvent | null;
-  // Task #10: answer-vs-query relevance verdict. null until the server
-  // emits the `relevance` event (only on the normal end path with a
-  // non-empty answer body). When `verdict !== "ok"`, the UI renders a
-  // notice — see the "off_topic" / "partial" Notice block below.
-  relevance: RelevanceEvent | null;
-  timing: TimingEvent | null;
-  disclaimer: string | null;
-  error: string | null;
-  startedAt: number | null;
-  finishedAt: number | null;
-}
-
-const INITIAL: AnswerState = {
-  pending: false,
-  matterPlan: null,
-  planContractError: null,
-  coverage: null,
-  sourceGap: null,
-  passages: [],
-  sources: null,
-  timeline: [],
-  sentences: [],
-  stop: null,
-  refused: null,
-  relevance: null,
-  timing: null,
-  disclaimer: null,
-  error: null,
-  startedAt: null,
-  finishedAt: null,
-};
+const MAX_QUERY_LENGTH = 2000;
+const REFINEMENT_PREFIX = "\n\nAdditional facts:\n";
 
 const EXAMPLES = [
   "Police did not file my FIR. What can I do?",
@@ -92,8 +44,12 @@ const EXAMPLES = [
 
 export function AnswerView() {
   const [q, setQ] = useState("");
-  const [state, setState] = useState<AnswerState>(INITIAL);
+  const [intakeDraft, setIntakeDraft] = useState("");
+  const [intakeChoices, setIntakeChoices] = useState<Record<string, string>>({});
+  const [inputError, setInputError] = useState<string | null>(null);
+  const [state, setState] = useState<AnswerState>(INITIAL_ANSWER_STATE);
   const abortRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef(0);
 
   const passagesByIndex = useMemo(() => {
     const m = new Map<number, PassageEvent>();
@@ -105,18 +61,29 @@ export function AnswerView() {
     async (query: string) => {
       const text = query.trim();
       if (!text) return;
+      if (text.length > MAX_QUERY_LENGTH) {
+        setInputError(`Please keep the question and added facts within ${MAX_QUERY_LENGTH} characters.`);
+        return;
+      }
+      setInputError(null);
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
-      setState({ ...INITIAL, pending: true, startedAt: performance.now() });
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
+      const isActive = () =>
+        abortRef.current === ac && isCurrentRequest(requestId, requestIdRef.current, ac.signal);
+      setIntakeDraft("");
+      setIntakeChoices({});
+      setState({ ...INITIAL_ANSWER_STATE, pending: true, startedAt: performance.now() });
 
       try {
-        // 2026-05-21: Next.js dev proxy times out at 30s but /answer needs
-        // ~40-50s. Hit the API directly. The FastAPI side has CORS
-        // configured for http://localhost:3000.
-        const apiBase =
-          process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
-        const res = await fetch(`${apiBase}/answer`, {
+        // Use the same-origin server proxy by default. It injects the API key
+        // server-side in production; a public API base remains an explicit
+        // development override for local debugging only.
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+        const endpoint = apiBase ? `${apiBase}/answer` : "/api/answer";
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -129,39 +96,58 @@ export function AnswerView() {
           const body = await res.text().catch(() => "");
           throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
         }
-
-        for await (const packet of readSse(res, ac.signal)) {
-          let data: unknown;
-          try {
-            data = JSON.parse(packet.data);
-          } catch {
-            continue;
-          }
-          setState((s) => applyEvent(s, packet.event, data));
+        const contentType = res.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+        if (contentType !== "text/event-stream") {
+          throw new Error("answer endpoint returned a non-stream response");
         }
-      } catch (e) {
-        if (ac.signal.aborted) return;
-        setState((s) => ({
-          ...s,
-          pending: false,
-          error: e instanceof Error ? e.message : String(e),
-          planContractError:
-            s.planContractError ?? (
-              !s.matterPlan && s.sentences.length > 0
-                ? "The answer stream ended before a valid MatterPlan v2 contract arrived."
-                : null
-            ),
-          finishedAt: performance.now(),
-        }));
+
+        let sawValidTerminalEvent = false;
+        for await (const packet of readSse(res, ac.signal)) {
+          if (!isActive()) return;
+          let data: unknown = parseSseData(packet.data);
+          if (packet.event === "timing") {
+            const timing = parseTimingEvent(data);
+            if (!timing) throw new Error("answer stream ended with invalid timing");
+            sawValidTerminalEvent = true;
+            data = timing;
+          }
+          setState((s) => (isActive() ? applyAnswerEvent(s, packet.event, data) : s));
+        }
+        if (!sawValidTerminalEvent) {
+          throw new Error("answer stream ended without a terminal timing event");
+        }
+      } catch {
+        if (!isActive()) return;
+        setState((s) => {
+          // A source-gap handoff is already a safe, actionable terminal
+          // outcome. Preserve it when the transport closes before timing so
+          // users do not lose the missing-authority explanation.
+          if (s.sourceGapHandoffLatched && s.sourceGap?.outcome === "source_gap_handoff") {
+            return {
+              ...s,
+              pending: false,
+              error: null,
+              finishedAt: performance.now(),
+            };
+          }
+          return {
+            ...INITIAL_ANSWER_STATE,
+            pending: false,
+            error: "The answer could not be completed safely. Please retry or contact DLSA/legal aid.",
+            startedAt: s.startedAt,
+            finishedAt: performance.now(),
+          };
+        });
         return;
       }
+      if (!isActive()) return;
       setState((s) => ({
         ...s,
         pending: false,
         finishedAt: performance.now(),
         planContractError:
-          s.planContractError ?? (
-            !s.matterPlan && s.sentences.length > 0
+          s.sourceGapProtocolError ?? s.planContractError ?? (
+            !s.sourceGapHandoffLatched && !s.matterPlan && s.sentences.length > 0
               ? "The answer stream did not include a valid MatterPlan v2 contract."
               : null
           ),
@@ -180,6 +166,15 @@ export function AnswerView() {
       ? Math.round(state.finishedAt - state.startedAt)
       : null;
   const answerMs = state.timing?.total_ms ?? elapsed;
+  const selectedFacts = Object.entries(intakeChoices)
+    .filter(([, value]) => value.trim())
+    .map(([id, value]) => `${id}: ${value}`)
+    .join("\n");
+  const maxDraftLength = Math.max(
+    0,
+    MAX_QUERY_LENGTH - q.trim().length - REFINEMENT_PREFIX.length -
+      selectedFacts.length - (selectedFacts ? 1 : 0),
+  );
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10">
@@ -201,7 +196,11 @@ export function AnswerView() {
           <input
             type="text"
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            maxLength={MAX_QUERY_LENGTH}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setInputError(null);
+            }}
             placeholder="e.g. Police did not file my FIR. What can I do?"
             className="flex-1 rounded-md border border-stone-300 bg-white px-4 py-3 text-base shadow-sm outline-none focus:border-stone-500 focus:ring-1 focus:ring-stone-400"
             disabled={state.pending}
@@ -216,6 +215,10 @@ export function AnswerView() {
           </button>
         </div>
       </form>
+
+      {inputError && (
+        <p className="mb-3 text-sm text-red-700" role="alert">{inputError}</p>
+      )}
 
       {!state.pending && !state.sentences.length && !state.refused && !state.error && (
         <div className="mt-3 mb-8 flex flex-wrap gap-2 text-xs">
@@ -243,6 +246,8 @@ export function AnswerView() {
             title={
               state.refused.reason === "rerank_unavailable"
                 ? "Search service is having trouble"
+                : state.refused.reason === "off_topic"
+                  ? "Outside legal-help scope"
                 : "Not enough sources for this question"
             }
           >
@@ -257,24 +262,48 @@ export function AnswerView() {
           </Notice>
         )}
 
-        {state.matterPlan && state.matterPlan.primary_issue !== "off_topic" && (
+        {state.matterPlan &&
+          state.matterPlan.primary_issue !== "off_topic" &&
+          !state.sourceGapHandoffLatched &&
+          !isSafeSourceGapHandoff(state.sourceGap) && (
           <ActionPlan plan={state.matterPlan} />
         )}
 
-        {state.coverage && <CoverageChip coverage={state.coverage} />}
+        {state.sourceGap?.outcome === "source_gap_handoff" &&
+          isSafeSourceGapHandoff(state.sourceGap) && (
+            <SafeHandoffPanel route={state.matterRoute} />
+          )}
+
+        {state.intake && state.intake.questions.length > 0 && (
+          <GuidedIntake
+            intake={state.intake}
+            draft={intakeDraft}
+            choices={intakeChoices}
+            onDraftChange={setIntakeDraft}
+            onChoiceChange={(id, value) => {
+              setIntakeChoices((current) => ({ ...current, [id]: value }));
+            }}
+            onRefine={() => {
+              const additional = [selectedFacts, intakeDraft.trim()].filter(Boolean).join("\n");
+              const refined = `${q.trim()}${REFINEMENT_PREFIX}${additional}`.trim();
+              setQ(refined);
+              void submit(refined);
+            }}
+            maxDraftLength={maxDraftLength}
+            hasAnswers={Boolean(
+              intakeDraft.trim() || Object.values(intakeChoices).some((value) => value.trim()),
+            )}
+          />
+        )}
+
+        {!state.sourceGapHandoffLatched && state.coverage && <CoverageChip coverage={state.coverage} />}
 
         {state.sourceGap && state.sourceGap.has_gap && (
           <Notice tone="amber" title="Controlling source not fully available">
-            <span>{state.sourceGap.message}</span>
-            {state.sourceGap.missing_required_sources.length > 0 && (
-              <span className="mt-2 block text-xs">
-                Missing:{" "}
-                {state.sourceGap.missing_required_sources
-                  .slice(0, 3)
-                  .map((item) => item.required_source)
-                  .join("; ")}
-              </span>
-            )}
+            The controlling authority could not be verified for this question, so
+            the legal answer is withheld. Use the preparation panel below to
+            organize your records and ask DLSA/legal aid or a qualified lawyer to
+            verify the source before acting.
           </Notice>
         )}
 
@@ -283,7 +312,7 @@ export function AnswerView() {
             sentence). This notice is ADDITIVE — it warns when the
             cosine between query and answer-body falls below the
             calibrated threshold (the deposit-question failure mode). */}
-        {canRevealPlannedAnswer(state.matterPlan, state.planContractError) && state.relevance && state.relevance.verdict !== "ok" && (
+        {canRevealPlannedAnswer(state.matterPlan, state.planContractError, state.sourceGapHandoffLatched) && state.relevance && state.relevance.verdict !== "ok" && (
           <Notice
             tone={state.relevance.verdict === "off_topic" ? "red" : "amber"}
             title={
@@ -298,7 +327,11 @@ export function AnswerView() {
           </Notice>
         )}
 
-        {(() => {
+      {(() => {
+          // A source-gap handoff deliberately contains one uncited guidance
+          // sentence. It is the safe fallback, not an incomplete model stub,
+          // so it must remain visible even when the answer has no citations.
+          if (state.sourceGapHandoffLatched) return null;
           // Round-4 UX: a 1-2 sentence stub after suppression is worse
           // than a clean refusal. Count non-meta sentences; if the
           // answer is thin AND stop fired, collapse to a refusal-style
@@ -311,6 +344,7 @@ export function AnswerView() {
               <PlannedSentenceGate
                 plan={state.matterPlan}
                 planContractError={state.planContractError}
+                sourceGapHandoffLatched={state.sourceGapHandoffLatched}
                 pending={state.pending}
               >
                 <div className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-stone-200">
@@ -350,7 +384,7 @@ export function AnswerView() {
           );
         })()}
 
-        {state.stop && canRevealPlannedAnswer(state.matterPlan, state.planContractError) && (() => {
+        {state.stop && canRevealPlannedAnswer(state.matterPlan, state.planContractError, state.sourceGapHandoffLatched) && (() => {
           const nonMeta = state.sentences.filter((s) => s.status !== "meta");
           const isStub = nonMeta.length < 3;
           return (
@@ -372,7 +406,7 @@ export function AnswerView() {
         )}
 
         {(() => {
-          if (!canRevealPlannedAnswer(state.matterPlan, state.planContractError)) return null;
+          if (!canRevealPlannedAnswer(state.matterPlan, state.planContractError, state.sourceGapHandoffLatched)) return null;
           // Prefer the server-authored authoritative source list. Fall
           // back to the early retrieval `passages` snapshot if the
           // sources event hasn't arrived yet (mid-stream or stream cut
@@ -452,6 +486,59 @@ export function AnswerView() {
         )}
       </section>
     </div>
+  );
+}
+
+function SafeHandoffPanel({ route }: { route: MatterRouteEvent | null }) {
+  if (!route || !route.intake_only) {
+    return (
+      <div className="mb-4 rounded-lg bg-white p-5 shadow-sm ring-1 ring-amber-200">
+        <p className="font-medium text-stone-900">Safe intake handoff</p>
+        <p className="mt-2 text-sm text-stone-700">
+          Keep the key records and papers listed for this matter, then contact
+          DLSA/legal aid or a qualified lawyer to verify the controlling authority
+          before acting.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <section className="mb-4 rounded-lg bg-white p-5 shadow-sm ring-1 ring-amber-200">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="font-medium text-stone-900">Safe intake handoff</p>
+        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 ring-1 ring-amber-200">
+          source verification pending
+        </span>
+      </div>
+      <p className="mt-2 text-sm text-stone-700">
+        This is a preparation path, not a legal conclusion. Keep the records
+        below and verify the controlling authority with DLSA/legal aid or a
+        qualified lawyer before acting. The issue label is only a triage signal.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+        <p className="text-sm font-medium text-stone-900">{route.label}</p>
+        <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-amber-800 ring-1 ring-amber-200">
+          {route.urgency} urgency
+        </span>
+      </div>
+      <div className="mt-4">
+        <p className="font-medium text-stone-800">Prepare for verification</p>
+        <ol className="mt-2 list-decimal space-y-1 pl-5 text-stone-700">
+          <li>Write a short timeline with dates, people or offices involved, and the result you want.</li>
+          <li>Keep copies of notices, applications, receipts, messages, photos, and other records; do not share passwords, OTPs, or full account numbers.</li>
+          <li>Take this packet to DLSA/legal aid or a qualified lawyer and ask for the controlling source, forum, and deadline to be verified before acting.</li>
+        </ol>
+        <p className="mt-4 font-medium text-stone-800">Records to keep available</p>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-stone-700">
+          <li>Notices, applications, receipts, messages, photos, and relevant identity or address proof.</li>
+          <li>Any complaint, reference, acknowledgement, or order number.</li>
+        </ul>
+      </div>
+      <p className="mt-4 text-xs text-stone-600">
+        If there is immediate danger, arrest, self-harm risk, or medical danger,
+        contact local emergency help, a hospital, or a trusted person first.
+      </p>
+    </section>
   );
 }
 
@@ -555,6 +642,116 @@ function ActionPlan({ plan }: { plan: MatterPlanEvent }) {
   );
 }
 
+function GuidedIntake({
+  intake,
+  draft,
+  choices,
+  onDraftChange,
+  onChoiceChange,
+  onRefine,
+  maxDraftLength,
+  hasAnswers,
+}: {
+  intake: IntakeEvent;
+  draft: string;
+  choices: Record<string, string>;
+  onDraftChange: (value: string) => void;
+  onChoiceChange: (id: string, value: string) => void;
+  onRefine: () => void;
+  maxDraftLength: number;
+  hasAnswers: boolean;
+}) {
+  const hasSafetyQuestion = intake.questions.some((question) => question.id === "current_safety");
+  const sourceGapCopy = intake.intake_kind === "source_gap_facts";
+  const sourceGapQuestionCopy: Record<string, { prompt: string; reason: string; input_type: "text" | "date" }> = {
+    jurisdiction: {
+      prompt: "Which state, city, or district is this in?",
+      reason: "Local procedure can differ by jurisdiction.",
+      input_type: "text",
+    },
+    incident_date: {
+      prompt: "What date did the incident, notice, or decision happen?",
+      reason: "The applicable source may depend on the date.",
+      input_type: "date",
+    },
+    document_status: {
+      prompt: "What notice, document, complaint, or order do you have?",
+      reason: "The document helps a lawyer or help desk verify the route.",
+      input_type: "text",
+    },
+    desired_outcome: {
+      prompt: "What result are you trying to obtain?",
+      reason: "The desired result helps identify the correct authority to check.",
+      input_type: "text",
+    },
+  };
+  return (
+    <section className="mb-4 rounded-lg bg-stone-50 p-4 text-sm ring-1 ring-stone-200">
+      <p className="font-medium text-stone-900">To make this more specific</p>
+      {hasSafetyQuestion && (
+        <p className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+          If you are in immediate danger, contact local emergency services or a trusted person now. This form is not emergency support.
+        </p>
+      )}
+      <ol className="mt-2 list-decimal space-y-2 pl-5 text-stone-700">
+        {intake.questions.map((question) => {
+          const copy = sourceGapCopy ? sourceGapQuestionCopy[question.id] : question;
+          if (!copy) return null;
+          return (
+            <li key={question.id}>
+              <span>{copy.prompt}</span>
+              <span className="mt-0.5 block text-xs text-stone-500">{copy.reason}</span>
+              {!sourceGapCopy && question.input_type === "choice" && question.options.length > 0 && (
+                <select
+                  className="mt-2 w-full rounded-md border border-stone-300 bg-white px-2 py-2 text-sm text-stone-900"
+                  value={choices[question.id] ?? ""}
+                  onChange={(event) => onChoiceChange(question.id, event.target.value)}
+                  aria-label={copy.prompt}
+                >
+                  <option value="">Select one</option>
+                  {question.options.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              )}
+              {sourceGapCopy && copy.input_type === "date" && (
+                <input
+                  type="date"
+                  className="mt-2 w-full rounded-md border border-stone-300 bg-white px-2 py-2 text-sm text-stone-900"
+                  value={draft}
+                  onChange={(event) => onDraftChange(event.target.value)}
+                  aria-label={copy.prompt}
+                />
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      <textarea
+        className="mt-3 min-h-20 w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-stone-500 focus:ring-2 focus:ring-stone-200"
+        value={draft}
+        maxLength={maxDraftLength}
+        onChange={(event) => onDraftChange(event.target.value)}
+        placeholder="Answer any of these in your own words"
+        aria-label="Additional facts for a more specific answer"
+      />
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-stone-500">
+          {sourceGapCopy ? "Do not share passwords, OTPs, or full account numbers." : intake.privacy_note}
+        </p>
+        <button
+          type="button"
+          className="rounded-md bg-stone-900 px-3 py-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={onRefine}
+          disabled={!hasAnswers}
+        >
+          Ask with these facts
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Notice({
   tone,
   title,
@@ -574,64 +771,6 @@ function Notice({
       <p className="mt-1">{children}</p>
     </div>
   );
-}
-
-function applyEvent(s: AnswerState, event: string, data: unknown): AnswerState {
-  switch (event) {
-    case "coverage":
-      return { ...s, coverage: data as CoverageEvent };
-    case "source_gap":
-      return { ...s, sourceGap: data as SourceGapEvent };
-    case "matter_plan": {
-      const plan = parseMatterPlan(data);
-      return plan
-        ? { ...s, matterPlan: plan, planContractError: null }
-        : {
-            ...s,
-            matterPlan: null,
-            planContractError: "The server sent an invalid MatterPlan payload.",
-          };
-    }
-    case "passages":
-      return { ...s, passages: data as PassageEvent[] };
-    case "sentence": {
-      const sentence = data as SentenceEvent;
-      return {
-        ...s,
-        timeline: [...s.timeline, { kind: "sentence", sentence }],
-        sentences: [...s.sentences, sentence],
-      };
-    }
-    case "suppressed":
-      // Coalesce consecutive gaps so 4 dropped sentences in a row still
-      // render as a single "…".
-      if (s.timeline.length > 0 && s.timeline[s.timeline.length - 1].kind === "gap") {
-        return s;
-      }
-      return { ...s, timeline: [...s.timeline, { kind: "gap" }] };
-    case "stop":
-      return { ...s, stop: data as StopEvent };
-    case "refused":
-      return { ...s, refused: data as RefusedEvent };
-    case "sources":
-      // Server-authored authoritative source list — overrides the
-      // earlier `passages` snapshot for the final Sources block.
-      return { ...s, sources: data as SourcesEvent };
-    case "relevance":
-      // Task #10: answer-vs-query relevance verdict. The UI renders a
-      // notice for "partial" / "off_topic" (see the Notice block in
-      // the JSX). Stored as-is so the verdict, score, and threshold
-      // are all available for the notice text.
-      return { ...s, relevance: data as RelevanceEvent };
-    case "timing":
-      return { ...s, timing: data as TimingEvent };
-    case "disclaimer":
-      return { ...s, disclaimer: (data as DisclaimerEvent).text };
-    case "error":
-      return { ...s, error: (data as ApiErrorEvent).message };
-    default:
-      return s;
-  }
 }
 
 function fmtMs(value: number | undefined): string {

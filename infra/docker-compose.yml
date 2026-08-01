@@ -33,9 +33,17 @@ services:
       - "${REDIS_HOST_PORT}:6379"
     volumes:
       - redis-data:/data
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        if [ -n "$${REDIS_PASSWORD}" ]; then
+        exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}";
+        else exec redis-server --appendonly yes; fi
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$${REDIS_PASSWORD} redis-cli ping"]
       interval: 5s
       timeout: 3s
       retries: 5

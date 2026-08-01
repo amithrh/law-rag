@@ -21,7 +21,10 @@ export interface SourceGapItem {
   authority_id?: string | null;
   source_pack_id?: string | null;
   identity_status?: "canonical" | "provisional";
-  match_mode?: "authority_id" | "legacy_provisional";
+  // Explanatory provenance metadata. Source-gap families may introduce
+  // additional modes without changing the fail-closed handoff contract.
+  match_mode?: string;
+  required_anchor_patterns?: string[];
 }
 
 export interface SourceGapEvent {
@@ -34,6 +37,9 @@ export interface SourceGapEvent {
   policy:
     | "do_not_substitute_neighboring_authority"
     | "separate_conflicting_answer_owners";
+  outcome?: "source_gap_handoff";
+  reason?: string;
+  safe_handoff_only?: boolean;
 }
 
 export interface PassageEvent {
@@ -70,6 +76,7 @@ export interface MatterRouteEvent {
   red_flags: string[];
   action_pack: ActionPack | null;
   legal_regime: string | null;
+  intake_only?: boolean;
 }
 
 export interface AuthorityLedgerEntry {
@@ -96,6 +103,7 @@ export interface RetrievalSourcePlan {
   anchor_patterns: string[];
   source_types: string[];
   priority: number;
+  selection_terms?: string[];
 }
 
 export interface MatterPlanEvent {
@@ -142,6 +150,22 @@ export interface MatterPlanEvent {
   };
 }
 
+export interface IntakeQuestion {
+  id: string;
+  prompt: string;
+  reason: string;
+  input_type: "text" | "date" | "choice";
+  options: string[];
+}
+
+export interface IntakeEvent {
+  schema_version: 1;
+  intake_kind?: "matter_plan_facts" | "source_gap_facts";
+  route_category?: string;
+  questions: IntakeQuestion[];
+  privacy_note: string;
+}
+
 export interface SentenceEvent {
   text: string;
   status: SentenceStatus;
@@ -169,7 +193,8 @@ export interface RefusedEvent {
     | "rerank_unavailable"
     | "low_coverage"
     | "low_coverage_dense_fallback"
-    | "critical_route_needs_reviewed_contract";
+    | "critical_route_needs_reviewed_contract"
+    | "off_topic";
   top_rerank_score?: number;
   top_combined_score?: number;
 }

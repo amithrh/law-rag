@@ -7,6 +7,14 @@ export interface SsePacket {
   data: string;
 }
 
+export function parseSseData(data: string): unknown {
+  try {
+    return JSON.parse(data);
+  } catch {
+    throw new Error("answer stream contained malformed JSON data");
+  }
+}
+
 export async function* readSse(
   response: Response,
   signal: AbortSignal,

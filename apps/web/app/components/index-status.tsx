@@ -7,10 +7,7 @@ interface Health {
   chunks: number;
   documents: number;
   llm?: {
-    ok: boolean;
-    model: string;
-    available_models: string[];
-    message?: string | null;
+    status: "available" | "unavailable";
   };
 }
 
@@ -23,8 +20,9 @@ export function IndexStatus() {
 
   useEffect(() => {
     const ac = new AbortController();
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
-    fetch(`${apiBase}/healthz?deep=true`, { signal: ac.signal })
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+    const endpoint = apiBase ? `${apiBase}/healthz?deep=true` : "/api/healthz?deep=true";
+    fetch(endpoint, { signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((j: Health) => setH(j))
       .catch((e) => {
@@ -49,11 +47,11 @@ export function IndexStatus() {
       </span>
     );
   }
-  if (h.llm && !h.llm.ok) {
+  if (h.llm && h.llm.status !== "available") {
     return (
       <span
         className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-[11px] text-amber-800"
-        title={h.llm.message ?? `Missing model ${h.llm.model}`}
+        title="The answer model is temporarily unavailable"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
         LLM unavailable
