@@ -72,14 +72,30 @@ jobs:
           for attempt in $(seq 1 60); do
             if curl --fail --silent --show-error \
               http://127.0.0.1:8056/healthz >/tmp/law-rag-health.json; then
+              curl --silent --show-error \
+                --output /tmp/law-rag-ready.json \
+                --write-out "%{http_code}" \
+                http://127.0.0.1:8056/readyz >/tmp/law-rag-ready.status
               python - <<'PY'
           import json
+          from pathlib import Path
 
           with open("/tmp/law-rag-health.json", encoding="utf-8") as handle:
               health = json.load(handle)
+          with open("/tmp/law-rag-ready.json", encoding="utf-8") as handle:
+              ready = json.load(handle)
           assert health["status"] == "ok", health
-          assert health["chunks"] == 1, health
-          assert health["documents"] == 1, health
+          assert health["chunks"] == 0, health
+          assert health["documents"] == 0, health
+          assert health["build_fingerprint"], health
+          assert Path("/tmp/law-rag-ready.status").read_text() == "503", ready
+          assert ready == {
+              "status": "not_ready",
+              "dependency": "corpus",
+              "reason": "corpus_empty",
+              "chunks": 0,
+              "documents": 0,
+          }, ready
           PY
               exit 0
             fi
