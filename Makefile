@@ -10,7 +10,9 @@ UV         ?= uv
 .PHONY: help env up down restart logs ps doctor psql redis-cli pull-models \
         bench-day0 clean nuke sync test-api test-api-ci test-models \
         test-eval-data test-workflows test-eval-gates typecheck-web verify \
-        api-dev web-dev corpus-manifest seed-ci-corpus promote-source-packs
+        api-dev web-dev corpus-manifest seed-ci-corpus promote-source-packs \
+        audit-release-scope audit-release-scope-live \
+        audit-release-scope-retrieval gate-release-scope
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -100,6 +102,20 @@ seed-ci-corpus: env ## Load one synthetic row for clean-clone/API smoke tests on
 
 promote-source-packs: env ## Promote hash-pinned official Act sections before a production release.
 	PYTHONPATH=$(ROOT) $(UV) run python $(ROOT)/scripts/promote_source_pack_sections.py
+
+audit-release-scope: ## Audit the limited-V1 matrix and print all remaining blockers.
+	PYTHONPATH=$(ROOT) $(UV) run python $(ROOT)/scripts/audit_release_scope.py
+
+audit-release-scope-live: ## Verify registry-ready V1 authorities in the live provenance-gated corpus.
+	PYTHONPATH=$(ROOT) $(UV) run python $(ROOT)/scripts/audit_release_scope.py \
+		--live-corpus --require-registry-ready-corpus
+
+audit-release-scope-retrieval: ## Measure uninjected top-8 authority recall against the local API.
+	PYTHONPATH=$(ROOT) $(UV) run python $(ROOT)/scripts/audit_release_scope.py \
+		--live-retrieval --require-registry-ready-retrieval
+
+gate-release-scope: ## Fail unless every V1 scope, authority, evidence, and decision gate is ready.
+	PYTHONPATH=$(ROOT) $(UV) run python $(ROOT)/scripts/audit_release_scope.py --require-launch-ready
 
 bench-day0: ## Run Day-0 model-dependent benches (Q1 verifier, Q3 embedding, Q4 reranker, Q2 HNSW). Requires stack up + models pulled.
 	@bash $(ROOT)/scripts/bench-day0.sh

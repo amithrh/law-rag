@@ -1309,6 +1309,118 @@ def _chunk_section_number(chunk: RetrievedChunk) -> str | None:
     return f"{num}{hyphen_suffix or inline_suffix}".upper()
 
 
+_NATURAL_DOCUMENT_STOPWORDS = {
+    "act",
+    "article",
+    "clause",
+    "code",
+    "india",
+    "indian",
+    "of",
+    "paragraph",
+    "scheme",
+    "section",
+    "the",
+}
+
+
+def _natural_query_section_tokens(query: str) -> set[str]:
+    return {
+        (first or second).upper()
+        for first, second in re.findall(
+            r"(?:section|sec\.?|clause)\s+(\d{1,4}[A-Z]?)|article\s+(\d{1,4}[A-Z]?)",
+            query,
+            flags=re.IGNORECASE,
+        )
+        if first or second
+    }
+
+
+def _natural_query_names_document(query: str, chunk: RetrievedChunk) -> bool:
+    query_tokens = set(re.findall(r"[a-z0-9]+", query.lower()))
+    document_blob = " ".join(
+        value
+        for value in (
+            chunk.title,
+            chunk.statute_short or "",
+            chunk.document_key or "",
+        )
+        if value
+    ).lower()
+    document_tokens = set(re.findall(r"[a-z0-9]+", document_blob))
+    abbreviations = {"bnss", "crpc", "rbi", "pmla", "bns", "ipc"}
+    if query_tokens & document_tokens & abbreviations:
+        return True
+    significant = document_tokens - _NATURAL_DOCUMENT_STOPWORDS
+    return bool(significant) and len(query_tokens & significant) >= min(
+        2,
+        len(significant),
+    )
+
+
+def _prioritize_natural_candidates(
+    query: str,
+    candidates: list[RetrievedChunk],
+    *,
+    limit: int,
+) -> list[RetrievedChunk]:
+    """Diversify natural results and preserve explicitly queried provisions.
+
+    This operates only on candidates retrieved by the ordinary dense/sparse/
+    BM25 heads. It does not fetch or insert a route's source pack.
+    """
+    if limit <= 0:
+        return []
+    target_sections = _natural_query_section_tokens(query)
+
+    def result_key(chunk: RetrievedChunk) -> tuple[str, str]:
+        document = chunk.document_key or str(chunk.document_id)
+        if chunk.source_type == "bare_act":
+            return document, _chunk_section_number(chunk) or chunk.anchor.split("@", 1)[0]
+        return document, "judgment"
+
+    def score(chunk: RetrievedChunk) -> float:
+        if chunk.rerank_score is not None:
+            return chunk.rerank_score
+        if chunk.rrf_score is not None:
+            return chunk.rrf_score
+        return chunk.combined_score
+
+    best_by_result: dict[tuple[str, str], RetrievedChunk] = {}
+    for chunk in candidates:
+        key = result_key(chunk)
+        current = best_by_result.get(key)
+        if current is None or (
+            chunk.as_at is not None,
+            bool(chunk.metadata.get("_provenance_verified")),
+            score(chunk),
+        ) > (
+            current.as_at is not None,
+            bool(current.metadata.get("_provenance_verified")),
+            score(current),
+        ):
+            best_by_result[key] = chunk
+
+    def explicit_provision(chunk: RetrievedChunk) -> bool:
+        section = _chunk_section_number(chunk)
+        return bool(
+            chunk.source_type == "bare_act"
+            and section
+            and section in target_sections
+            and _natural_query_names_document(query, chunk)
+        )
+
+    diversified = sorted(
+        best_by_result.values(),
+        key=lambda chunk: (
+            explicit_provision(chunk),
+            score(chunk),
+        ),
+        reverse=True,
+    )
+    return diversified[:limit]
+
+
 def _diversify_source_pack_chunks(
     chunks: list[RetrievedChunk],
     *,
@@ -2053,6 +2165,83 @@ async def hybrid_retrieve(
     return out[:top_k]
 
 
+async def natural_query_hybrid_retrieve(
+    pool: asyncpg.Pool,
+    query: str,
+    *,
+    source_types: list[str] | None = None,
+    subject_areas: list[str] | None = None,
+    top_k: int | None = None,
+) -> tuple[list[RetrievedChunk], list[str]]:
+    """Retrieve from natural + legal-vocabulary queries without source packs.
+
+    Unlike `multi_query_hybrid_retrieve`, this function never calls
+    `_merge_required_source_packs`. It can therefore be used as honest natural
+    retrieval evidence while still exercising the production query-expansion,
+    dense, sparse, BM25, fielded-BM25, rerank, and diversity layers.
+    """
+    import asyncio
+
+    from apps.api.query_expand import natural_retrieval_query_variants
+
+    s = get_settings()
+    limit = top_k or s.rerank_top_k
+    route = route_matter(query)
+    try:
+        variants = natural_retrieval_query_variants(query)
+    except Exception as exc:
+        logger.warning("natural_query_retrieve: query variants failed: %s", exc)
+        variants = [query]
+    if not variants:
+        variants = [query]
+
+    candidates_per_variant = await asyncio.gather(
+        *[
+            hybrid_retrieve(
+                pool,
+                variant,
+                source_types=source_types,
+                subject_areas=subject_areas,
+                top_k=s.rerank_input_k,
+                use_reranker=False,
+                use_sparse=(index == 0),
+            )
+            for index, variant in enumerate(variants)
+        ],
+        return_exceptions=True,
+    )
+    union: dict[int, RetrievedChunk] = {}
+    for result in candidates_per_variant:
+        if isinstance(result, BaseException):
+            logger.warning("natural_query_retrieve: candidate retrieval failed: %s", result)
+            continue
+        for chunk in result:
+            current = union.get(chunk.chunk_id)
+            if current is None or chunk.combined_score > current.combined_score:
+                union[chunk.chunk_id] = chunk
+
+    expanded_query = " ".join(variants)
+    rerank_candidates = _prioritize_natural_candidates(
+        expanded_query,
+        list(union.values()),
+        limit=s.rerank_input_k,
+    )
+    reranked = _rerank_candidate_union(
+        query,
+        rerank_candidates,
+        variants=variants,
+        route_category=route.category,
+        packs=[],
+        plan=None,
+        top_k=s.rerank_input_k,
+        timings=None,
+    )
+    return (
+        _prioritize_natural_candidates(expanded_query, reranked, limit=limit),
+        variants[1:],
+    )
+
+
 async def multi_query_hybrid_retrieve(
     pool: asyncpg.Pool,
     query: str,
@@ -2328,6 +2517,7 @@ __all__ = [
     "RetrievedChunk",
     "hybrid_retrieve",
     "multi_query_hybrid_retrieve",
+    "natural_query_hybrid_retrieve",
     "rrf_fuse",
     "sparse_retrieve",
 ]

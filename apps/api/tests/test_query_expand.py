@@ -1,7 +1,7 @@
 import asyncio
 
 from apps.api import config as config_module
-from apps.api.query_expand import expand_query
+from apps.api.query_expand import expand_query, natural_retrieval_query_variants
 
 
 def _clear_settings_cache() -> None:
@@ -162,6 +162,36 @@ def test_legacy_arrest_expansion_does_not_invent_crpc_58():
     joined = "\n".join(out[1:])
     assert "CrPC 1973 section 56 section 57" in joined
     assert "CrPC 1973 section 57 section 58" not in joined
+
+
+def test_limited_v1_natural_expansions_name_the_reviewed_authority_families():
+    cases = {
+        "Police picked my son from home at night and gave no FIR copy": (
+            "Article 22",
+            "Article 226",
+            "section 531",
+        ),
+        "Police seized my phone and will not return it": (
+            "section 451",
+            "section 457",
+        ),
+        "Loan app is harassing my contacts": (
+            "Ombudsman Scheme 2021",
+            "clause 10",
+        ),
+        "Cyber police put a lien on my frozen bank account": (
+            "section 106",
+            "section 102",
+        ),
+        "Bank deducted money wrongly and customer care is not helping": (
+            "Ombudsman Scheme 2021",
+            "clause 9",
+        ),
+    }
+    for query, expected_fragments in cases.items():
+        variants = natural_retrieval_query_variants(query)
+        joined = "\n".join(variants[1:])
+        assert all(fragment in joined for fragment in expected_fragments), query
 
 
 def test_special_law_default_bail_expansion_mentions_ndps_extension_only_when_indexed():

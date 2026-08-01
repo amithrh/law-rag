@@ -35,6 +35,7 @@ from apps.api.retrieval import (
     _merge_required_source_pack_metadata,
     _preserve_required_source_packs,
     _preserve_required_authority_anchors,
+    _prioritize_natural_candidates,
     _provenance_filter_sql,
     _required_source_pack_limit,
     _rerank_candidate_union,
@@ -717,6 +718,44 @@ def _retrieved_chunk(
         rerank_score=rerank,
         metadata=metadata or {},
     )
+
+
+def test_natural_results_prioritize_explicit_provisions_and_dedupe_snapshots():
+    old_clause_1 = _retrieved_chunk(
+        1,
+        rerank=0.55,
+        document_id=70,
+        title="Reserve Bank Integrated Ombudsman Scheme 2021",
+    )
+    old_clause_1.anchor = "rbi-integrated-ombudsman-2021/sec-1"
+    old_clause_1.document_key = "rbi-integrated-ombudsman-2021"
+    current_clause_1 = replace(old_clause_1, chunk_id=2, as_at=date(2022, 8, 5))
+    current_clause_1.anchor = "rbi-integrated-ombudsman-2021/sec-1@2022-08-05"
+    clause_3 = _retrieved_chunk(
+        3,
+        rerank=0.50,
+        document_id=70,
+        title="Reserve Bank Integrated Ombudsman Scheme 2021",
+    )
+    clause_3.anchor = "rbi-integrated-ombudsman-2021/sec-3@2022-08-05"
+    clause_3.document_key = "rbi-integrated-ombudsman-2021"
+    judgment = _retrieved_chunk(
+        4,
+        rerank=0.95,
+        source_type="sc_judgment",
+        title="BANK CASE versus STATE",
+    )
+    judgment.anchor = "2024-insc-1#para-10"
+    judgment.document_key = "2024-insc-1"
+
+    result = _prioritize_natural_candidates(
+        "Reserve Bank Integrated Ombudsman Scheme 2021 clause 1 clause 3",
+        [judgment, old_clause_1, current_clause_1, clause_3],
+        limit=3,
+    )
+
+    assert [chunk.chunk_id for chunk in result[:2]] == [2, 3]
+    assert old_clause_1 not in result
 
 
 def test_required_source_snapshot_removes_older_copy_from_candidate_union():

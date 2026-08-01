@@ -1,0 +1,183 @@
+{
+  "schema_version": 1,
+  "scope_id": "law_rag_limited_v1_20260801",
+  "release_decision": "no_go",
+  "candidate_fingerprint": null,
+  "default_unlisted_policy": "source_gap_handoff",
+  "gate_policy": {
+    "minimum_natural_retrieval_recall_at_8": 0.95,
+    "require_registry_owned_must_cite_authorities": true,
+    "require_active_corpus_provenance": true,
+    "require_independent_legal_review": true,
+    "require_exact_candidate_fingerprint": true
+  },
+  "lanes": [
+    {
+      "lane_id": "criminal_procedure_safeguards",
+      "label": "FIR, arrest, custody, and immediately related safeguards",
+      "boundary": "Immediate FIR, arrest, custody, identity-only arrest, and seized-property procedure; excludes specialist bail and PMLA advice."
+    },
+    {
+      "lane_id": "family_safety",
+      "label": "Domestic and family safety",
+      "boundary": "Immediate domestic-violence safety and source-backed handoff; excludes non-safety matrimonial and succession advice."
+    },
+    {
+      "lane_id": "cyber_financial_harm",
+      "label": "Cyber and financial harm",
+      "boundary": "Loan-app contact harassment and investigating-authority bank holds; excludes generic cybercrime and specialist PMLA matters."
+    },
+    {
+      "lane_id": "consumer_banking_grievance",
+      "label": "Consumer and banking grievance",
+      "boundary": "Wrongful debit, insurance grievance, and defective-goods complaints; excludes identity, tax, and state/local registration matters."
+    }
+  ],
+  "candidate_scenarios": [
+    {
+      "scenario_id": "arrest_custody_station_case_not_disclosed",
+      "lane_id": "criminal_procedure_safeguards",
+      "representative_query": "Police picked my son from home at night and gave no FIR copy",
+      "owner_token": "authority_graph:arrest_custody_station_case_not_disclosed",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    },
+    {
+      "scenario_id": "lgbtq_identity_arrest_safeguard",
+      "lane_id": "criminal_procedure_safeguards",
+      "representative_query": "Police arrested my son for being gay",
+      "owner_token": "authority_graph:lgbtq_identity_arrest_safeguard",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    },
+    {
+      "scenario_id": "vehicle_theft_fir_refusal",
+      "lane_id": "criminal_procedure_safeguards",
+      "representative_query": "My bike is stolen and police is not filing FIR",
+      "owner_token": "authority_graph:vehicle_theft_fir_refusal",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    },
+    {
+      "scenario_id": "police_seized_device_return",
+      "lane_id": "criminal_procedure_safeguards",
+      "representative_query": "Police seized my phone and will not return it",
+      "owner_token": "common_workflow_contracts:police_seized_device_return",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    },
+    {
+      "scenario_id": "domestic_violence_immediate_safety",
+      "lane_id": "family_safety",
+      "representative_query": "My husband is beating me right now, what should I do?",
+      "owner_token": "authority_graph:domestic_violence_immediate_safety",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    },
+    {
+      "scenario_id": "loan_app_harassment",
+      "lane_id": "cyber_financial_harm",
+      "representative_query": "Loan app is harassing my contacts",
+      "owner_token": "common_workflow_contracts:loan_app_harassment",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    },
+    {
+      "scenario_id": "bank_account_freeze_legal_hold",
+      "lane_id": "cyber_financial_harm",
+      "representative_query": "Cyber police put a lien on my frozen bank account",
+      "owner_token": "authority_graph:bank_account_freeze_legal_hold",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    },
+    {
+      "scenario_id": "wrong_bank_debit",
+      "lane_id": "consumer_banking_grievance",
+      "representative_query": "Bank deducted money wrongly and customer care is not helping",
+      "owner_token": "authority_graph:wrong_bank_debit",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    },
+    {
+      "scenario_id": "insurance_claim_or_misselling",
+      "lane_id": "consumer_banking_grievance",
+      "representative_query": "The insurer is rejecting my claim",
+      "owner_token": "authority_graph:insurance_claim_or_misselling",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    },
+    {
+      "scenario_id": "consumer_defective_goods",
+      "lane_id": "consumer_banking_grievance",
+      "representative_query": "My online order arrived damaged and the seller refuses a refund. What can I do?",
+      "owner_token": "authority_graph:consumer_defective_goods",
+      "support_status": "candidate_blocked",
+      "evidence": {
+        "active_corpus_provenance": {"status": "pending", "artifact": null, "candidate_fingerprint": null},
+        "natural_retrieval": {"status": "unmeasured", "artifact": null, "candidate_fingerprint": null},
+        "independent_legal_review": {"status": "pending", "artifact": null, "candidate_fingerprint": null}
+      }
+    }
+  ],
+  "excluded_plan_owned_scenarios": [
+    {"scenario_id": "pmla_ed_asset_freeze", "reason_code": "specialist_high_harm_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "uapa_prima_facie_bail", "reason_code": "specialist_high_harm_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "pan_aadhaar_linking_bank_kyc", "reason_code": "identity_tax_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "civil_registration_certificate_issuance", "reason_code": "state_local_registry_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "civil_registration_certificate_copy", "reason_code": "state_local_registry_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "death_registration_delayed", "reason_code": "state_local_registry_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "birth_certificate_record_correction", "reason_code": "state_local_registry_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "death_certificate_record_correction", "reason_code": "state_local_registry_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "joint_coowner_sold_whole_property", "reason_code": "property_succession_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "marital_intimacy_remedy", "reason_code": "non_safety_family_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "registered_will_update", "reason_code": "property_succession_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "caretaker_daughter_will", "reason_code": "property_succession_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "unregistered_will_validity", "reason_code": "property_succession_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "thermal_blasting_house_damage_compensation", "reason_code": "environment_land_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "mining_displacement_rehabilitation", "reason_code": "environment_land_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "scst_poa_accused_bail_defence", "reason_code": "specialist_high_harm_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "scst_targeted_violence_intake", "reason_code": "specialist_high_harm_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "caste_certificate_state_rule_intake", "reason_code": "state_local_registry_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "workplace_sexual_harassment_respondent", "reason_code": "employment_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "workplace_sexual_harassment_complainant", "reason_code": "employment_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "lok_adalat_traffic_settlement", "reason_code": "tribunal_settlement_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "lok_adalat_award_challenge", "reason_code": "tribunal_settlement_post_v1", "fallback_owner": "source_gap_handoff"},
+    {"scenario_id": "mgnrega_fake_muster", "reason_code": "rural_livelihood_post_v1", "fallback_owner": "source_gap_handoff"}
+  ]
+}

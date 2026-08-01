@@ -1364,6 +1364,71 @@ def _contains_adult_age(text: str) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
 
+def natural_retrieval_query_variants(
+    query: str,
+    *,
+    max_variants: int = 6,
+) -> list[str]:
+    """Return provision-specific legal searches without retrieving source packs."""
+    if not query or not query.strip():
+        return [query]
+    route = route_matter(query)
+    q = query.lower()
+    action_pack_id = route.action_pack.id if route.action_pack else ""
+    variants: list[str]
+    if route.category == "arrest_custody_safeguard":
+        variants = [
+            "Constitution of India Article 22 arrest custody grounds production",
+            "Constitution of India Article 226 habeas corpus unlawful custody",
+            "BNSS 2023 section 531 transition savings criminal proceeding",
+            "BNSS 2023 section 57 arrest produced before magistrate",
+            "BNSS 2023 section 58 twenty four hour custody limit",
+        ]
+    elif action_pack_id == "police_seized_device_return":
+        variants = [
+            "Code of Criminal Procedure 1973 section 451 interim custody seized property",
+            "Code of Criminal Procedure 1973 section 457 return police seized property",
+            "BNSS 2023 section 497 interim custody seized property",
+            "BNSS 2023 section 503 return police seized property",
+        ]
+    elif action_pack_id == "loan_app_harassment":
+        variants = [
+            f"Reserve Bank Integrated Ombudsman Scheme 2021 clause {clause} loan recovery harassment complaint"
+            for clause in (1, 3, 6, 9, 10)
+        ] + [
+            "RBI Digital Lending Directions paragraph 12 contact list call logs loan app data collection",
+        ]
+    elif (
+        _contains_any(q, ("bank", "account"))
+        and _contains_any(q, ("freeze", "frozen", "lien", "hold"))
+        and _contains_any(q, ("police", "cyber", "fir", "court", "legal hold", "lien"))
+    ):
+        variants = [
+            f"Reserve Bank Integrated Ombudsman Scheme 2021 clause {clause} bank freeze complaint"
+            for clause in (6, 9, 10)
+        ] + [
+            "BNSS 2023 section 106 police seizure bank account legal hold",
+            "Code of Criminal Procedure 1973 section 102 police seizure bank account legal hold",
+        ]
+    elif route.category == "banking_credit_dispute" and _contains_any(
+        q,
+        (
+            "wrong debit",
+            "wrongly debited",
+            "deducted money wrongly",
+            "wrongly deducted",
+            "money deducted",
+        ),
+    ):
+        variants = [
+            f"Reserve Bank Integrated Ombudsman Scheme 2021 clause {clause} wrongful debit complaint"
+            for clause in (1, 3, 6, 9, 10)
+        ]
+    else:
+        variants = _route_variants(query, route, max_variants)
+    return [query, *variants[:max_variants]]
+
+
 async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
     """Return [original_query, ...legal-vocabulary variants].
 

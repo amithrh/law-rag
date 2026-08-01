@@ -80,6 +80,7 @@ from apps.api.retrieval import (
     _required_source_pack_ids,
     hybrid_retrieve,
     multi_query_hybrid_retrieve,
+    natural_query_hybrid_retrieve,
 )
 from apps.api.runtime_identity import runtime_identity
 from apps.api.source_gap import (
@@ -309,21 +310,41 @@ async def search(
     sources: str | None = Query(None, max_length=2000, description="comma-separated subset of {sc_judgment,hc_judgment,bare_act,circular}"),
     subjects: str | None = Query(None, max_length=2000, description="comma-separated subset of slice subject areas"),
     top_k: int = Query(20, ge=1, le=100),
+    natural_expansion: bool = Query(
+        False,
+        description="Use production legal-vocabulary expansion without source-pack injection",
+    ),
 ):
     pool = await get_pool()
     src_types = [s.strip() for s in sources.split(",")] if sources else None
     subj = [s.strip() for s in subjects.split(",")] if subjects else None
 
     t0 = time.perf_counter()
-    hits = await hybrid_retrieve(
-        pool, q, source_types=src_types, subject_areas=subj, top_k=top_k,
-    )
+    if natural_expansion:
+        hits, expansion_variants = await natural_query_hybrid_retrieve(
+            pool,
+            q,
+            source_types=src_types,
+            subject_areas=subj,
+            top_k=top_k,
+        )
+    else:
+        hits = await hybrid_retrieve(
+            pool, q, source_types=src_types, subject_areas=subj, top_k=top_k,
+        )
+        expansion_variants = []
     elapsed = time.perf_counter() - t0
     metrics.retrieval_latency.observe(elapsed)
     elapsed_ms = elapsed * 1000
 
     return JSONResponse({
         "query": q,
+        "retrieval_mode": (
+            "natural_expansion_no_source_packs"
+            if natural_expansion
+            else "raw_hybrid"
+        ),
+        "expansion_variants": expansion_variants,
         "took_ms": round(elapsed_ms, 1),
         "hits": [
             SearchResponseItem(

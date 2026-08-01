@@ -65,6 +65,10 @@ make test-eval-data    # validate ignored local evaluation datasets
 make test-eval-gates   # eval scoring and holdout guard tests
 make typecheck-web     # TypeScript check
 make corpus-manifest   # aggregate DB/runtime/provenance snapshot
+make audit-release-scope # print limited-V1 route and evidence blockers
+make audit-release-scope-live # verify exact live authority projections
+make audit-release-scope-retrieval # uninjected expanded-query recall@8 gate
+make gate-release-scope  # strict nonzero-until-launch-ready scope gate
 ```
 
 `make test-api-ci` is the reproducible clean-clone gate. `make test-api` is the
@@ -75,6 +79,8 @@ focused test nor a generated evaluation set is production evidence. See
 measured blockers and release criteria.
 The dated integration schedule and current release-branch evidence are in
 [docs/PRODUCTION_READINESS_PLAN_20260801.md](docs/PRODUCTION_READINESS_PLAN_20260801.md).
+The machine-readable limited-V1 boundary is explained in
+[docs/V1_SUPPORTED_ROUTE_MATRIX_20260801.md](docs/V1_SUPPORTED_ROUTE_MATRIX_20260801.md).
 
 ## Deployment Boundary
 

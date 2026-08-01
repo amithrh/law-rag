@@ -73,6 +73,12 @@ accepts a later launch date.
 - Production admission control exists in code but the real Redis-backed
   topology, proxy cancellation, and final deployed-configuration holdout are
   not verified.
+- The limited-V1 scope manifest now covers all 33 plan-owned scenarios: 10 are
+  candidates in four lanes and 23 are explicit source-gap exclusions. Its
+  audit reports 5/10 registry-contract ready and 0/10 launch ready. A live
+  snapshot passes exact provenance for all 12 unique required authorities and
+  uninjected expanded-query recall@8 for all 20 scenario-level obligations;
+  fingerprint-bound evidence and independent legal review remain pending.
 
 ## Phase 0: Stabilize the repository (2026-08-01 to 2026-08-10)
 
