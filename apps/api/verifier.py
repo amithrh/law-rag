@@ -61,6 +61,7 @@ _META_PATTERNS = [
     re.compile(r"^\s*laws and (their|the) interpretation change\.?\s*$", re.IGNORECASE),
     re.compile(r"^\s*for decisions that affect your rights, consult a qualified lawyer or the relevant court / forum\.?\s*$", re.IGNORECASE),
     re.compile(r"^\s*the incident date decides whether bns/bnss/bsa or ipc/crpc/evidence act applies\.?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*this statute-only section 43d answer does not determine whether delay itself supports bail; that requires separately verified current precedent\.?\s*$", re.IGNORECASE),
     # NOTE: bullet-line exemption removed per Codex review #4. Bullets in
     # "What you can do next" make procedural claims ("file within 30 days",
     # "appeal to magistrate") that need citations too. With the suppress

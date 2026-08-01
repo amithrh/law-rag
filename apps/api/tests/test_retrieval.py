@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
+from datetime import date
 
 import pytest
 from apps.api.config import Settings
@@ -25,10 +26,15 @@ from apps.api.retrieval import (
     _anchor_regexes_from_patterns,
     _apply_authority_rerank_boosts,
     _bm25_retrieve_sql,
+    _chunk_matches_required_authority,
+    _drop_superseded_required_source_snapshots,
+    _effective_provenance_select_sql,
     _fetch_source_pack_candidates,
     _filter_query_ineligible_sources,
     _focus_required_source_pack_text,
+    _merge_required_source_pack_metadata,
     _preserve_required_source_packs,
+    _preserve_required_authority_anchors,
     _provenance_filter_sql,
     _required_source_pack_limit,
     _rerank_candidate_union,
@@ -42,12 +48,123 @@ from apps.api.retrieval import (
 from apps.api.source_packs import SourcePack
 
 
-def test_production_provenance_gate_accepts_exact_chunk_or_verified_document():
+def test_production_provenance_gate_allows_verified_documents_only_for_unmapped_chunks():
     sql = _provenance_filter_sql()
     assert "c.provenance_verified = true" in sql
-    assert "NOT EXISTS (SELECT 1 FROM document_authorities" in sql
-    assert "d2.provenance_verified = true" in sql
-    assert "c.document_id" in sql
+    assert "d.provenance_verified = true" in sql
+    assert "NOT EXISTS" in sql
+    assert "document_authorities" in sql
+    assert "provenance_authority_scope.chunk_id = c.id" in sql
+
+
+def test_public_provenance_uses_the_same_effective_trust_boundary():
+    sql = _effective_provenance_select_sql()
+    assert "c.provenance_verified = true" in sql
+    assert "d.provenance_verified = true" in sql
+    assert "NOT EXISTS" in sql
+    assert "provenance_authority_scope.chunk_id = c.id" in sql
+    assert "AS provenance_verified" in sql
+
+
+def test_bm25_projection_exposes_effective_provenance():
+    sql = _bm25_retrieve_sql(
+        where_clause="NOT c.quarantined",
+        where_param_count=0,
+        fielded=False,
+    )
+    assert "CASE" in sql
+    assert "d.provenance_verified = true" in sql
+    assert "AS provenance_verified" in sql
+
+
+def test_shared_chunk_keeps_every_reviewed_pack_for_authority_preservation():
+    shared = _retrieved_chunk(
+        101,
+        rerank=0.8,
+        title="Juvenile Justice (Care and Protection of Children) Act 2015",
+        metadata={
+            "_required_source_pack": "jj_2015",
+            "_required_source_packs": ["jj_2015", "jj_2015_bail_board"],
+        },
+    )
+    shared.anchor = "jj-2015/sec-10-official"
+    shared.text = "Section 10: Apprehension of child alleged to be in conflict with law."
+    requirement = RequiredAuthorityAnchor(
+        authority_id="authority_provisional_jj_bail",
+        source_pack_id="jj_2015_bail_board",
+        anchor_patterns=("/sec-10", "/sec-12"),
+    )
+
+    assert _chunk_matches_required_authority(shared, requirement)
+    preserved = _preserve_required_source_packs(
+        [shared],
+        ["jj_2015", "jj_2015_bail_board"],
+        limit=1,
+        required_authorities=(requirement,),
+    )
+    assert preserved == [shared]
+
+
+def test_shared_chunk_keeps_authority_evidence_scoped_to_each_reviewed_pack():
+    existing = {
+        "_required_source_pack": "pack_court",
+        "_required_source_packs": ["pack_court"],
+        "_authority_ids": ["authority_court"],
+        "_required_source_priority": 1.2,
+    }
+    incoming = {
+        "_required_source_pack": "pack_custody",
+        "_required_source_packs": ["pack_custody"],
+        "_authority_ids": ["authority_custody"],
+        "_required_source_priority": 1.1,
+    }
+
+    _merge_required_source_pack_metadata(existing, incoming)
+
+    assert existing["_required_source_pack"] == "pack_court"
+    assert existing["_required_source_packs"] == ["pack_court", "pack_custody"]
+    assert existing["_required_source_pack_authority_ids"] == {
+        "pack_court": ["authority_court"],
+        "pack_custody": ["authority_custody"],
+    }
+    shared = _retrieved_chunk(103, rerank=0.8, metadata=existing)
+    shared.anchor = "jj-2015/sec-10-official"
+    shared.text = "Section 10: Apprehension of child alleged to be in conflict with law."
+    court = RequiredAuthorityAnchor(
+        authority_id="authority_court",
+        source_pack_id="pack_court",
+        anchor_patterns=("/sec-10",),
+    )
+    custody = RequiredAuthorityAnchor(
+        authority_id="authority_custody",
+        source_pack_id="pack_custody",
+        anchor_patterns=("/sec-10",),
+    )
+    wrong_pack = RequiredAuthorityAnchor(
+        authority_id="authority_court",
+        source_pack_id="pack_custody",
+        anchor_patterns=("/sec-10",),
+    )
+
+    assert _chunk_matches_required_authority(shared, court)
+    assert _chunk_matches_required_authority(shared, custody)
+    assert not _chunk_matches_required_authority(shared, wrong_pack)
+
+    only_court_evidence = _retrieved_chunk(
+        104,
+        rerank=0.8,
+        metadata={
+            "_required_source_pack": "pack_court",
+            "_required_source_packs": ["pack_court", "pack_custody"],
+            "_authority_ids": ["authority_court"],
+            "_required_source_pack_authority_ids": {
+                "pack_court": ["authority_court"],
+            },
+        },
+    )
+    only_court_evidence.anchor = "jj-2015/sec-10-official"
+    only_court_evidence.text = shared.text
+    assert not _chunk_matches_required_authority(only_court_evidence, wrong_pack)
 
 
 def test_public_retrieval_consumes_matter_plan_without_rerouting(monkeypatch):
@@ -272,6 +389,99 @@ def test_mandatory_authorities_expand_capacity_beyond_requested_top_k():
 
     assert len(out) == 9
     assert {chunk.chunk_id for chunk in out} == set(range(201, 210))
+
+
+def test_required_authority_preservation_is_section_aware_within_one_pack():
+    section_138 = _retrieved_chunk(
+        138,
+        rerank=0.90,
+        title="Negotiable Instruments Act 1881",
+        metadata={"_required_source_pack": "ni_act_1881"},
+    )
+    section_138.anchor = "negotiable-instruments-1881/sec-138"
+    section_138.text = (
+        "Negotiable Instruments Act 1881, Section 138\n"
+        "Dishonour of cheque for insufficiency of funds."
+    )
+    section_142 = _retrieved_chunk(
+        142,
+        rerank=0.40,
+        title="Negotiable Instruments Act 1881",
+        metadata={"_required_source_pack": "ni_act_1881"},
+    )
+    section_142.anchor = "negotiable-instruments-1881/sec-142-b"
+    section_142.text = (
+        "Negotiable Instruments Act 1881, Section 142\n"
+        "Cognizance of offences."
+    )
+    unrelated = _retrieved_chunk(99, rerank=0.80)
+    requirements = (
+        RequiredAuthorityAnchor(
+            "authority_138",
+            "ni_act_1881",
+            ("/sec-138", "/sec-141", "/sec-142"),
+            "Section 138",
+        ),
+        RequiredAuthorityAnchor(
+            "authority_142",
+            "ni_act_1881",
+            ("/sec-138", "/sec-141", "/sec-142"),
+            "Section 142",
+        ),
+    )
+
+    selected = [section_138, unrelated]
+    _preserve_required_authority_anchors(
+        selected,
+        [section_138, unrelated, section_142],
+        requirements,
+        limit=2,
+    )
+
+    assert {chunk.chunk_id for chunk in selected} == {138, 142}
+
+
+def test_required_authority_section_match_rejects_neighbor_heading_and_wrong_id():
+    requirement = RequiredAuthorityAnchor(
+        "authority_142",
+        "ni_act_1881",
+        ("/sec-138", "/sec-141", "/sec-142"),
+        "Section 142",
+    )
+    neighboring = _retrieved_chunk(
+        1421,
+        rerank=0.5,
+        metadata={
+            "_required_source_pack": "ni_act_1881",
+            "_authority_ids": ["authority_other"],
+        },
+    )
+    neighboring.anchor = "negotiable-instruments-1881/sec-142-a"
+    neighboring.text = (
+        "Negotiable Instruments Act 1881, Section 142A\n"
+        "142A. Validation for transfer of pending cases.\n"
+        "See Section 142 for the complaint rule."
+    )
+
+    assert not _chunk_matches_required_authority(neighboring, requirement)
+
+
+def test_required_authority_subsection_match_requires_exact_heading():
+    requirement = RequiredAuthorityAnchor(
+        "authority_4c",
+        "pesa_1996",
+        ("/sec-4",),
+        "Section 4(c)",
+    )
+    wrong_subsection = _retrieved_chunk(
+        44,
+        rerank=0.5,
+        metadata={"_required_source_pack": "pesa_1996"},
+    )
+    wrong_subsection.anchor = "pesa-1996/sec-4"
+    wrong_subsection.text = "Panchayats Extension Act, Section 4(d)\nConsultation."
+
+    assert not _chunk_matches_required_authority(wrong_subsection, requirement)
 
 
 def test_preserve_required_source_pack_prefers_distinct_higher_priority_packs():
@@ -509,6 +719,22 @@ def _retrieved_chunk(
     )
 
 
+def test_required_source_snapshot_removes_older_copy_from_candidate_union():
+    old = _retrieved_chunk(1, rerank=0.9, document_id=77)
+    old.anchor = "pmla-2002/sec-17"
+    current = _retrieved_chunk(2, rerank=0.8, document_id=77)
+    current.anchor = "pmla-2002/sec-17@2024-08-30"
+    current.as_at = date(2024, 8, 30)
+    unrelated = _retrieved_chunk(3, rerank=0.7, document_id=77)
+    unrelated.anchor = "pmla-2002/sec-8"
+    union = {chunk.chunk_id: chunk for chunk in (old, unrelated)}
+
+    _drop_superseded_required_source_snapshots(union, [current])
+
+    assert old.chunk_id not in union
+    assert unrelated.chunk_id in union
+
+
 def test_focus_required_source_pack_normalizes_misanchored_ndps_section_37():
     chunk = _retrieved_chunk(
         37,
@@ -534,7 +760,8 @@ def test_focus_required_source_pack_normalizes_misanchored_ndps_section_37():
 
     _focus_required_source_pack_text(chunk, pack)
 
-    assert chunk.anchor == "ndps-1985/sec-37"
+    assert chunk.anchor == "ndps-1985/sec-36C"
+    assert chunk.metadata["display_anchor"] == "ndps-1985/sec-37"
     assert chunk.metadata["section_no"] == "37"
     assert chunk.text.startswith("Narcotic Drugs and Psychotropic Substances Act 1985, Section 37")
     assert "Offences to be cognizable and non-bailable" in chunk.text
@@ -753,8 +980,8 @@ def test_required_source_pack_uses_the_provenance_gate(monkeypatch):
     assert conn.fetch_calls
     sql, _ = conn.fetch_calls[0]
     assert "c.provenance_verified = true" in sql
-    assert "NOT EXISTS (SELECT 1 FROM document_authorities" in sql
-    assert "d2.provenance_verified = true" in sql
+    assert "d.provenance_verified = true" in sql
+    assert "provenance_authority_scope.chunk_id = c.id" in sql
 
 
 def test_required_source_pack_literal_anchor_patterns_are_exactly_bounded():

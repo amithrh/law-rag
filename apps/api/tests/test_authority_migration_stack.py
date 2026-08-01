@@ -17,7 +17,7 @@ from authority_registry.loader import (
     load_authority_migrations,
     load_authority_registry,
 )
-from authority_registry.model import AuthorityMigration
+from authority_registry.model import AuthorityMigration, canonical_authority_id
 
 ZERO_HALFVEC_1024 = "[" + ",".join("0" for _ in range(1024)) + "]"
 
@@ -109,7 +109,8 @@ async def test_rbi_authority_family_real_postgres_contract():
         await conn.execute(Path("infra/postgres/migrations/005_authority_registry.sql").read_text())
 
         migrations = load_authority_migrations()
-        assert [item.manifest.migration_id for item in migrations] == [
+        migration_ids = [item.manifest.migration_id for item in migrations]
+        assert migration_ids[:7] == [
             "0001_crpc_436a",
             "0002_rbi_grievance_family",
             "0003_it_act_private_image",
@@ -118,6 +119,7 @@ async def test_rbi_authority_family_real_postgres_contract():
             "0006_custody_authority_family",
             "0007_custody_answer_citation_policy",
         ]
+        assert migration_ids[-1] == "0029_legal_services_authorities_lok_adalat_official_projection_retirement"
         result = await apply_authority_migration(conn, migrations[0], embed=_fixture_embed)
         assert result.status == "applied"
 
@@ -336,6 +338,250 @@ async def test_rbi_authority_family_real_postgres_contract():
         assert bns_row["doc_id"] == "bns-2023"
         assert bns_row["anchor"] == "bns-2023/sec-308"
         assert bns_row["provenance_verified"] is False
+    finally:
+        await outer.rollback()
+        await conn.close()
+
+
+@pytest.mark.needs_stack
+@pytest.mark.asyncio
+async def test_full_authority_migration_chain_applies_and_retires_pmla_aliases():
+    settings = Settings()
+    conn = await asyncpg.connect(dsn=settings.resolved_database_url_host_side)
+    outer = conn.transaction()
+    await outer.start()
+    try:
+        await conn.execute("DROP SCHEMA IF EXISTS authority_registry_full_chain_test CASCADE")
+        await conn.execute("CREATE SCHEMA authority_registry_full_chain_test")
+        await conn.execute("SET LOCAL search_path TO authority_registry_full_chain_test, public")
+        await conn.execute(LEGACY_SCHEMA_SQL)
+        await conn.execute(Path("infra/postgres/migrations/005_authority_registry.sql").read_text())
+
+        migrations = load_authority_migrations()
+        expected_ids = [item.manifest.migration_id for item in migrations]
+        assert expected_ids == [
+            "0001_crpc_436a",
+            "0002_rbi_grievance_family",
+            "0003_it_act_private_image",
+            "0004_it_act_66e_verbatim_correction",
+            "0005_bns_extortion",
+            "0006_custody_authority_family",
+            "0007_custody_answer_citation_policy",
+            "0008_bank_freeze_authority_family",
+            "0009_bnss_106_provenance_refresh",
+            "0010_crpc_102_provenance_refresh",
+            "0011_pmla_asset_freeze_authority_family",
+            "0012_pmla_consolidation_snapshot",
+            "0013_pmla_complete_restraint_checks",
+            "0014_pmla_section_17_verbatim_correction",
+            "0015_pmla_retire_undated_projections",
+            "0016_pmla_retire_split_aliases",
+            "0017_uapa_43d_bail_authority",
+            "0018_uapa_statute_only_workflow",
+            "0019_crpc_device_return_authority",
+            "0020_bnss_device_return_authority",
+            "0021_bnss_section_531_savings",
+            "0022_crpc_154_fir_information_authority",
+            "0023_bnss_173_175_fir_authorities",
+            "0024_crpc_154_vehicle_theft_pack",
+            "0025_msmed_sale_of_goods_authorities",
+            "0026_legal_services_authorities_lok_adalat",
+            "0027_legal_services_authorities_lok_adalat_temporal_correction",
+            "0028_legal_services_authorities_lok_adalat_projection_repair",
+            "0029_legal_services_authorities_lok_adalat_official_projection_retirement",
+        ]
+
+        legacy_aliases = (
+            "pmla-2002/sec-17-a",
+            "pmla-2002/sec-17-b",
+            "pmla-2002/sec-17-c",
+            "pmla-2002/sec-8-a",
+            "pmla-2002/sec-8-b",
+            "pmla-2002/sec-8-c",
+            "pmla-2002/sec-8-d",
+            "pmla-2002/sec-8-e",
+            "pmla-2002/sec-8-f",
+        )
+        results = []
+        for migration in migrations:
+            result = await apply_authority_migration(conn, migration, embed=_fixture_embed)
+            results.append(result.status)
+            if migration.manifest.migration_id == "0011_pmla_asset_freeze_authority_family":
+                document_id = await conn.fetchval(
+                    "SELECT id FROM documents WHERE doc_id = 'pmla-2002'"
+                )
+                assert document_id is not None
+                await conn.executemany(
+                    """
+                    INSERT INTO chunks (
+                        document_id, source_type, subject_area, anchor, text,
+                        token_count, chunk_strategy, as_at, provenance_verified
+                    ) VALUES ($1, 'bare_act', 'criminal', $2, $3, 4, 'section', NULL, true)
+                    """,
+                    [
+                        (document_id, anchor, f"Legacy split projection for {anchor}")
+                        for anchor in legacy_aliases
+                    ],
+                )
+            if migration.manifest.migration_id == "0028_legal_services_authorities_lok_adalat_projection_repair":
+                document_id = await conn.fetchval(
+                    "SELECT id FROM documents WHERE doc_id = 'legal-services-authorities-1987'"
+                )
+                await conn.executemany(
+                    """
+                    INSERT INTO chunks (
+                        document_id, source_type, subject_area, anchor, text,
+                        token_count, chunk_strategy, as_at, provenance_verified
+                    ) VALUES ($1, 'bare_act', 'constitutional', $2, $3, 4, 'section', NULL, true)
+                    """,
+                    [
+                        (
+                            document_id,
+                            f"legal-services-authorities-1987/sec-{section}-official",
+                            f"Stale official projection for section {section}",
+                        )
+                        for section in (19, 20, 21)
+                    ],
+                )
+
+        assert results == ["applied"] * len(expected_ids)
+        applied_ids = await conn.fetch(
+            "SELECT migration_id FROM authority_ingest_migrations ORDER BY migration_id"
+        )
+        assert [row["migration_id"] for row in applied_ids] == expected_ids
+
+        legacy_rows = await conn.fetch(
+            """
+            SELECT anchor, quarantined, provenance_verified,
+                   metadata->>'authority_projection_retired_by_migration' AS retired_by
+            FROM chunks
+            WHERE anchor = ANY($1::text[])
+            ORDER BY anchor
+            """,
+            list(legacy_aliases),
+        )
+        assert [row["anchor"] for row in legacy_rows] == sorted(legacy_aliases)
+        assert all(row["quarantined"] is True for row in legacy_rows)
+        assert all(row["provenance_verified"] is False for row in legacy_rows)
+        assert all(row["retired_by"] is not None for row in legacy_rows)
+
+        device_return_rows = await conn.fetch(
+            """
+            SELECT da.authority_id, c.anchor, c.provenance_verified, c.quarantined
+            FROM document_authorities da
+            JOIN chunks c ON c.id = da.chunk_id
+            WHERE da.migration_id = '0019_crpc_device_return_authority'
+            ORDER BY c.anchor
+            """
+        )
+        assert [row["anchor"] for row in device_return_rows] == [
+            "crpc-1973/sec-451",
+            "crpc-1973/sec-457",
+        ]
+        assert [row["authority_id"] for row in device_return_rows] == [
+            "authority_b56a3ee70bc63e048163",
+            "authority_316cb0d8a467b1d9a046",
+        ]
+        assert all(row["provenance_verified"] is False for row in device_return_rows)
+        assert all(row["quarantined"] is False for row in device_return_rows)
+
+        bnss_device_return_rows = await conn.fetch(
+            """
+            SELECT da.authority_id, c.anchor, c.provenance_verified, c.quarantined
+            FROM document_authorities da
+            JOIN chunks c ON c.id = da.chunk_id
+            WHERE da.migration_id = '0020_bnss_device_return_authority'
+            ORDER BY c.anchor
+            """
+        )
+        assert [row["anchor"] for row in bnss_device_return_rows] == [
+            "bnss-2023/sec-497@2024-07-01",
+            "bnss-2023/sec-503@2024-07-01",
+        ]
+        assert [row["authority_id"] for row in bnss_device_return_rows] == [
+            "authority_d988aed56b26c0cd5541",
+            "authority_351a65c5e6d8e32eb406",
+        ]
+        assert all(row["provenance_verified"] is False for row in bnss_device_return_rows)
+        assert all(row["quarantined"] is False for row in bnss_device_return_rows)
+
+        lsa_rows = await conn.fetch(
+            """
+            SELECT da.authority_id, da.canonical_key, c.anchor,
+                   c.provenance_verified, c.quarantined,
+                   c.metadata->>'effective_from' AS effective_from
+            FROM document_authorities da
+            JOIN chunks c ON c.id = da.chunk_id
+            WHERE da.migration_id = '0029_legal_services_authorities_lok_adalat_official_projection_retirement'
+            ORDER BY da.canonical_key
+            """
+        )
+        assert [row["canonical_key"] for row in lsa_rows] == [
+            "legal_services_authorities_act_1987_section_19",
+            "legal_services_authorities_act_1987_section_20",
+            "legal_services_authorities_act_1987_section_21",
+        ]
+        assert [row["authority_id"] for row in lsa_rows] == [
+            "authority_4311cfc807f876973217",
+            "authority_73374f30d45eec49c931",
+            "authority_71a26d0ccbf7b61f6d84",
+        ]
+        assert all(row["provenance_verified"] is False for row in lsa_rows)
+        assert all(row["quarantined"] is False for row in lsa_rows)
+
+        lsa_legacy_rows = await conn.fetch(
+            """
+            SELECT anchor, as_at, provenance_verified, quarantined,
+                   metadata->>'authority_projection_retired_by_migration' AS retired_by
+            FROM chunks
+            WHERE anchor = ANY($1::text[])
+            ORDER BY anchor
+            """,
+            [
+                "legal-services-authorities-1987/sec-19",
+                "legal-services-authorities-1987/sec-20",
+                "legal-services-authorities-1987/sec-21",
+            ],
+        )
+        assert [row["anchor"] for row in lsa_legacy_rows] == [
+            "legal-services-authorities-1987/sec-19",
+            "legal-services-authorities-1987/sec-20",
+            "legal-services-authorities-1987/sec-21",
+        ]
+        assert all(row["as_at"] is None for row in lsa_legacy_rows)
+        assert all(row["quarantined"] is True for row in lsa_legacy_rows)
+        assert all(row["provenance_verified"] is False for row in lsa_legacy_rows)
+        assert all(
+            row["retired_by"] == "0027_legal_services_authorities_lok_adalat_temporal_correction"
+            for row in lsa_legacy_rows
+        )
+
+        lsa_official_rows = await conn.fetch(
+            """
+            SELECT anchor, as_at, provenance_verified, quarantined,
+                   metadata->>'authority_projection_retired_by_migration' AS retired_by
+            FROM chunks
+            WHERE anchor = ANY($1::text[])
+            ORDER BY anchor
+            """,
+            [
+                "legal-services-authorities-1987/sec-19-official",
+                "legal-services-authorities-1987/sec-20-official",
+                "legal-services-authorities-1987/sec-21-official",
+            ],
+        )
+        assert [row["anchor"] for row in lsa_official_rows] == [
+            "legal-services-authorities-1987/sec-19-official",
+            "legal-services-authorities-1987/sec-20-official",
+            "legal-services-authorities-1987/sec-21-official",
+        ]
+        assert all(row["quarantined"] is True for row in lsa_official_rows)
+        assert all(row["provenance_verified"] is False for row in lsa_official_rows)
+        assert all(
+            row["retired_by"] == "0029_legal_services_authorities_lok_adalat_official_projection_retirement"
+            for row in lsa_official_rows
+        )
+
     finally:
         await outer.rollback()
         await conn.close()
@@ -605,4 +851,104 @@ async def test_authority_migration_real_postgres_contract(monkeypatch):  # noqa:
         finally:
             await outer.rollback()
     finally:
+        await conn.close()
+
+
+@pytest.mark.needs_stack
+@pytest.mark.asyncio
+async def test_source_hash_refresh_invalidates_every_verified_projection_from_that_source():
+    settings = Settings()
+    conn = await asyncpg.connect(dsn=settings.resolved_database_url_host_side)
+    outer = conn.transaction()
+    await outer.start()
+    try:
+        await conn.execute("DROP SCHEMA IF EXISTS authority_registry_hash_refresh_test CASCADE")
+        await conn.execute("CREATE SCHEMA authority_registry_hash_refresh_test")
+        await conn.execute("SET LOCAL search_path TO authority_registry_hash_refresh_test, public")
+        await conn.execute(LEGACY_SCHEMA_SQL)
+        await conn.execute(Path("infra/postgres/migrations/005_authority_registry.sql").read_text())
+
+        original = load_authority_migrations()[0].manifest.operations[0].record
+        neighbour = original.model_copy(
+            update={
+                "canonical_key": "crpc_1973_section_435_hash_refresh_probe",
+                "authority_id_expected": canonical_authority_id(
+                    original.canonical_name, "section", "435"
+                ),
+                "provision": original.provision.model_copy(
+                    update={
+                        "number": "435",
+                        "heading": "Hash refresh neighbour probe",
+                        "canonical_anchor": "/sec-435",
+                        "anchor_aliases": (),
+                    }
+                ),
+            }
+        )
+        initial_manifest = AuthorityMigration.model_validate(
+            {
+                "migration_id": "9001_source_hash_refresh_seed",
+                "schema_version": 1,
+                "operations": [
+                    {"op": "upsert", "record": original.model_dump(mode="json")},
+                    {"op": "upsert", "record": neighbour.model_dump(mode="json")},
+                ],
+            }
+        )
+        await apply_authority_migration(
+            conn,
+            LoadedAuthorityMigration(
+                path="test://9001_source_hash_refresh_seed",
+                manifest=initial_manifest,
+                manifest_sha256="1" * 64,
+            ),
+            embed=_fixture_embed,
+        )
+        await conn.execute("UPDATE documents SET provenance_verified = true")
+        await conn.execute("UPDATE chunks SET provenance_verified = true")
+
+        refreshed = original.model_copy(
+            update={
+                "provenance": original.provenance.model_copy(
+                    update={"raw_sha256": "a" * 64}
+                )
+            }
+        )
+        refresh_manifest = AuthorityMigration.model_validate(
+            {
+                "migration_id": "9002_source_hash_refresh_apply",
+                "schema_version": 1,
+                "operations": [
+                    {
+                        "op": "upsert",
+                        "record": refreshed.model_dump(mode="json"),
+                        "expected_previous_record_sha256": original.record_sha256,
+                    }
+                ],
+            }
+        )
+        await apply_authority_migration(
+            conn,
+            LoadedAuthorityMigration(
+                path="test://9002_source_hash_refresh_apply",
+                manifest=refresh_manifest,
+                manifest_sha256="2" * 64,
+            ),
+            embed=_fixture_embed,
+        )
+        state = await conn.fetchrow(
+            """
+            SELECT bool_and(NOT c.provenance_verified) AS chunks_invalidated,
+                   bool_and(NOT d.provenance_verified) AS documents_invalidated,
+                   COUNT(*) AS projections
+            FROM document_authorities da
+            JOIN chunks c ON c.id = da.chunk_id
+            JOIN documents d ON d.id = da.document_id
+            """
+        )
+        assert state["projections"] == 2
+        assert state["chunks_invalidated"] is True
+        assert state["documents_invalidated"] is True
+    finally:
+        await outer.rollback()
         await conn.close()

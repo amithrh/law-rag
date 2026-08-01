@@ -9,15 +9,38 @@ stand in for it.
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any
 
-from apps.api.legal_issue_plan import MatterPlan, authority_ids_for_passage
+from authority_registry import load_authority_registry
+
+from apps.api.legal_issue_plan import (
+    MatterPlan,
+    _SOURCE_PACK_ACRONYM_ALIASES,
+    _is_mgnrega_integrity_composite_requirement,
+    _passage_heading_matches_exact_section,
+    _passage_heading_matches_section,
+    authority_ids_for_passage,
+)
 from apps.api.customs_logic import (
     customs_assessment_issue,
     customs_classification_issue,
     customs_drawback_issue,
     customs_misdeclaration_issue,
     customs_svb_issue,
+)
+from apps.api.local_authority import (
+    has_explicit_municipal_authority_context,
+    has_qualified_city_corporation,
+    has_private_business_actor_context,
+    has_private_vendor_actor_context,
+    has_specific_hawker_corporation_context,
+)
+from apps.api.incident_facts import (
+    is_acid_attempt_query,
+    is_acid_threat_only_query,
+    is_completed_acid_attack_query,
+    is_positive_acid_chemical_context,
 )
 
 
@@ -26,6 +49,45 @@ _STOPWORDS = {
     "or", "procedure", "relevant", "route", "section", "sections", "source",
     "sources", "state", "the", "to", "where", "with",
 }
+
+
+def _passage_identity_text(passage: dict[str, Any]) -> str:
+    """Use full text internally, or the server-emitted heading in evals."""
+    return str(passage.get("text") or passage.get("heading") or "")
+
+
+def _source_pack_title_matches(
+    passage_title: object,
+    title_patterns: object,
+    *,
+    allow_known_document_suffix: bool = False,
+) -> bool:
+    """Match a reviewed title without rejecting its corpus display suffix.
+
+    India Code documents are often titled with a parenthetical edition marker
+    such as ``(with 2005 amendment)``. The document id and source type are
+    checked by the caller first, so a suffix is safe only when the pack has a
+    known document identity. Packs without document ids retain exact-title
+    matching and cannot use a title suffix as provenance.
+    """
+    raw_actual = re.sub(r"\s+", " ", str(passage_title or "").lower()).strip()
+    for pattern in title_patterns or ():
+        raw_expected = re.sub(r"\s+", " ", str(pattern or "").lower()).strip()
+        actual = re.sub(r"[^a-z0-9]+", " ", raw_actual).strip()
+        expected = re.sub(r"[^a-z0-9]+", " ", raw_expected).strip()
+        if not expected:
+            continue
+        if actual == expected:
+            return True
+        if allow_known_document_suffix and actual.startswith(f"{expected} "):
+            suffix_match = re.match(
+                rf"^{re.escape(raw_expected)}\s+(\([^()\n]{{1,160}}\))$",
+                raw_actual,
+            )
+            if suffix_match:
+                return True
+    return False
+
 
 _FAMILY_PERSONAL_LAW_TRIGGER_TERMS = (
     "matrimonial", "annulment", "annul", "void marriage",
@@ -185,6 +247,551 @@ def _has_fra_trigger_context(q: str) -> bool:
     return _has(q, _FRA_TRIGGER_TERMS)
 
 
+def _is_housing_pet_query(query: str) -> bool:
+    q = str(query or "").lower()
+    housing = _has(q, (
+        "society management", "housing society", "apartment association",
+        "rwa", "cooperative society", "co-operative society",
+    ))
+    pet = re.search(r"\b(?:pet|pets|dog|dogs|cat|cats)\b", q) is not None
+    fine = _has(q, ("fine", "penalty", "approval", "prior approval"))
+    return housing and pet and fine
+
+
+_HOUSING_PET_REVIEWED_PACKS = frozenset({
+    "bmc_pet_guidelines_ban",
+    "bmc_pet_guidelines_bylaws",
+    "bmc_pet_guidelines_license",
+})
+_BMC_PET_DOCUMENT_ID = "bmc-pet-dog-guidelines"
+_BMC_PET_ANCHOR_PREFIX = "bmc-pet-dog-guidelines#"
+_NON_BMC_LOCATION_TERMS = (
+    "delhi", "new delhi", "kolkata", "calcutta", "chennai", "madras",
+    "bengaluru", "bangalore", "hyderabad", "pune", "ahmedabad", "surat",
+    "jaipur", "lucknow", "patna", "ranchi", "gujarat", "delhi ncr",
+    "karnataka", "tamil nadu", "telangana", "west bengal", "rajasthan",
+    "uttar pradesh", "bihar", "jharkhand", "kerala", "assam", "odisha",
+    "orissa", "punjab", "haryana", "madhya pradesh", "chhattisgarh",
+)
+
+
+def _bmc_pet_query_is_jurisdiction_compatible(query: str) -> bool:
+    q = str(query or "").lower()
+    if _has(q, ("mumbai", "bombay", "bmc", "maharashtra")):
+        return True
+    return not _has(q, _NON_BMC_LOCATION_TERMS)
+
+
+def has_housing_pet_authority(
+    passages: list[dict[str, Any]],
+    *,
+    query: str = "",
+) -> bool:
+    """Return whether reviewed, jurisdiction-compatible pet authority exists.
+
+    Cooperative judgments are contextual and cannot satisfy this gate. The
+    exact source-pack/document/anchor tuple prevents a title-only or forged
+    metadata match from unlocking an operative pet-law answer.
+    """
+    for passage in passages:
+        if not isinstance(passage, dict):
+            continue
+        pack = str(passage.get("required_source_pack") or "").strip().lower()
+        title = str(passage.get("title") or "").lower()
+        anchor = str(passage.get("anchor") or "").strip().lower()
+        if (
+            pack in _HOUSING_PET_REVIEWED_PACKS
+            and str(passage.get("document_id") or "").strip() == _BMC_PET_DOCUMENT_ID
+            and str(passage.get("source_type") or "").strip().lower() == "circular"
+            and anchor.startswith(_BMC_PET_ANCHOR_PREFIX)
+            and "bmc" in title
+            and _bmc_pet_query_is_jurisdiction_compatible(query)
+        ):
+            return True
+    return False
+
+
+def canonical_source_gap_handoff(
+    source_gap_event: dict[str, Any] | None,
+    *,
+    route_category: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Return the single safe schema used for every user-visible source gap."""
+    # ``None`` is the intentional no-payload sentinel for callers that need
+    # to construct a safe handoff from a known runtime condition such as a
+    # reranker outage. Any supplied object, however, must satisfy the schema.
+    payload_valid = source_gap_event is None or _is_valid_source_gap_payload(source_gap_event)
+    raw = source_gap_event if isinstance(source_gap_event, dict) and payload_valid else {}
+    if source_gap_event is not None and not payload_valid:
+        # A malformed internal signal must remain observable in diagnostics;
+        # treating it as an ordinary coverage gap hides a contract breach.
+        reason = "invalid_source_gap_payload"
+    gap_kinds = [
+        item.strip()
+        for item in raw.get("gap_kinds", [])
+        if isinstance(item, str) and item.strip()
+    ][:8]
+    if not gap_kinds:
+        gap_kinds = ["retrieval_coverage_gap"]
+    missing_required_sources = []
+    for item in raw.get("missing_required_sources", []):
+        if not isinstance(item, dict):
+            continue
+        required_source = item.get("required_source")
+        kind = item.get("kind")
+        if isinstance(required_source, str) and required_source.strip():
+            normalized = {
+                "required_source": required_source.strip(),
+                "kind": kind.strip() if isinstance(kind, str) and kind.strip() else "missing",
+            }
+            for field in ("authority_id", "source_pack_id", "identity_status", "match_mode"):
+                value = item.get(field)
+                if isinstance(value, str) and value.strip():
+                    normalized[field] = value.strip()
+            anchors = item.get("required_anchor_patterns")
+            if isinstance(anchors, list):
+                normalized["required_anchor_patterns"] = [
+                    value.strip()
+                    for value in anchors[:8]
+                    if isinstance(value, str) and value.strip()
+                ]
+            missing_required_sources.append(normalized)
+    policy = raw.get("policy")
+    if policy not in {
+        "do_not_substitute_neighboring_authority",
+        "separate_conflicting_answer_owners",
+    }:
+        policy = "do_not_substitute_neighboring_authority"
+    return {
+        "has_gap": True,
+        "route_category": route_category,
+        "gap_kinds": gap_kinds,
+        "missing_required_sources": missing_required_sources,
+        "message": (
+            "The required source coverage for this question could not be verified. "
+            "I will not substitute a neighboring law or judgment."
+        ),
+        "handoff": "DLSA/legal aid or a qualified lawyer",
+        "policy": policy,
+        "outcome": "source_gap_handoff",
+        "reason": reason,
+        "safe_handoff_only": True,
+    }
+
+
+def _is_valid_source_gap_payload(payload: Any) -> bool:
+    """Validate the internal source-gap boundary before canonicalization.
+
+    Canonicalization intentionally strips untrusted fields, but it must not
+    erase the fact that an internal producer violated the contract. A valid
+    source-gap signal carries an explicit boolean marker and at least one
+    complete diagnostic: either a gap kind or a concrete required-source
+    record. The caller may already have decided to hand off even when an
+    upstream producer supplied ``has_gap=False``; canonicalization still
+    forces a safe handoff in that case.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("has_gap"), bool):
+        return False
+    gap_kinds = payload.get("gap_kinds", [])
+    if not isinstance(gap_kinds, list):
+        return False
+    if any(not isinstance(kind, str) or not kind.strip() for kind in gap_kinds):
+        return False
+    has_gap_kind_diagnostics = bool(gap_kinds)
+    has_missing_source_diagnostics = False
+    if "missing_required_sources" in payload:
+        missing = payload["missing_required_sources"]
+        if not isinstance(missing, list):
+            return False
+        for item in missing:
+            if not isinstance(item, dict):
+                return False
+            if not isinstance(item.get("required_source"), str) or not item["required_source"].strip():
+                return False
+            if "kind" in item and (not isinstance(item["kind"], str) or not item["kind"].strip()):
+                return False
+            if "required_anchor_patterns" in item:
+                anchors = item["required_anchor_patterns"]
+                if not isinstance(anchors, list):
+                    return False
+                if any(not isinstance(anchor, str) or not anchor.strip() for anchor in anchors):
+                    return False
+        has_missing_source_diagnostics = bool(missing)
+    if not (has_gap_kind_diagnostics or has_missing_source_diagnostics):
+        return False
+    for field in ("route_category", "policy", "reason"):
+        if field in payload and not isinstance(payload[field], str):
+            return False
+    return True
+
+
+def _constitution_article_numbers(source: str) -> set[str]:
+    lower = str(source or "").lower()
+    numbers: set[str] = set()
+    for match in re.finditer(
+        r"\barticles?\s+[0-9]+[a-z]?"
+        r"(?:\s*(?:,|and|&|/)\s*(?:and\s+)?[0-9]+[a-z]?)*\b",
+        lower,
+    ):
+        numbers.update(re.findall(r"[0-9]+[a-z]?", match.group(0)))
+    return numbers
+
+
+def _is_split_constitutional_descriptor(
+    source: str,
+    *,
+    source_pack_id: str | None = None,
+) -> bool:
+    lower = str(source or "").lower()
+    return len(_constitution_article_numbers(lower)) > 1 and (
+        bool(re.search(r"\bconstitut(?:ion|ional)\b", lower))
+        or bool(source_pack_id and source_pack_id.startswith("constitution_"))
+    )
+
+
+def _is_deferred_date_regime_entry(plan: MatterPlan, entry: Any) -> bool:
+    return (
+        _plan_field(entry, "note") == "date_dependent_regime_choose_by_incident_date"
+        and _plan_field(plan, "incident_date_status") in {
+            "needed_for_criminal_regime",
+            "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc",
+        }
+        and _date_dependent_regime_packs_ready(
+            str(_plan_field(entry, "source", "") or ""),
+            _plan_field(plan, "retrieval_sources", ()) or (),
+        )
+    )
+
+
+def matter_plan_integrity_gap(
+    plan: MatterPlan | None,
+    query: str,
+) -> dict[str, Any] | None:
+    """Reject plans that cannot prove where an operative authority comes from.
+
+    A ledger entry is not evidence by itself. Every enforceable entry must be
+    bound to a named source pack with document identity, source type, and any
+    required provision anchors. This check runs before the answer layer so a
+    generic template or LLM cannot turn an incomplete plan into advice.
+    """
+    if plan is None or plan.answer_policy.fallback_reason == "multiple_plan_owners":
+        return None
+
+    if not plan.authority_ledger:
+        return {
+            "has_gap": True,
+            "gap_kinds": ["empty_authority_ledger"],
+            "missing_required_sources": [{
+                "required_source": plan.primary_label or plan.primary_issue,
+                "kind": "empty_authority_ledger",
+                "match_mode": "matter_plan_integrity",
+            }],
+            "message": "The matter plan has no authority obligations.",
+            "handoff": "DLSA/legal aid or a qualified lawyer",
+            "policy": "do_not_substitute_neighboring_authority",
+        }
+
+    active_entries = []
+    for entry in plan.authority_ledger:
+        if not is_active_plan_authority_entry(entry, plan=plan, query=query):
+            continue
+        active_entries.append(entry)
+
+    if not active_entries:
+        # A plan may legitimately contain only facts, documents, local route
+        # guidance, or a date-dependent regime wrapper. Later source-gap and
+        # reviewed-workflow gates still decide whether an answer is safe.
+        return None
+
+    packs = {source.source_pack_id: source for source in plan.retrieval_sources}
+    missing: list[dict[str, Any]] = []
+    for entry in active_entries:
+        # A combined constitutional descriptor can be satisfied by multiple
+        # exact Constitution packs (for example Article 21 plus Article 22).
+        # It must be checked against retrieved passages, not forced into one
+        # source-pack identity at plan-build time.
+        if entry.source_pack_id is None and _is_split_constitutional_descriptor(
+            entry.source,
+            source_pack_id=entry.source_pack_id,
+        ):
+            continue
+        if (
+            entry.source_pack_id is None
+            and "prevention of corruption" in str(entry.source or "").lower()
+            and "bns" in str(entry.source or "").lower()
+        ):
+            # This route obligation is deliberately either/or. Its reviewed
+            # PCA/BNS pack identity is checked against the retrieved passages
+            # by missing_plan_authorities below rather than guessed at plan
+            # construction time.
+            continue
+        # An unknown criminal incident date intentionally keeps both regime
+        # candidates in the retrieval plan. The entry is a composite
+        # obligation, so it has no single source_pack_id by design. Require
+        # both reviewed packs here, then let missing_plan_authorities enforce
+        # the date-sensitive evidence gate against the retrieved passages.
+        if _is_deferred_date_regime_entry(plan, entry):
+            continue
+        pack = packs.get(entry.source_pack_id) if entry.source_pack_id else None
+        failure: str | None = None
+        if pack is None:
+            failure = "missing_source_pack_binding"
+        elif not pack.doc_ids:
+            failure = "missing_document_identity"
+        elif not pack.source_types:
+            failure = "missing_source_type_binding"
+        elif entry.required_anchor_patterns and not any(
+            _source_pack_anchor_matches(str(anchor), str(pattern))
+            for pattern in entry.required_anchor_patterns
+            for anchor in pack.anchor_patterns
+        ):
+            failure = "missing_required_anchor_binding"
+        elif entry.registry_key and entry.authority_id not in pack.authority_ids:
+            failure = "missing_registry_authority_binding"
+        if failure:
+            missing.append({
+                "required_source": entry.source,
+                "authority_id": entry.authority_id,
+                "source_pack_id": entry.source_pack_id,
+                "identity_status": entry.identity_status,
+                "required_anchor_patterns": list(entry.required_anchor_patterns),
+                "kind": failure,
+                "match_mode": "matter_plan_integrity",
+            })
+
+    if not missing:
+        return None
+    return {
+        "has_gap": True,
+        "gap_kinds": sorted({str(item["kind"]) for item in missing}),
+        "missing_required_sources": missing,
+        "message": "One or more enforceable authorities are not bound to exact retrievable source evidence.",
+        "handoff": "DLSA/legal aid or a qualified lawyer",
+        "policy": "do_not_substitute_neighboring_authority",
+    }
+
+
+def _incident_authority_passage_matches(
+    passage: dict[str, Any],
+    *,
+    title_terms: tuple[str, ...],
+    section_terms: tuple[str, ...],
+    source_pack_terms: tuple[str, ...],
+    document_ids: tuple[str, ...],
+) -> bool:
+    """Match an incident authority only with complete reviewed provenance.
+
+    Incident safety gates cannot infer that a neighboring chunk is the right
+    statute.  Production passages carry a numeric database document id and a
+    canonical anchor; fixtures may use the canonical document slug instead.
+    Both forms are accepted, but an absent or clearly wrong identity is not.
+    """
+    title = str(passage.get("title") or "").lower()
+    if not any(term in title for term in title_terms):
+        return False
+    source_type = str(passage.get("source_type") or "").strip().lower()
+    if source_type != "bare_act":
+        return False
+    source_pack = str(
+        passage.get("required_source_pack")
+        or passage.get("_required_source_pack")
+        or ""
+    ).strip().lower()
+    if not source_pack or source_pack not in source_pack_terms:
+        return False
+    raw_document_id = passage.get("document_id")
+    if raw_document_id is None or not str(raw_document_id).strip():
+        return False
+    anchor = str(passage.get("anchor") or "").strip().lower()
+    expected_documents = {str(item).strip().lower() for item in document_ids if item}
+    if not expected_documents:
+        return False
+    anchor_document = anchor.split("/", 1)[0]
+    if anchor_document not in expected_documents:
+        return False
+    document_id = str(raw_document_id).strip().lower()
+    # Retrieved rows expose an integer DB id. Unit/eval fixtures sometimes
+    # expose the stable document slug; reject non-numeric foreign identities.
+    if document_id not in expected_documents:
+        return False
+    text = _passage_identity_text(passage)
+    blob = " ".join(
+        str(passage.get(field) or "").lower()
+        for field in ("anchor", "heading", "required_source_pack")
+    )
+    return any(
+        _section_anchor_matches(blob, section, passage_text=text)
+        for section in section_terms
+    )
+
+
+def _missing_acid_chemical_authorities(
+    *,
+    query: str,
+    route_category: str,
+    passages: list[dict[str, Any]],
+    legal_regime: str | None,
+) -> list[dict[str, Any]]:
+    """Require both the offence and FIR authority for emergency acid routes.
+
+    Matter-plan date deferral is useful for intake, but it must not turn a
+    retrieved BNS-only or procedure-only passage into a completed emergency
+    answer. When the incident date is unknown, both current and legacy
+    candidates must be available so the answer can state the regime choice
+    without silently choosing one.
+    """
+    if (
+        route_category not in {"police_fir", "criminal_general"}
+        or not is_positive_acid_chemical_context(query)
+    ):
+        return []
+    threat_only = is_acid_threat_only_query(query)
+    attempted = is_acid_attempt_query(query)
+    completed = is_completed_acid_attack_query(query)
+
+    current = "current_bns_bnss_bsa_for_post_2024_incident"
+    legacy = "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+    regimes = (
+        ("current",)
+        if legal_regime == current
+        else ("legacy",)
+        if legal_regime == legacy
+        else ("current", "legacy")
+    )
+    lower = query.lower()
+    if threat_only:
+        offence_specs = {
+            "current": (("bharatiya nyaya", "bns"), ("351",), ("bns_2023_acid_attack",)),
+            "legacy": (("indian penal", "ipc"), ("506",), ("ipc_1860_acid_attack",)),
+        }
+        offence_label = "criminal-intimidation authority for the acid/chemical threat"
+    elif attempted and not completed:
+        offence_specs = {
+            "current": (("bharatiya nyaya", "bns"), ("62", "124"), ("bns_2023_acid_attack",)),
+            "legacy": (("indian penal", "ipc"), ("511", "326a", "326b"), ("ipc_1860_acid_attack",)),
+        }
+        offence_label = "attempted acid/chemical offence authority"
+    elif "acid" in lower:
+        offence_specs = {
+            "current": (("bharatiya nyaya", "bns"), ("124",), ("bns_2023_acid_attack",)),
+            "legacy": (("indian penal", "ipc"), ("326a",), ("ipc_1860_acid_attack",)),
+        }
+        offence_label = "acid-attack offence authority"
+    else:
+        offence_specs = {
+            "current": (("bharatiya nyaya", "bns"), ("115", "117", "118", "124"), ("bns_2023_acid_attack",)),
+            "legacy": (("indian penal", "ipc"), ("323", "324", "325", "326", "326a"), ("ipc_1860_acid_attack",)),
+        }
+        offence_label = "chemical-exposure/hurt authority"
+    procedure_specs = {
+        "current": (("bharatiya nagarik suraksha", "bnss"), ("173", "184", "193"), ("bnss_2023_fir_information_acid",)),
+        "legacy": (("code of criminal procedure", "crpc"), ("154", "156", "164a"), ("crpc_1973_fir_information_acid",)),
+    }
+
+    missing: list[dict[str, Any]] = []
+    for regime in regimes:
+        title_terms, sections, source_pack_terms = offence_specs[regime]
+        expected_documents = ("bns-2023",) if regime == "current" else ("ipc-1860",)
+        if attempted and regime == "legacy":
+            # IPC Section 511 supplies the attempt rule; Section 326A/326B
+            # supplies the underlying acid/hurt authority. Either canonical
+            # underlying section is acceptable when the pack contains it.
+            required_section_groups = (("511",), ("326a", "326b"))
+        else:
+            required_section_groups = (
+                tuple((section,) for section in sections)
+                if attempted
+                else (sections,)
+            )
+        offence_present = all(
+            any(
+                _incident_authority_passage_matches(
+                    passage,
+                    title_terms=title_terms,
+                    section_terms=section_group,
+                    source_pack_terms=source_pack_terms,
+                    document_ids=expected_documents,
+                )
+                for passage in passages
+                if isinstance(passage, dict)
+            )
+            for section_group in required_section_groups
+        )
+        if not offence_present:
+            missing.append({
+                "required_source": f"{regime} {offence_label}",
+                "kind": "national_criminal_source_gap",
+                "match_mode": "acid_incident_authority_pair",
+                "required_anchor_patterns": [f"/sec-{section}" for section in sections],
+            })
+        title_terms, sections, source_pack_terms = procedure_specs[regime]
+        if not any(
+            _incident_authority_passage_matches(
+                passage,
+                title_terms=title_terms,
+                section_terms=sections,
+                source_pack_terms=source_pack_terms,
+                document_ids=("bnss-2023",) if regime == "current" else ("crpc-1973",),
+            )
+            for passage in passages
+            if isinstance(passage, dict)
+        ):
+            missing.append({
+                "required_source": f"{regime} FIR/medical-care procedure authority",
+                "kind": "national_criminal_source_gap",
+                "match_mode": "acid_incident_authority_pair",
+                "required_anchor_patterns": [f"/sec-{section}" for section in sections],
+            })
+    wife_aggressor_context = (
+        any(term in lower for term in (
+            "my wife", "wife slapped", "wife hit", "wife beat", "wife beats",
+            "wife beating", "wife is beating", "wife took", "wife threw",
+            "wife kicked", "wife threatens", "wife threatened", "wife punched",
+            "wife assaulted", "wife attacked",
+        ))
+        and any(term in lower for term in (
+            "slapped me", "hit me", "beat me", "beats me", "hitting me",
+            "threatens me", "threatened me", "threatening me", "abuses me",
+            "punched me", "punching me", "assaulted me", "assault me",
+            "attacked me", "attacking me", "threatened to kill me",
+            "threatens to kill me", "threatened to murder me", "tried to kill me",
+            "forces sex", "forcing sex", "force sex", "forced sex",
+            "sex without consent", "sexual assault", "assaulted me sexually",
+            "my salary", "my atm", "atm card", "threatened me with acid",
+        ))
+        and "my husband" not in lower
+        and "husband beat" not in lower
+        and "husband hit" not in lower
+    )
+    inlaw_context = any(term in lower for term in (
+        "mother in law", "mother-in-law", "father in law", "father-in-law",
+        "in law", "in-law", "sasural", "husband", "wife", "spouse",
+        "pati", "patni", "domestic", "domestic relationship", "matrimonial",
+        "shared household",
+    )) and not wife_aggressor_context
+    if inlaw_context:
+        for section in ("3", "18"):
+            if not any(
+                _incident_authority_passage_matches(
+                    passage,
+                    title_terms=("domestic violence", "protection of women"),
+                    section_terms=(section,),
+                    source_pack_terms=("pwdva_2005",),
+                    document_ids=("domestic-violence-2005-official",),
+                )
+                for passage in passages
+                if isinstance(passage, dict)
+            ):
+                missing.append({
+                    "required_source": f"PWDVA 2005 Section {section} domestic-safety authority",
+                    "kind": "national_family_source_gap",
+                    "match_mode": "acid_domestic_authority_pair",
+                    "required_anchor_patterns": [f"/sec-{section}"],
+                })
+    return missing
+
+
 def build_source_gap_event(
     *,
     query: str,
@@ -192,12 +799,13 @@ def build_source_gap_event(
     required_sources: list[str],
     passages: list[dict[str, Any]],
     plan: MatterPlan | None = None,
+    legal_regime: str | None = None,
 ) -> dict[str, Any] | None:
     if (
         plan is not None
         and plan.answer_policy.fallback_reason == "multiple_plan_owners"
     ):
-        return {
+        return canonical_source_gap_handoff({
             "has_gap": True,
             "route_category": route_category,
             "gap_kinds": ["answer_owner_ambiguity"],
@@ -213,16 +821,134 @@ def build_source_gap_event(
             "conflicting_primary_owners": list(
                 plan.answer_policy.conflicting_primary_owners
             ),
-        }
-    missing = (
-        missing_plan_authorities(plan=plan, passages=passages, query=query)
-        if plan is not None
-        else missing_required_authorities(
+        }, route_category=route_category, reason="answer_owner_ambiguity")
+    integrity_gap = matter_plan_integrity_gap(plan, query)
+    if integrity_gap is not None:
+        # Preserve the route's material local-authority classification when a
+        # plan-integrity failure happens first. Without this enrichment the
+        # handoff remains fail-closed, but the UI cannot offer the bounded
+        # jurisdiction intake that is safe for a local gap.
+        local_route_missing = [
+            item for item in missing_required_authorities(
+                required_sources=required_sources,
+                passages=passages,
+                query=query,
+            )
+            if item.get("kind") == "state_or_local_authority_gap"
+        ]
+        if local_route_missing:
+            by_source = {
+                str(item.get("required_source") or ""): item
+                for item in local_route_missing
+            }
+            enriched_missing: list[dict[str, Any]] = []
+            consumed: set[str] = set()
+            for item in integrity_gap.get("missing_required_sources", []):
+                source = str(item.get("required_source") or "")
+                local_item = by_source.get(source)
+                if local_item is not None:
+                    enriched_missing.append({**item, "kind": local_item["kind"]})
+                    consumed.add(source)
+                else:
+                    enriched_missing.append(item)
+            enriched_missing.extend(
+                item for source, item in by_source.items() if source not in consumed
+            )
+            integrity_gap = {
+                **integrity_gap,
+                "gap_kinds": sorted({
+                    *integrity_gap.get("gap_kinds", []),
+                    "state_or_local_authority_gap",
+                }),
+                "missing_required_sources": enriched_missing,
+            }
+        return canonical_source_gap_handoff(
+            integrity_gap,
+            route_category=route_category,
+            reason="matter_plan_integrity_gap",
+        )
+
+    incident_missing = _missing_acid_chemical_authorities(
+        query=query,
+        route_category=route_category,
+        passages=passages,
+        legal_regime=legal_regime,
+    )
+    if incident_missing:
+        return canonical_source_gap_handoff({
+            "has_gap": True,
+            "route_category": route_category,
+            "gap_kinds": ["national_criminal_source_gap"],
+            "missing_required_sources": incident_missing,
+            "message": (
+                "The incident-date offence and FIR authorities were not both verified. "
+                "I will not choose the BNS/BNSS or IPC/CrPC route from a partial source window."
+            ),
+            "handoff": "DLSA/legal aid or a qualified criminal lawyer",
+            "policy": "do_not_substitute_neighboring_authority",
+        }, route_category=route_category, reason="acid_incident_authority_gap")
+
+    # A housing-society pet fine is controlled by the society's bye-laws and
+    # state/city authority, not by a generic consumer statute or a contextual
+    # cooperative judgment. If the source window does not contain the exact
+    # reviewed pet authority, fail closed before a neighboring source can
+    # become the answer's legal basis.
+    if (
+        route_category == "consumer"
+        and _is_housing_pet_query(query)
+        and not has_housing_pet_authority(passages, query=query)
+    ):
+        return canonical_source_gap_handoff(
+            {
+                "has_gap": True,
+                "route_category": route_category,
+                "gap_kinds": ["state_or_local_authority_gap"],
+                "missing_required_sources": [{
+                    "required_source": (
+                        "state/city cooperative-housing bye-laws or pet-specific authority"
+                    ),
+                    "kind": "state_or_local_authority_gap",
+                    "match_mode": "housing_pet_source_guard",
+                }],
+                "message": (
+                    "The state or city housing rule for this pet fine was not found. "
+                    "I will not use a generic consumer statute as a substitute."
+                ),
+                "handoff": "Registrar of Cooperative Societies, local housing authority, or DLSA/legal aid",
+                "policy": "do_not_substitute_neighboring_authority",
+            },
+            route_category=route_category,
+            reason="housing_pet_source_gap",
+        )
+    if plan is not None:
+        missing = missing_plan_authorities(plan=plan, passages=passages, query=query)
+        # A plan may intentionally keep generic local-process labels out of
+        # the legal-authority ledger. They are still a material route
+        # requirement when the query needs a state/city procedure. Add only
+        # those local gaps here so a national statute cannot silently turn
+        # unverified forms, forums, or deadlines into an operative answer.
+        route_missing = missing_required_authorities(
             required_sources=required_sources,
             passages=passages,
             query=query,
         )
-    )
+        known_sources = {str(item.get("required_source") or "") for item in missing}
+        missing.extend(
+            item for item in route_missing
+            if (
+                item.get("kind") == "state_or_local_authority_gap"
+                or _is_mgnrega_integrity_composite_requirement(
+                    str(item.get("required_source") or "")
+                )
+            )
+            and str(item.get("required_source") or "") not in known_sources
+        )
+    else:
+        missing = missing_required_authorities(
+            required_sources=required_sources,
+            passages=passages,
+            query=query,
+        )
     if not missing:
         return None
 
@@ -272,7 +998,7 @@ def build_source_gap_event(
             "taking action."
         )
 
-    return {
+    return canonical_source_gap_handoff({
         "has_gap": True,
         "route_category": route_category,
         "gap_kinds": kinds,
@@ -280,7 +1006,54 @@ def build_source_gap_event(
         "message": message,
         "handoff": "DLSA/legal aid, a qualified lawyer, or the relevant court/forum",
         "policy": "do_not_substitute_neighboring_authority",
-    }
+    }, route_category=route_category, reason="required_source_gap")
+
+
+_MGNREGA_INTEGRITY_PACK_DOCUMENTS = {
+    "prevention_corruption_1988_mgnrega_records": "prevention-of-corruption-1988",
+    "bns_2023_mgnrega_forgery_cheating": "bns-2023",
+}
+
+
+def _verified_mgnrega_integrity_source_match(
+    required_source: str,
+    passages: list[dict[str, Any]],
+    *,
+    query: str,
+) -> dict[str, Any] | None:
+    """Match the MGNREGA BNS/PCA either-or source with pack identity.
+
+    The route requirement has no single legal owner. It must therefore be
+    checked outside the normal one-ledger-entry binding path, but accepting a
+    title/anchor-only match here would recreate the provenance hole that the
+    MatterPlan is meant to prevent.
+    """
+    for passage in passages or []:
+        if not isinstance(passage, dict):
+            continue
+        pack_ids = set(_passage_source_pack_ids(passage))
+        matching_pack_ids = pack_ids.intersection(_MGNREGA_INTEGRITY_PACK_DOCUMENTS)
+        if len(matching_pack_ids) != 1:
+            continue
+        pack_id = next(iter(matching_pack_ids))
+        document_id = str(passage.get("document_id") or "").strip().lower()
+        source_type = str(passage.get("source_type") or "").strip()
+        anchor = str(passage.get("anchor") or "").strip()
+        if (
+            not document_id
+            or document_id != _MGNREGA_INTEGRITY_PACK_DOCUMENTS[pack_id]
+            or source_type.lower() != "bare_act"
+            or not anchor
+        ):
+            continue
+        if _canonical_match(
+            required_source,
+            _item_blob(passage),
+            query=query,
+            passage_text=_passage_identity_text(passage),
+        ):
+            return passage
+    return None
 
 
 def missing_plan_authorities(
@@ -292,15 +1065,46 @@ def missing_plan_authorities(
     """Find missing authorities using MatterPlan IDs as the primary key."""
     missing: list[dict[str, Any]] = []
     for entry in plan.authority_ledger:
-        requirement_type = classify_required_source_requirement(entry.source)
-        if requirement_type == "fact_or_document_requirement":
+        if (
+            _plan_field(entry, "note") == "category_dependent_sc_article_341_vs_st_article_342"
+            and not _contains_concrete_authority_name(
+                str(_plan_field(entry, "source", "") or "")
+            )
+        ):
             continue
-        if entry.conditional:
-            if entry.note == "category_dependent_sc_article_341_vs_st_article_342":
-                continue
-            if not _should_enforce_requirement(entry.source, "conditional_authority", query):
-                continue
-        elif not entry.must_cite:
+        if not is_active_plan_authority_entry(entry, plan=plan, query=query):
+            continue
+        if (
+            _is_split_constitutional_descriptor(
+                entry.source,
+                source_pack_id=entry.source_pack_id,
+            )
+            and _constitution_article_requirement_match(
+                entry.source,
+                passages,
+                retrieval_sources=plan.retrieval_sources,
+            )
+            is not None
+        ):
+            # Constitutional composite obligations may be satisfied by exact
+            # Article passages from separate reviewed packs. The aggregate
+            # matcher is the same rule used by best_source_match().
+            continue
+        if (
+            "prevention of corruption" in str(entry.source or "").lower()
+            and "bns" in str(entry.source or "").lower()
+            and _verified_mgnrega_integrity_source_match(
+                entry.source,
+                passages,
+                query=query,
+            )
+            is not None
+        ):
+            # This route obligation is deliberately either/or. The route may
+            # retrieve the reviewed PCA pack without the BNS sibling, so a
+            # plan entry must not reject a valid PCA passage before the
+            # composite matcher runs. The helper above still requires pack,
+            # document, source type, and exact section identity.
             continue
         if any(
             _passage_satisfies_plan_entry(plan, entry, passage)
@@ -308,7 +1112,13 @@ def missing_plan_authorities(
             if isinstance(passage, dict)
         ):
             continue
-        match_mode = "authority_id"
+        match_mode = (
+            "legacy_provisional"
+            if entry.source_pack_id
+            and not entry.registry_key
+            and entry.identity_status == "provisional"
+            else "authority_id"
+        )
         missing.append({
             "required_source": entry.source,
             "authority_id": entry.authority_id,
@@ -318,7 +1128,37 @@ def missing_plan_authorities(
             "match_mode": match_mode,
             "kind": source_gap_kind(entry.source, query=query),
         })
-    return missing
+    deduped: list[dict[str, Any]] = []
+    # Keep distinct section obligations visible even when they share one
+    # reviewed source pack. Only identical source/pack/kind/anchor rows are
+    # duplicates; collapsing by source pack alone can hide a missing section
+    # from the caller and weaken the fail-closed gate.
+    seen: set[tuple[str, str, str, tuple[str, ...], str]] = set()
+    for item in missing:
+        key = (
+            str(item.get("required_source") or ""),
+            str(item.get("source_pack_id") or ""),
+            str(item.get("kind") or ""),
+            tuple(str(anchor) for anchor in (item.get("required_anchor_patterns") or ())),
+            str(item.get("authority_id") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _anchor_provision_token(anchor: object) -> str | None:
+    """Return the normalized provision token encoded in a reviewed anchor."""
+    match = re.search(
+        r"/(?:sec(?:tion)?|article|order|clause)-([0-9][0-9a-z()./-]*)",
+        str(anchor or "").lower(),
+    )
+    if match is None:
+        return None
+    token = re.sub(r"[^0-9a-z]+", "", match.group(1))
+    return token or None
 
 
 def _passage_satisfies_plan_entry(
@@ -326,27 +1166,400 @@ def _passage_satisfies_plan_entry(
     entry: Any,
     passage: dict[str, Any],
 ) -> bool:
-    authority_ids = authority_ids_for_passage(
-        plan,
-        title=str(passage.get("title") or ""),
-        anchor=str(passage.get("anchor") or ""),
-        source_pack_id=passage.get("required_source_pack"),
-        source_type=passage.get("source_type"),
-    )
+    # Some high-volume Acts are covered by reviewed route source packs before
+    # they receive an immutable authority-registry row.  Those packs still
+    # carry an exact document identity and section anchors.  Treating their
+    # empty DB authority mapping as an automatic miss creates a false source
+    # gap even when the exact reviewed pack is present.  Keep registry-owned
+    # obligations on the stricter explicit-ID path below.
+    if (
+        entry.source_pack_id
+        and not entry.registry_key
+        and entry.note != "registry_workflow_authority"
+        and entry.source_pack_id in _passage_source_pack_ids(passage)
+    ):
+        source = next(
+            (
+                candidate
+                for candidate in plan.retrieval_sources
+                if candidate.source_pack_id == entry.source_pack_id
+            ),
+            None,
+        )
+        if source is None or not _source_pack_title_matches(
+            passage.get("title"),
+            source.title_patterns,
+            allow_known_document_suffix=bool(source.doc_ids),
+        ):
+            return False
+        passage_document_id = passage.get("document_id")
+        if (
+            passage_document_id is not None
+            and str(passage_document_id).strip()
+            and str(passage_document_id).strip().lower()
+            not in {str(doc_id).strip().lower() for doc_id in source.doc_ids if doc_id}
+        ):
+            return False
+        if (
+            entry.source_pack_id == "pwdva_2005"
+            and "domestic-violence-2005-official" in {
+                str(doc_id).strip().lower() for doc_id in source.doc_ids if doc_id
+            }
+            and str(passage_document_id or "").strip().lower()
+            != "domestic-violence-2005-official"
+        ):
+            return False
+        # The provisional bypass is still an identity proof, not a title
+        # heuristic. Missing pack metadata or passage type must fail closed.
+        passage_source_type = str(passage.get("source_type") or "")
+        if (
+            not source.source_types
+            or not passage_source_type
+            or passage_source_type not in source.source_types
+        ):
+            return False
+        anchor = str(passage.get("anchor") or "").lower()
+        display_anchor = str(passage.get("display_anchor") or "").lower()
+        if not source.doc_ids or not anchor:
+            return False
+        document_prefix = re.split(r"[/#]", anchor, maxsplit=1)[0]
+        if not document_prefix or document_prefix not in source.doc_ids:
+            return False
+        required_anchors = tuple(entry.required_anchor_patterns or ())
+        # A reviewed source pack may deliberately use a corpus anchor that
+        # differs from the human label (for example Constitution Article 21
+        # is stored under ``/sec-21``). Keep only the reviewed anchor with
+        # the same provision token. A multi-section pack must not let one
+        # provision satisfy another ledger entry from that pack.
+        if entry.section:
+            section_match = re.search(
+                r"\b(?:section|sec\.?|article|order|clause)\s+"
+                r"([0-9][0-9a-z()./-]*)",
+                entry.section,
+                flags=re.IGNORECASE,
+            )
+            if section_match:
+                token = section_match.group(1).lower()
+                token = token.replace("(", "-").replace(")", "")
+                token = re.sub(r"[^0-9a-z-]+", "-", token).strip("-")
+                kind = entry.section.split(None, 1)[0].lower().rstrip(".")
+                prefix = {
+                    "section": "sec",
+                    "sec": "sec",
+                    "article": "article",
+                    "order": "order",
+                    "clause": "clause",
+                }.get(kind, "sec")
+                normalized_token = re.sub(r"[^0-9a-z]+", "", token)
+                matching_reviewed_anchors = tuple(
+                    pattern
+                    for pattern in required_anchors
+                    if _anchor_provision_token(pattern) == normalized_token
+                )
+                required_anchors = matching_reviewed_anchors or (f"/{prefix}-{token}",)
+        if not required_anchors:
+            return True
+        # The pack itself is reviewed metadata. For a non-registry pack its
+        # exact pack anchor is sufficient identity evidence; requiring a
+        # passage heading here would turn split/legacy corpus anchors into a
+        # false gap. Registry-owned entries still use the stricter ID path
+        # below.
+        return any(
+            _source_pack_anchor_matches(anchor, pattern)
+            or _source_pack_anchor_matches(display_anchor, pattern)
+            or _plan_anchor_matches(
+                    anchor,
+                    pattern,
+                    passage_text=_passage_identity_text(passage),
+                )
+            or _plan_anchor_matches(
+                    display_anchor,
+                    pattern,
+                    passage_text=_passage_identity_text(passage),
+                )
+            for pattern in required_anchors
+        )
+
+    source_pack_authority_ids = _passage_source_pack_authority_ids(passage)
+    if entry.source_pack_id and entry.source_pack_id in source_pack_authority_ids:
+        authority_ids = list(source_pack_authority_ids[entry.source_pack_id])
+    elif entry.source_pack_id and source_pack_authority_ids and (
+        entry.source_pack_id in _passage_source_pack_ids(passage)
+    ):
+        # A merged chunk is annotated for this reviewed pack but has no
+        # authority evidence for it. Do not borrow a registry ID from another
+        # alias on the same physical chunk.
+        authority_ids = []
+    elif "authority_ids" in passage:
+        # Production passages are emitted by _make_passages and always carry
+        # this key. An empty list means the database did not attach the
+        # registry mapping; title/anchor resemblance is not identity proof.
+        authority_ids = [str(value) for value in (passage.get("authority_ids") or [])]
+    else:
+        # Legacy unit fixtures may omit metadata entirely; retain inference
+        # there without allowing it into the serving path above.
+        authority_ids = authority_ids_for_passage(
+            plan,
+            title=str(passage.get("title") or ""),
+            anchor=str(passage.get("anchor") or ""),
+            text=_passage_identity_text(passage),
+            source_pack_id=passage.get("required_source_pack"),
+            source_type=passage.get("source_type"),
+        )
     if entry.authority_id not in authority_ids:
         return False
+    if entry.registry_key:
+        if not entry.source_pack_id:
+            return False
+        if str(entry.source_pack_id) not in _passage_source_pack_ids(passage):
+            return False
+        registry_source = next(
+            (
+                candidate
+                for candidate in getattr(plan, "retrieval_sources", ())
+                if str(getattr(candidate, "source_pack_id", "")) == str(entry.source_pack_id)
+            ),
+            None,
+        )
+        if registry_source is None:
+            return False
+        passage_document_id = passage.get("document_id")
+        if (
+            passage_document_id is not None
+            and str(passage_document_id).strip()
+            and str(passage_document_id).strip().lower()
+            not in {
+                str(doc_id).strip().lower()
+                for doc_id in (getattr(registry_source, "doc_ids", ()) or ())
+                if doc_id
+            }
+        ):
+            return False
+        passage_source_type = str(passage.get("source_type") or "")
+        if (
+            not passage_source_type
+            or passage_source_type not in tuple(getattr(registry_source, "source_types", ()) or ())
+        ):
+            return False
+        anchor = str(passage.get("anchor") or "")
+        document_prefix = re.split(r"[/#]", anchor, maxsplit=1)[0]
+        if (
+            not document_prefix
+            or document_prefix not in {
+                str(doc_id) for doc_id in (getattr(registry_source, "doc_ids", ()) or ())
+            }
+        ):
+            return False
+        if not _source_pack_title_matches(
+            passage.get("title"),
+            getattr(registry_source, "title_patterns", ()) or (),
+            allow_known_document_suffix=bool(getattr(registry_source, "doc_ids", ()) or ()),
+        ):
+            return False
+        record = next(
+            (
+                candidate
+                for candidate in load_authority_registry().records
+                if candidate.canonical_key == entry.registry_key
+            ),
+            None,
+        )
+        if record is not None:
+            expected_snapshot = getattr(record, "consolidation_as_at", None)
+            if expected_snapshot is not None and str(passage.get("as_at") or "") != str(
+                expected_snapshot
+            ):
+                return False
     required_anchors = tuple(entry.required_anchor_patterns or ())
     if not required_anchors:
         return True
     anchor = str(passage.get("anchor") or "").lower()
-    return any(_plan_anchor_matches(anchor, pattern) for pattern in required_anchors)
+    return any(
+        _plan_anchor_matches(
+            anchor,
+            pattern,
+            passage_text=_passage_identity_text(passage),
+        )
+        for pattern in required_anchors
+    )
 
 
-def _plan_anchor_matches(anchor: str, pattern: str) -> bool:
+def _passage_source_pack_ids(passage: dict[str, Any]) -> tuple[str, ...]:
+    """Read the primary reviewed pack and any aliases from a passage."""
+    values: list[object] = [
+        passage.get("required_source_pack"),
+        passage.get("_required_source_pack"),
+    ]
+    for key in ("required_source_packs", "_required_source_packs"):
+        aliases = passage.get(key)
+        if isinstance(aliases, (list, tuple, set)):
+            values.extend(aliases)
+        elif aliases is not None:
+            values.append(aliases)
+    return tuple(dict.fromkeys(
+        str(value).strip()
+        for value in values
+        if str(value or "").strip()
+    ))
+
+
+def _passage_source_pack_authority_ids(passage: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+    raw_mapping = passage.get("required_source_pack_authority_ids") or passage.get(
+        "_required_source_pack_authority_ids"
+    )
+    if not isinstance(raw_mapping, dict):
+        return {}
+    out: dict[str, tuple[str, ...]] = {}
+    for raw_pack_id, raw_ids in raw_mapping.items():
+        pack_id = str(raw_pack_id or "").strip()
+        if not pack_id:
+            continue
+        values = raw_ids if isinstance(raw_ids, (list, tuple, set)) else (raw_ids,)
+        authority_ids = tuple(dict.fromkeys(
+            str(value).strip()
+            for value in values
+            if str(value or "").strip()
+        ))
+        if authority_ids:
+            out[pack_id] = authority_ids
+    return out
+
+
+def _plan_anchor_matches(
+    anchor: str,
+    pattern: str,
+    *,
+    passage_text: str | None = None,
+) -> bool:
     needle = str(pattern or "").lower()
-    if needle.startswith("/sec-"):
-        return re.search(rf"{re.escape(needle)}(?=@|-|__|$)", anchor) is not None
+    if not _valid_anchor_snapshot(anchor):
+        return False
+    if needle.startswith(("/sec-", "/article-", "/clause-", "/order-", "/rule-")):
+        official_suffix = "" if needle.endswith("-official") else "(?:-official)?"
+        suffix_boundary = r"(?:@[0-9]{4}-[0-9]{2}-[0-9]{2}(?:__[0-9]+(?:-[a-z])?)?|__[0-9]+(?:-[a-z])?(?:@[0-9]{4}-[0-9]{2}-[0-9]{2})?|)"
+        exact = re.search(
+            rf"{re.escape(needle)}{official_suffix}{suffix_boundary}$",
+            anchor,
+        ) is not None
+        split_needle = (
+            needle[:-len("-official")]
+            if needle.endswith("-official")
+            else needle
+        )
+        split_token = re.search(
+            rf"(?:/(?:sec|article|clause|order|rule))-([0-9]+)-([a-z0-9]+)"
+            rf"(?:-official)?{suffix_boundary}$",
+            split_needle,
+        )
+        if exact:
+            # A suffixed anchor may be a split numeric provision or a distinct
+            # alphanumeric provision. Require its heading in serving paths;
+            # metadata alone is not enough to identify 142 vs 142A.
+            if split_token:
+                if not passage_text:
+                    return False
+                root = split_token.group(1)
+                suffix = split_token.group(2)
+                if root == "173" and suffix == "a":
+                    return _passage_heading_matches_exact_section(
+                        passage_text,
+                        ("173", "173(1)"),
+                    )
+                if root == "173" and suffix == "c":
+                    return _passage_heading_matches_exact_section(passage_text, "173(4)")
+                return _passage_heading_matches_section(
+                    passage_text,
+                    (root, f"{root}{suffix}"),
+                )
+            return True
+        split = re.search(
+            rf"{re.escape(needle)}-([a-z0-9]+)(?:-official)?{suffix_boundary}$",
+            anchor,
+        )
+        if not split or not passage_text:
+            return False
+        token = needle.rsplit("-", 1)[-1]
+        return _passage_heading_matches_section(passage_text, token)
     return needle in anchor
+
+
+def _source_pack_anchor_matches(anchor: str, pattern: str) -> bool:
+    """Match two reviewed-pack anchors without fuzzy substring promotion.
+
+    Unlike passage matching, both values here are trusted pack metadata, so a
+    split anchor such as ``/sec-173-a`` is valid without a passage heading.
+    The boundary still prevents ``/sec-59`` from matching ``/sec-591``.
+    """
+    needle = str(pattern or "").lower()
+    value = str(anchor or "").lower()
+    if not needle or not value:
+        return False
+    # Reviewed pack metadata sometimes uses a section prefix (for example
+    # ``sec-4-``) while indexed passages use the publication boundary marker
+    # ``@``. Treat the trailing hyphen as a section-prefix boundary, without
+    # allowing a neighbouring section such as sec-40 to match.
+    if needle.endswith("-"):
+        stem = needle[:-1]
+        return re.search(
+            rf"{re.escape(stem)}(?:-|@|__|$)",
+            value,
+        ) is not None
+    # ``@`` in a reviewed pack is a snapshot/publication boundary. Verified
+    # supplements use ``-official`` before that boundary, so compare the
+    # provision token first and retain the same strict boundary checks.
+    snapshot_marker = needle.endswith("@")
+    base_needle = needle[:-1] if snapshot_marker else needle
+    official_suffix = "" if base_needle.endswith("-official") else "(?:-official)?"
+    split_suffix = r"(?:-[a-z]{1,2})?"
+    if not re.search(r"(?:^|/)sec-[0-9]+[a-z]?$", base_needle):
+        split_suffix = ""
+    return re.search(
+        rf"{re.escape(base_needle)}{split_suffix}{official_suffix}(?=@|__|$)",
+        value,
+    ) is not None
+
+
+def _date_dependent_regime_packs_ready(
+    requirement: str,
+    retrieval_sources: list[Any],
+) -> bool:
+    """Require both concrete regime candidates before deferring by date."""
+    lower_requirement = str(requirement or "").lower()
+    current_terms = (
+        "bns", "bnss", "bsa", "bharatiya nyaya", "bharatiya nagarik",
+        "bharatiya sakshya",
+    )
+    legacy_terms = (
+        "ipc", "crpc", "evidence act", "indian penal code",
+        "code of criminal procedure",
+    )
+    required_families = {
+        "current" if any(term in lower_requirement for term in current_terms) else None,
+        "legacy" if any(term in lower_requirement for term in legacy_terms) else None,
+    } - {None}
+    if required_families != {"current", "legacy"}:
+        return False
+
+    family_pack_ids: dict[str, set[str]] = {"current": set(), "legacy": set()}
+    for source in retrieval_sources:
+        if not _plan_field(source, "doc_ids", None) or not _plan_field(source, "source_types", None):
+            continue
+        source_pack_id = str(_plan_field(source, "source_pack_id", "") or "")
+        if not source_pack_id:
+            continue
+        source_blob = " ".join(
+            [
+                source_pack_id,
+                *[str(title) for title in (_plan_field(source, "title_patterns", ()) or ())],
+            ]
+        ).lower()
+        if any(term in source_blob for term in current_terms):
+            family_pack_ids["current"].add(source_pack_id)
+        if any(term in source_blob for term in legacy_terms):
+            family_pack_ids["legacy"].add(source_pack_id)
+    current_ids = family_pack_ids["current"]
+    legacy_ids = family_pack_ids["legacy"]
+    return bool(current_ids and legacy_ids and current_ids.isdisjoint(legacy_ids))
 
 
 def missing_required_authorities(
@@ -363,7 +1576,14 @@ def missing_required_authorities(
         requirement_type = classify_required_source_requirement(text)
         if not _should_enforce_requirement(text, requirement_type, query):
             continue
-        matched = best_source_match(text, passages, query=query)
+        if _is_mgnrega_integrity_composite_requirement(text):
+            matched = _verified_mgnrega_integrity_source_match(
+                text,
+                passages,
+                query=query,
+            )
+        else:
+            matched = best_source_match(text, passages, query=query)
         if matched is not None:
             continue
         out.append({
@@ -377,15 +1597,31 @@ def classify_required_source_requirement(text: str) -> str:
     lower = str(text or "").strip().lower()
     if not lower:
         return "fact_or_document_requirement"
+    # These are service/triage destinations, not legal authorities. Keep the
+    # explicit route labels out of the statutory provenance gate even though
+    # their names contain NALSA/DLSA tokens used for authority detection.
+    if (
+        "labour/dlsa grievance route" in lower
+        or "labour dlsa grievance route" in lower
+        or "nalsa/slsa/dlsa legal-aid procedure" in lower
+        or "nalsa/slsa/dlsa legal aid procedure" in lower
+    ) and not _contains_concrete_authority_name(lower):
+        return "procedural_or_local_source"
+    if (
+        "religion/personal-law and family-tree facts" in lower
+        and not _contains_concrete_authority_name(lower)
+    ):
+        return "fact_or_document_requirement"
     if any(term in lower for term in (
         "records only after",
         "records only to identify",
         "documents only after",
         "documents only to identify",
-    )):
+    )) and not _contains_concrete_authority_name(lower):
         return "fact_or_document_requirement"
     names_concrete_authority = (
-        bool(re.search(r"\bact\b|\bcode\b|\bregulations?\b|\barticle\s+\d+", lower))
+        _contains_concrete_authority_name(lower)
+        or bool(re.search(r"\bregulations?\b", lower))
         or _has(lower, (
             "bns", "bnss", "bharatiya nyaya sanhita",
             "bharatiya nagarik suraksha sanhita",
@@ -410,6 +1646,15 @@ def classify_required_source_requirement(text: str) -> str:
         "help desk", "identity-record update rules",
         "school board", "state caste-certificate",
         "state caste certificate", "state education rules",
+        # Local licensing and closure powers are operative procedural
+        # authorities even when the route deliberately avoids naming a
+        # specific municipal Act or by-law.
+        "municipal corporation", "municipality law", "trade-licence by-laws",
+        "trade license by-laws", "local municipal law", "sealing order",
+        "municipal sealing", "shop closure power", "local body", "local authority",
+        "municipal authority", "ward office", "commercial premises", "licence issue",
+        "license issue", "locked premises", "premises locked", "premises sealed",
+        "closure notice", "trade licence", "trade license",
     )
     if any(term in lower for term in procedural_terms) and not names_concrete_authority:
         return "procedural_or_local_source"
@@ -430,6 +1675,403 @@ def classify_required_source_requirement(text: str) -> str:
     return "fact_or_document_requirement"
 
 
+def _contains_concrete_authority_name(text: str) -> bool:
+    lower = str(text or "").strip().lower()
+    canonical_aliases = tuple(_SOURCE_PACK_ACRONYM_ALIASES)
+    return bool(
+        re.search(
+            r"\b(?:act|code)\b|\bconstitution\b|\barticle\s+\d+[a-z]?\b",
+            lower,
+        )
+        or any(
+            re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", lower)
+            for alias in (
+                *canonical_aliases,
+                "bns", "bnss", "bsa", "ipc", "crpc", "pocso", "pwdva",
+                "pmla", "cgst", "gst", "income tax", "customs", "nclt", "nclat",
+                "rte", "rera", "ibc", "pesa", "bocw", "rti", "ndps",
+                "mgnrega", "msmed", "posh", "mact", "esi", "epf",
+                "sc/st", "sc-st", "sc st",
+            )
+        )
+    )
+
+
+def _is_nonblocking_plan_context_requirement(text: str) -> bool:
+    """Identify generic intake/context labels that are not authorities.
+
+    These labels may be useful in the user-facing plan, but they do not name
+    a source that can prove an operative legal proposition. Keep this list
+    deliberately explicit: state-specific statutes, exact forms, and concrete
+    procedural authorities must still participate in the source gate.
+    """
+    lower = str(text or "").strip().lower()
+    context_only_markers = (
+        "personal law and local filing rules",
+        "personal law / local filing rules",
+        "family law statute by religion",
+        "religion/personal-law and family-tree facts",
+        "victim-compensation and dlsa procedure",
+        "victim compensation and dlsa procedure",
+        "identity-record update rules",
+        "state rera rules and filing procedure",
+        "labour/dlsa grievance route",
+        "labour authority / esi court procedure",
+        "state labour-department notification/appeal route",
+    )
+    if any(
+        lower.startswith("state rera rules and filing procedure")
+        or lower == marker
+        for marker in (
+            "labour/dlsa grievance route",
+            "labour authority / esi court procedure",
+            "state labour-department notification/appeal route",
+        )
+    ):
+        return True
+    if any(marker in lower for marker in context_only_markers):
+        # The marker can be embedded in a route label. Preserve the old
+        # context-only behavior for the generic label, but never let it hide a
+        # concrete named authority such as "Hindu Marriage Act 1955" or
+        # "SC-ST Act 1989" in the same requirement.
+        if not _contains_concrete_authority_name(lower):
+            return True
+        return False
+
+    # Do not let a generic suffix hide a concrete Act, Code, Article, or
+    # named authority in a composite requirement. The classifier is the
+    # single source of truth for this concrete-authority check.
+    if classify_required_source_requirement(lower) != "procedural_or_local_source":
+        return False
+    if _contains_concrete_authority_name(lower):
+        return False
+    return any(
+        marker in lower
+        for marker in (
+            # Generic destination/process labels from action packs. These
+            # should become an intake caveat, not a false statutory gap.
+            "state drug-control authority procedure",
+            "state motor vehicle rules / traffic police e-challan procedure",
+            "state motor vehicle rules and transport-department renewal procedure",
+            "state/central licence upgrade procedure",
+            "consumer protection rules / e-daakhil procedure",
+            "court rules and practice directions for the relevant court",
+            "court rules/practice directions for the court named in the summons",
+            "human-rights commission procedure",
+            "state disability certificate / udid procedure",
+            "state education rules",
+            "election commission voter-services procedure",
+            "family court procedure and existing order enforcement route",
+            "registrar of companies / mca procedure for llp filings",
+            "nalsa/slsa/dlsa legal-aid procedure for application and assignment",
+            "state maintenance tribunal rules",
+            "panchayat/municipal registrar procedure",
+            "state pension/scholarship/ration scheme rules",
+            "state caste certificate rules",
+            "state caste-certificate rules",
+            "municipal corporation / town vending committee procedure",
+            "state municipal corporation/municipality law and trade-licence by-laws",
+            "state municipal corporation/municipality law",
+            "trade-licence by-laws",
+            "trade license by-laws",
+        )
+    )
+
+
+def _material_state_context_requirement(text: str, query: str) -> bool:
+    """Whether a generic local-process label is material to this query."""
+    lower_source = str(text or "").lower()
+    lower_query = str(query or "").lower()
+    if "state rera rules and filing procedure" in lower_source:
+        return (
+            _has_named_state_or_city_context(lower_query)
+            and _has(lower_query, (
+                "rera", "real estate", "builder", "promoter", "project",
+                "possession", "occupancy", "complaint", "filing", "registration",
+            ))
+        )
+    if "state labour-department notification/appeal route" in lower_source:
+        return (
+            _has_named_state_or_city_context(lower_query)
+            and _has(lower_query, (
+                "minimum wage", "minimum wages", "wage rate", "wages rate",
+                "notification", "unskilled", "skilled", "labour rate", "labor rate",
+                "wage complaint", "appeal",
+            ))
+        )
+    if (
+        has_private_business_actor_context(lower_query)
+        or has_private_vendor_actor_context(lower_query)
+    ):
+        # A municipality mentioned elsewhere in a query does not convert a
+        # private landlord/company/security action into public enforcement.
+        # Keep the local-authority requirement conditional on the actor.
+        return False
+    if any(
+        marker in lower_source
+        for marker in (
+            "state municipal corporation/municipality law",
+            "municipal trade-license rules where applicable",
+            "municipal trade-licence rules where applicable",
+            "municipal corporation / town vending committee procedure",
+        )
+    ) and not (
+        has_explicit_municipal_authority_context(lower_query)
+        or has_specific_hawker_corporation_context(lower_query)
+    ):
+        # Generic business closure language does not establish that a local
+        # authority acted. Keep this state/local source conditional until the
+        # intake identifies the municipality or local public body.
+        return False
+
+    def query_has_term(term: str) -> bool:
+        normalized = str(term or "").strip().lower()
+        if not normalized:
+            return False
+        if normalized.endswith(" corporation"):
+            return has_qualified_city_corporation(
+                lower_query,
+                city=normalized.rsplit(" ", 1)[0],
+            )
+        if " " in normalized:
+            return normalized in lower_query
+        return re.search(rf"\b{re.escape(normalized)}\b", lower_query) is not None
+
+    context_terms = {
+        "state education rules": ("school", "admission", "teacher", "tc", "education"),
+        "state caste certificate rules": ("caste", "sc", "st", "scheduled caste", "scheduled tribe"),
+        "state caste-certificate rules": ("caste", "sc", "st", "scheduled caste", "scheduled tribe"),
+        "state pension/scholarship/ration scheme rules": (
+            "pension", "scholarship", "ration", "widow", "scheme", "benefit",
+        ),
+        "state maintenance tribunal rules": (
+            "maintenance", "senior citizen", "old age", "parent", "father", "mother",
+        ),
+        "state disability certificate / udid procedure": (
+            "disability", "udid", "pwd", "disabled",
+        ),
+        "state drug-control authority procedure": (
+            "drug", "medical store", "pharmacy", "chemist", "schedule h", "inspector",
+        ),
+        "state motor vehicle rules / traffic police e-challan procedure": (
+            "traffic", "challan", "license", "licence", "rto", "vehicle", "auto",
+        ),
+        "state motor vehicle rules and transport-department renewal procedure": (
+            "permit", "transport", "renew", "vehicle", "rto", "auto",
+        ),
+        "municipal corporation / town vending committee procedure": (
+            "municipal", "vendor", "cart", "street", "hawker", "seized",
+            "hawker license", "hawker licence", "vending license", "vending licence",
+            "vending certificate", "certificate of vending", "corporation removed",
+            "corporation seized", "corporation took", "corporation demolished",
+            "corporation evicted", "goods",
+        ),
+        "state municipal corporation/municipality law and trade-licence by-laws": (
+            "municipal", "municipality", "sealed", "sealing", "closure",
+            "shop", "trade licence", "trade license", "business premises",
+            "local body", "local authority", "municipal authority", "ward office",
+            "local health authority", "local health department",
+            "local health inspector", "local health officer",
+            "municipal health department", "municipal health inspector",
+            "municipal health officer", "city health department", "health department",
+            "hawker license", "hawker licence", "vending license", "vending licence",
+            "vending certificate", "certificate of vending", "corporation removed",
+            "corporation seized", "corporation took", "corporation demolished",
+            "corporation evicted", "goods",
+            "vadodara corporation", "ahmedabad corporation", "surat corporation",
+            "rajkot corporation", "baroda corporation", "pune corporation",
+            "nagpur corporation", "nashik corporation", "thane corporation",
+            "indore corporation", "bhopal corporation", "jaipur corporation",
+            "jodhpur corporation", "lucknow corporation", "kanpur corporation",
+            "patna corporation", "coimbatore corporation", "madurai corporation",
+            "chennai corporation", "hyderabad corporation", "bengaluru corporation",
+            "bangalore corporation", "mumbai corporation",
+            "commercial premises", "licence issue", "license issue", "locked",
+            "premises locked", "premises sealed", "closure notice",
+        ),
+        "state municipal corporation/municipality law": (
+            "municipal", "municipality", "sealed", "sealing", "closure",
+            "shop", "trade licence", "trade license", "business premises",
+            "local body", "local authority", "municipal authority", "ward office",
+            "local health authority", "local health department",
+            "local health inspector", "local health officer",
+            "municipal health department", "municipal health inspector",
+            "municipal health officer", "city health department", "health department",
+            "hawker license", "hawker licence", "vending license", "vending licence",
+            "vending certificate", "certificate of vending", "corporation removed",
+            "corporation seized", "corporation took", "corporation demolished",
+            "corporation evicted", "goods",
+            "vadodara corporation", "ahmedabad corporation", "surat corporation",
+            "rajkot corporation", "baroda corporation", "pune corporation",
+            "nagpur corporation", "nashik corporation", "thane corporation",
+            "indore corporation", "bhopal corporation", "jaipur corporation",
+            "jodhpur corporation", "lucknow corporation", "kanpur corporation",
+            "patna corporation", "coimbatore corporation", "madurai corporation",
+            "chennai corporation", "hyderabad corporation", "bengaluru corporation",
+            "bangalore corporation", "mumbai corporation",
+            "commercial premises", "licence issue", "license issue", "locked",
+            "premises locked", "premises sealed", "closure notice",
+        ),
+        "trade-licence by-laws": (
+            "trade licence", "trade license", "shop", "business", "municipal",
+            "municipality", "sealed", "sealing",
+        ),
+        "trade license by-laws": (
+            "trade licence", "trade license", "shop", "business", "municipal",
+            "municipality", "sealed", "sealing",
+        ),
+    }
+    return any(
+        marker in lower_source and any(query_has_term(term) for term in terms)
+        for marker, terms in context_terms.items()
+    )
+
+
+def _strict_local_source_requirement(text: str, query: str) -> bool:
+    """Mark only reviewed state-specific obligations as hard source gates."""
+    lower = str(text or "").lower()
+    if not any(
+        marker in lower
+        for marker in (
+            "state rera rules and filing procedure",
+            "state labour-department notification/appeal route",
+        )
+    ):
+        return False
+    return _material_state_context_requirement(lower, query)
+
+
+def _has_named_state_or_city_context(query: str) -> bool:
+    terms = (
+        "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh",
+        "delhi", "goa", "gujarat", "haryana", "himachal pradesh", "jharkhand",
+        "karnataka", "kerala", "madhya pradesh", "maharashtra", "manipur",
+        "meghalaya", "mizoram", "nagaland", "odisha", "orissa", "punjab",
+        "rajasthan", "sikkim", "tamil nadu", "telangana", "tripura",
+        "uttar pradesh", "uttarakhand", "west bengal", "ahmedabad", "bengaluru",
+        "bangalore", "bhopal", "chennai", "hyderabad", "jaipur", "kolkata",
+        "lucknow", "mumbai", "nagpur", "noida", "patna", "pune", "ranchi",
+        "surat", "vadodara", "baroda", "thane", "indore", "rajkot",
+        "kochi", "cochin", "ernakulam", "thiruvananthapuram", "trivandrum",
+        "coimbatore", "madurai", "salem", "tiruchirappalli", "trichy",
+        "tirunelveli", "vellore", "mysuru", "mysore", "mangalore", "kozhikode",
+        "calicut", "thrissur", "faridabad", "gurugram", "gurgaon", "chandigarh",
+        "jammu", "srinagar", "puducherry", "pondicherry", "port blair", "shimla",
+        "dehradun", "amritsar", "kanpur", "agra", "varanasi", "meerut",
+        "visakhapatnam", "vizag", "vijayawada", "tirupati", "nashik", "pimpri",
+    )
+    return any(re.search(rf"\b{re.escape(term)}\b", query) for term in terms)
+
+
+def _plan_field(value: Any, name: str, default: Any = None) -> Any:
+    """Read a MatterPlan field from either a dataclass or an eval payload."""
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def is_active_plan_authority_entry(
+    entry: Any,
+    *,
+    plan: Any = None,
+    query: str = "",
+) -> bool:
+    """Return whether an authority-ledger entry is an operative obligation.
+
+    MatterPlan carries both citable legal authorities and useful intake
+    pointers such as state rules, court practice directions, and document
+    requirements. Serving and evaluation must apply the same distinction or a
+    harmless context pointer becomes a false missing-citation failure.
+    """
+    source = str(_plan_field(entry, "source", "") or "")
+    lower_source = source.strip().lower()
+    if _plan_field(entry, "note") == "intake_precondition" and not _strict_local_source_requirement(source, query):
+        return False
+    # These are intake/safety preconditions, not authorities that can be
+    # cited by themselves. The serving source gate validates the actual
+    # statute or dual-regime passage separately; counting the precondition as
+    # a citable authority creates a false missing-pack failure before
+    # retrieval can prove the route.
+    if lower_source in {
+        "exact offence section and consent/permission status before treating a criminal case as compoundable",
+        "court permission and offence-compoundability limits must be checked from the exact section",
+        "caste/tribal-status fact check before adding sc/st atrocity route",
+    } or lower_source.startswith("identity-record update rules") or "only as a separate criminal-negligence track where facts support it" in lower_source:
+        return False
+    if lower_source.startswith("registration/allotment/agreement documents for proving"):
+        return False
+    requirement_type = classify_required_source_requirement(source)
+    strict_local_context = _strict_local_source_requirement(source, query)
+    generic_context = (
+        _is_nonblocking_plan_context_requirement(source)
+        and not strict_local_context
+    )
+    # Route-derived requirements can intentionally use a descriptive label
+    # such as "state Shops law" while still being bound to an exact reviewed
+    # source pack, document identity, and provision anchors.  Treating that
+    # label as ordinary intake context lets unrelated retrieved Acts unlock a
+    # free-form answer.  The pack-scoped passage check below is the authority
+    # proof for this path; until it is present, the answer must hand off.
+    route_bound_required = (
+        bool(_plan_field(entry, "source_pack_id"))
+        and _plan_field(entry, "note") == "derived_from_route_required_sources"
+        and _plan_field(entry, "must_cite") is True
+        and plan is not None
+    )
+    if (
+        (
+            requirement_type == "fact_or_document_requirement"
+            and not _contains_concrete_authority_name(source)
+            and not strict_local_context
+            and not route_bound_required
+        )
+    ):
+        return False
+    if generic_context:
+        # A generic local-process label is normally an intake pointer, but a
+        # plan containing no other concrete authority would otherwise pass
+        # through with no source-backed legal basis at all. Keep that case
+        # fail-closed; when a named controlling authority is present, retain
+        # the local pointer as context rather than turning it into a false
+        # statutory citation obligation.
+        if plan is None:
+            return False
+        concrete_ledger = _plan_field(plan, "authority_ledger", ()) or ()
+        has_concrete_authority = any(
+            candidate is not entry
+            and _plan_field(candidate, "must_cite") is True
+            and _contains_concrete_authority_name(
+                str(_plan_field(candidate, "source", "") or "")
+            )
+            and not _is_nonblocking_plan_context_requirement(
+                str(_plan_field(candidate, "source", "") or "")
+            )
+            for candidate in concrete_ledger
+        )
+        if not has_concrete_authority:
+            return bool(_plan_field(entry, "must_cite")) if _material_state_context_requirement(source, query) else False
+        return False
+    if (
+        _plan_field(entry, "note") == "category_dependent_sc_article_341_vs_st_article_342"
+        and source.strip().lower()
+        == "constitution article 341 or 342 after the sc/st category is confirmed"
+    ):
+        return False
+    if plan is not None and _is_deferred_date_regime_entry(plan, entry):
+        # A cheque query still needs the complaint procedure before any
+        # deadline or regime-sensitive answer is shown. Do not let the
+        # unknown-date wrapper turn an NI Act-only retrieval into a pass.
+        if _has(query, (
+            "cheque", "cheques", "dishonour", "dishonored", "bounced",
+            "negotiable instruments", "section 138", "138 notice",
+        )) and _has(lower_source, ("bnss", "crpc", "complaint procedure")):
+            return True
+        return False
+    if _plan_field(entry, "conditional"):
+        return _should_enforce_requirement(source, requirement_type, query)
+    return bool(_plan_field(entry, "must_cite"))
+
+
 def should_enforce_required_source(required_source: str, *, query: str) -> bool:
     """Return whether a route-required source should be enforced for this query."""
     text = str(required_source or "").strip()
@@ -439,27 +2081,198 @@ def should_enforce_required_source(required_source: str, *, query: str) -> bool:
     return _should_enforce_requirement(text, requirement_type, query)
 
 
+def _sale_of_goods_quality_dispute_context(query: str) -> bool:
+    """Activate the Sale of Goods lane only for a stated quality dispute."""
+    query_lower = str(query or "").lower()
+    if any(term in query_lower for term in (
+        "no quality", "no quality dispute", "no defect", "no defects",
+        "not defective", "not damaged", "not a defect", "no rejection",
+        "not rejected", "without rejection", "no acceptance dispute",
+        "delivery service", "customer service", "service quality",
+        "delivery date", "payment request", "shipment delayed",
+        "stock quality report",
+        "product manager", "software product", "digital product", "saas product",
+        "service product", "product roadmap", "proposal", "roadmap",
+        "specification document", "software component", "training material",
+        "documents to the department", "application", "electricity supply",
+        "water supply", "power supply", "internet supply",
+    )):
+        return False
+    has_quality_or_rejection_fact = any(term in query_lower for term in (
+        "quality", "defect", "defective", "reject", "rejection",
+        "price deduction", "quality deduction", "short supply",
+        "substandard", "non-conforming", "non conforming", "bad batch",
+        "batch was bad",
+        "damaged", "not as described", "does not match",
+        "doesn't match", "wrong model", "wrong item", "wrong goods",
+        "specification", "specifications", "will not accept",
+        "refused to accept", "refuse to accept", "did not accept",
+        "not accept", "rejected delivery", "refused delivery", "refused",
+        "failed inspection", "failed testing", "wrong quantity", "short by",
+        "shortage", "short shipment", "quantity shortage", "pieces arrived",
+        "units arrived", "wrong colour", "wrong color", "nonconforming",
+    ))
+    has_core_goods_context = any(term in query_lower for term in (
+        "goods", "parts", "items", "consignment", "merchandise",
+        "purchase order", "equipment",
+    ))
+    has_product_context = (
+        any(term in query_lower for term in ("product", "products"))
+        and not any(term in query_lower for term in (
+            "product manager", "software product", "digital product", "saas product",
+            "service product", "product roadmap", "proposal", "roadmap",
+        ))
+        and any(term in query_lower for term in (
+            "physical product", "finished product", "manufactured product",
+            "product shipment", "product batch", "product delivered",
+            "product received", "product defect", "defective product",
+            "damaged product", "product quality",
+        ))
+    )
+    has_batch_context = (
+        "batch" in query_lower
+        and any(term in query_lower for term in (
+            "bad", "failed", "inspection", "quality", "defect", "substandard",
+            "damaged", "rejected",
+        ))
+    )
+    has_component_context = (
+        any(term in query_lower for term in ("component", "components"))
+        and any(term in query_lower for term in (
+            "batch", "inspection", "units", "parts", "equipment", "physical",
+        ))
+    )
+    has_shipment_context = (
+        "shipment" in query_lower
+        and any(term in query_lower for term in (
+            "short by", "wrong quantity", "units", "damaged", "goods",
+            "material", "parts", "consignment",
+        ))
+    )
+    has_delivery_context = (
+        "delivery" in query_lower
+        and any(term in query_lower for term in (
+            "refused delivery", "rejected delivery", "delivery of goods",
+            "delivered goods", "goods delivered", "wrong quantity", "short by",
+        ))
+    )
+    has_model_context = "wrong model" in query_lower
+    has_received_variant_context = (
+        "received" in query_lower
+        and any(term in query_lower for term in (
+            "wrong model", "wrong item", "wrong colour", "wrong color", "wrong goods",
+        ))
+    )
+    has_quantity_context = any(term in query_lower for term in (
+        "wrong quantity", "short by", "shortage", "short shipment",
+        "quantity shortage", "pieces arrived", "units arrived",
+    ))
+    has_material_context = (
+        "material" in query_lower
+        and any(term in query_lower for term in (
+            "batch", "shipment", "parts", "goods", "specification",
+            "specifications", "delivered", "units", "quantity", "purchase order",
+            "buyer", "seller", "vendor", "supplier", "manufacturer",
+        ))
+    )
+    has_goods_context = (
+        has_core_goods_context
+        or has_product_context
+        or has_material_context
+        or has_batch_context
+        or has_component_context
+        or has_shipment_context
+        or has_delivery_context
+        or has_model_context
+        or has_received_variant_context
+        or has_quantity_context
+    )
+    return has_quality_or_rejection_fact and has_goods_context
+
+
 def _should_enforce_requirement(text: str, requirement_type: str, query: str) -> bool:
     lower = text.lower()
     q = query.lower()
+    if "registration of births and deaths" in lower:
+        # Lay users often shorten "birth certificate" to "birth cert". Keep
+        # the controlling civil-registration authority active instead of
+        # falling through to a generic identity/RTI answer.
+        return _has(q, (
+            "birth certificate", "birth cert", "birth registration",
+            "born at home", "home birth", "death certificate", "death cert",
+            "death registration",
+        ))
+    if (
+        "sale of goods" in lower
+        and any(term in lower for term in ("quality", "rejection", "acceptance", "price deduction"))
+    ):
+        return _sale_of_goods_quality_dispute_context(q)
+    if "state rera rules and filing procedure" in lower:
+        return _material_state_context_requirement(lower, q)
+    if "state labour-department notification/appeal route" in lower:
+        return _material_state_context_requirement(lower, q)
+    if _has(lower, (
+        "state-specific witch-hunting statute",
+        "state witch-hunting law",
+        "witch-hunting state act",
+    )):
+        # A named state changes the offence and source pack. Do not let a
+        # generic Assam/default pack satisfy a Jharkhand, Bihar, or other
+        # state-specific question; the exact state source must be present.
+        witch_context = _has(q, (
+            "witch", "witch-hunting", "witch hunting", "daain", "daayan",
+            "dayan", "daini", "tonhi", "tonahi",
+        ))
+        named_state = _has(q, (
+            "andhra pradesh", "arunachal pradesh", "assam", "bihar",
+            "chhattisgarh", "goa", "gujarat", "haryana", "himachal pradesh",
+            "jharkhand", "karnataka", "kerala", "madhya pradesh", "maharashtra",
+            "manipur", "meghalaya", "mizoram", "nagaland", "odisha", "orissa",
+            "punjab", "rajasthan", "sikkim", "tamil nadu", "telangana",
+            "tripura", "uttar pradesh", "uttarakhand", "west bengal",
+            "delhi", "jammu and kashmir", "ladakh", "ranchi", "chaibasa",
+            "gumla", "khunti", "simdega", "singhbhum", "barpeta", "guwahati",
+            "dibrugarh", "jorhat", "raipur", "bastar",
+        ))
+        return witch_context and named_state
+    if "state caste-certificate issuance and appeal rules" in lower:
+        # A pending/status question can safely receive constitutional and
+        # record-request intake. An appeal, forum, or deadline question cannot
+        # be answered from national sources because the State rule/order
+        # controls the authority and time limit.
+        return (
+            _has(q, (
+                "caste certificate", "caste cert", "sc certificate", "st certificate",
+                "sc cert", "st cert", "community certificate",
+                "scheduled caste", "scheduled tribe", "sc/st", "sc st",
+            ))
+            and _has(q, (
+                "appeal", "appeal forum", "which authority", "what authority",
+                "where do i appeal", "where can i appeal", "deadline", "time limit",
+                "how many days", "challenge", "review", "rejected", "refused",
+                "denied", "rejection order", "refusal order",
+            ))
+        )
     if _has(lower, (
         "state education rules",
         "school board or education-record correction rules",
         "school board",
         "education-record correction rules",
-        "state caste-certificate issuance and appeal rules",
         "state caste certificate",
         "state caste-certificate",
     )):
-        return False
-    if _has(lower, (
+        return _contains_concrete_authority_name(lower) or _material_state_context_requirement(lower, q)
+    contextual_exception = _has(lower, (
         "loan documents and rbi restructuring/settlement guidance",
         "gst refund/bank operation records",
         "cooperative-bank grievance route and state cooperative-society forum",
         "victim-compensation and dlsa procedure",
         "victim compensation and dlsa procedure",
-    )):
-        return False
+    ))
+    if contextual_exception:
+        concrete_blob = lower.replace("gst refund/bank operation records", "")
+        if not _contains_concrete_authority_name(concrete_blob):
+            return False
     if "juvenile justice" in lower and "adoption" in lower:
         return _has_adoption_source_context(q)
     if "indian succession act" in lower and _has(q, ("muslim", "sunni", "shariat")):
@@ -516,8 +2329,12 @@ def _should_enforce_requirement(text: str, requirement_type: str, query: str) ->
         "observation home", "school id", "age proof",
     )):
         return False
-    if requirement_type in {"fact_or_document_requirement", "procedural_or_local_source"}:
-        return False
+    if requirement_type == "fact_or_document_requirement":
+        return _contains_concrete_authority_name(lower)
+    if requirement_type == "procedural_or_local_source":
+        if _material_state_context_requirement(lower, q):
+            return True
+        return _contains_concrete_authority_name(lower)
     if requirement_type != "conditional_authority":
         return True
     if "limitation act" in lower:
@@ -584,6 +2401,15 @@ def _should_enforce_requirement(text: str, requirement_type: str, query: str) ->
         has_procedure_code = _has_statute_alias(lower, ("bnss", "crpc"))
         has_offence_code = _has_statute_alias(lower, ("bns", "ipc"))
         if has_procedure_code and not has_offence_code:
+            # A cheque-bounce route needs the complaint/notice procedure even
+            # when the user has not mentioned police, FIR, or arrest. Without
+            # this branch a bare NI Act passage could incorrectly clear the
+            # date-dependent BNSS/CrPC obligation.
+            if _has(q, (
+                "cheque", "cheques", "dishonour", "dishonored", "bounced",
+                "negotiable instruments", "section 138", "138 notice",
+            )):
+                return True
             return _has_criminal_process_context(q) or _has_criminal_offence_context(q)
         if has_offence_code and not has_procedure_code:
             if _has_police_threatening_arrest_without_offence_context(q):
@@ -628,13 +2454,7 @@ def _should_enforce_requirement(text: str, requirement_type: str, query: str) ->
             "company not accepting", "seller", "shop", "invoice",
         ))
     if "sale of goods" in lower:
-        if _has(q, (
-            "no quality issue", "no quality dispute", "no defect", "no defects",
-            "not defective", "not damaged", "not a defect", "no rejection",
-            "not rejected", "accepted without dispute", "accepted goods no dispute",
-        )):
-            return False
-        return _has(q, ("goods", "material", "defect", "defective", "delivery", "quality", "rejection", "refund"))
+        return _sale_of_goods_quality_dispute_context(q)
     if "indian contract" in lower:
         return _has(q, (
             "consent", "coercion", "undue influence", "authority",
@@ -671,6 +2491,18 @@ def _should_enforce_requirement(text: str, requirement_type: str, query: str) ->
         ))
     if "forest rights" in lower or "pesa" in lower:
         return _has_fra_trigger_context(q) or _has_pesa_trigger_context(q)
+    if (
+        "water (prevention and control of pollution) act" in lower
+        or "water act / pollution-control" in lower
+    ):
+        # Environmental routes are broad, but the Water Act obligation is
+        # operative only when the facts actually describe water or effluent
+        # pollution. Mining, land, and blasting matters must not inherit it.
+        return _has(q, (
+            "water", "borewell", "effluent", "chemical", "chemicals",
+            "pollution", "polluting", "factory", "discharge", "sewage",
+            "waste", "contamination", "contaminated",
+        ))
     if "code on social security" in lower:
         return _has(q, ("pf", "epf", "esi", "gig", "platform", "social security", "provident"))
     if "rbi" in lower or "kyc" in lower or "online-gaming" in lower:
@@ -803,9 +2635,50 @@ def _should_enforce_requirement(text: str, requirement_type: str, query: str) ->
 
 
 def best_source_match(required_source: str, passages: list[dict[str, Any]], *, query: str) -> dict[str, Any] | None:
+    if str(required_source or "").strip().lower() == (
+        "state caste-certificate issuance and appeal rules"
+    ):
+        # This is an explicit production boundary, not a title-similarity
+        # requirement. Until a State-specific rule/order is supplied, a
+        # passage that merely repeats the label cannot prove an appeal forum
+        # or deadline.
+        return None
     constitution_match = _constitution_article_requirement_match(required_source, passages)
     if constitution_match is not None:
         return constitution_match
+    required_lower = str(required_source or "").lower()
+    query_lower = str(query or "").lower()
+    is_conditional_sale_of_goods = (
+        "sale of goods" in required_lower
+        and any(term in required_lower for term in ("quality", "rejection", "acceptance", "price deduction"))
+    )
+    if is_conditional_sale_of_goods and not _sale_of_goods_quality_dispute_context(query_lower):
+        # Do not let the generic Sale-of-Goods matcher below satisfy a
+        # conditional quality/rejection authority for plain arrears or an
+        # unrelated use of words such as "quality" or "rejected".
+        return None
+    if is_conditional_sale_of_goods:
+        # This conditional source is intentionally query-aware.  A Sale of
+        # Goods passage can satisfy a quality/rejection obligation when the
+        # user raised that fact, but must not turn an unrelated overdue-payment
+        # answer into a falsely complete route.
+        for item in passages or []:
+            if not isinstance(item, dict):
+                continue
+            title_blob = _blob(
+                item.get("title"), item.get("document_id"), item.get("statute_short"),
+            )
+            anchor = str(item.get("anchor") or "").lower()
+            if "sale of goods" not in title_blob and "sale-of-goods-1930" not in anchor:
+                continue
+            if any(
+                _plan_anchor_matches(anchor, section)
+                for section in ("/sec-31", "/sec-32", "/sec-55", "/sec-56")
+            ):
+                return item
+        # A triggered conditional requirement still needs one of its reviewed
+        # Sale-of-Goods sections; a different Act section is not equivalent.
+        return None
     if _is_hard_composite_requirement(required_source):
         return _composite_route_source_match(required_source, passages, query=query)
     composite_match = _composite_route_source_match(required_source, passages, query=query)
@@ -819,7 +2692,12 @@ def best_source_match(required_source: str, passages: list[dict[str, Any]], *, q
         if not isinstance(item, dict):
             continue
         blob = _item_blob(item)
-        if _canonical_match(required_source, blob, query=query):
+        if _canonical_match(
+            required_source,
+            blob,
+            query=query,
+            passage_text=_passage_identity_text(item),
+        ):
             return item
         if not tokens:
             continue
@@ -861,9 +2739,56 @@ def source_gap_kind(required_source: str, *, query: str = "") -> str:
     return "national_statute_retrieval_gap"
 
 
-def _canonical_match(required_source: str, item_blob: str, *, query: str) -> bool:
+def _canonical_match(
+    required_source: str,
+    item_blob: str,
+    *,
+    query: str,
+    passage_text: str | None = None,
+) -> bool:
     lower = required_source.lower()
     q = query.lower()
+    # Enforce explicit Act/Code section requirements before the legacy
+    # statute-specific branches below. Those branches intentionally support
+    # title-level requirements, but their broad anchor lists must not let a
+    # neighboring section (for example 35A for Section 35) clear a concrete
+    # section obligation.
+    explicit_sections = re.findall(
+        r"\b(?:section|sec|s)\.?\s*"
+        r"([0-9]+(?:\([0-9a-z]+\))?[a-z]?)(?![0-9a-z])",
+        lower,
+    )
+    # HMA has a broad legacy matcher for Section 13 divorce grounds. Keep an
+    # explicitly alphanumeric requirement such as Section 13A on the strict
+    # identity path so that a Section 13 fragment cannot satisfy it later.
+    if (
+        "hindu marriage act" in lower
+        and any(section[-1:].isalpha() for section in explicit_sections)
+        and _required_title_matches_item(lower, item_blob)
+    ):
+        return any(
+            _section_anchor_matches(item_blob, section, passage_text=passage_text)
+            for section in explicit_sections
+        )
+    if (
+        explicit_sections
+        and not (
+            "hindu marriage act" in lower
+            and any(section == "13" for section in explicit_sections)
+        )
+        # Composite alternatives such as "Section 67B / 66E / 67A" have
+        # their own query-aware matcher below; do not truncate them to the
+        # first section token here.
+        and not re.search(
+            r"\b(?:section|sec|s)\.?\s*[0-9]+[a-z]?\b[^.]{0,80}/\s*[0-9]",
+            lower,
+        )
+        and _required_title_matches_item(lower, item_blob)
+    ):
+        return any(
+            _section_anchor_matches(item_blob, section, passage_text=passage_text)
+            for section in explicit_sections
+        )
     if (
         ("employees' provident" in lower or "employees provident" in lower or "epf" in lower)
         and "code on social security" in lower
@@ -947,17 +2872,33 @@ def _canonical_match(required_source: str, item_blob: str, *, query: str) -> boo
             "summons", "discharge",
         ),
     )
+    requires_bnss = _has_statute_alias(lower, ("bnss", "bharatiya nagarik"))
+    requires_crpc = _has_statute_alias(lower, ("crpc", "criminal procedure"))
     if (
-        _has_statute_alias(lower, ("bnss", "crpc"))
+        (requires_bnss or requires_crpc)
         and _has(lower, ("bail", "arrest"))
         and not charge_sheet_or_discharge_context
     ):
         anchors = _bail_arrest_safeguard_anchor_terms(q, lower)
-        return _has(item_blob, (
-            "bnss", "bharatiya nagarik", "crpc", "code of criminal procedure",
-            "criminal procedure",
-        )) and _has_any_anchor(item_blob, anchors)
-    if _single_statute_section_match(lower, item_blob):
+        matches_required_regime = (
+            (requires_bnss and _has_statute_alias(item_blob, ("bnss", "bharatiya nagarik")))
+            or (requires_crpc and _has_statute_alias(item_blob, ("crpc", "code of criminal procedure", "criminal procedure")))
+        )
+        return matches_required_regime and _has_any_anchor(item_blob, anchors)
+    if "negotiable instruments act" in lower or "negotiable instrument" in lower:
+        if "negotiable instruments" not in item_blob:
+            return False
+        sections = re.findall(r"\b(?:section|sec|s)\.?\s*([0-9]+[a-z]?)\b", lower)
+        if sections:
+            return any(
+                _section_anchor_matches(item_blob, section, passage_text=passage_text)
+                for section in sections
+            )
+        return _has_any_anchor(
+            item_blob,
+            ("sec-138", "sec-141", "sec-142", "/sec-138", "/sec-141", "/sec-142"),
+        )
+    if _single_statute_section_match(lower, item_blob, passage_text=passage_text):
         return True
     if "indian contract act" in lower or "contract act" in lower:
         if "indian contract" not in item_blob and "contract act" not in item_blob:
@@ -986,6 +2927,50 @@ def _canonical_match(required_source: str, item_blob: str, *, query: str) -> boo
         ))
     if "consumer protection" in lower:
         return "consumer protection" in item_blob and _has_any_anchor(item_blob, ("sec-2", "sec-35", "sec-38", "sec-39", "/sec-2", "/sec-35", "/sec-38", "/sec-39"))
+    if "mgnrega" in lower or "mahatma gandhi national rural employment guarantee" in lower:
+        if not (
+            "mgnrega" in item_blob
+            or "mahatma gandhi national rural employment guarantee" in item_blob
+            or "mgnrega-2005" in item_blob
+        ):
+            return False
+        social_audit_context = _has(q, (
+            "social audit", "social-audit", "gram sabha", "fake muster",
+            "fake job card", "fake job cards", "fake attendance",
+            "false entry", "false entries", "fake entry", "fake entries",
+            "dead people", "dead persons",
+            "misappropriation", "forged muster",
+        ))
+        if social_audit_context:
+            anchors = (
+                "sec-17", "sec-19", "sec-23", "sec-27",
+                "/sec-17", "/sec-19", "/sec-23", "/sec-27",
+            )
+        else:
+            anchors = (
+                "sec-3", "sec-6", "sec-7", "sec-15", "sec-17",
+                "sec-19", "sec-23", "sec-35", "/sec-3", "/sec-6",
+                "/sec-7", "/sec-15", "/sec-17", "/sec-19", "/sec-23",
+                "/sec-35",
+            )
+        return _has_any_anchor(item_blob, anchors)
+    if (
+        "prevention of corruption" in lower
+        and "bns" in lower
+    ):
+        bns_match = (
+            _has_statute_alias(item_blob, ("bns", "bharatiya nyaya"))
+            and _has_any_anchor(item_blob, (
+                "sec-318", "sec-336", "sec-340", "/sec-318", "/sec-336", "/sec-340",
+            ))
+        )
+        pca_match = (
+            "prevention of corruption" in item_blob
+            and _has_any_anchor(item_blob, (
+                "sec-7", "sec-8", "sec-13", "/sec-7", "/sec-8", "/sec-13",
+            ))
+        )
+        return bns_match or pca_match
     if "prevention of corruption" in lower:
         return "prevention of corruption" in item_blob and _has_any_anchor(item_blob, ("sec-7", "sec-8", "sec-13", "/sec-7", "/sec-8", "/sec-13"))
     if "bnss 2023 arrest" in lower or "bnss arrest" in lower:
@@ -1092,7 +3077,15 @@ def _canonical_match(required_source: str, item_blob: str, *, query: str) -> boo
             "/sec-7", "/sec-8", "/sec-29", "/sec-59",
         ))
     if "right to information" in lower or re.search(r"\brti\b", lower):
-        return ("right to information" in item_blob or re.search(r"\brti\b", item_blob)) and _has_any_anchor(item_blob, ("sec-6", "sec-7", "sec-19", "/sec-6", "/sec-7", "/sec-19"))
+        if not ("right to information" in item_blob or re.search(r"\brti\b", item_blob)):
+            return False
+        sections = re.findall(r"\b(?:section|sec|s)\.?\s*([0-9]+[a-z]?)\b", lower)
+        if sections:
+            return any(
+                _section_anchor_matches(item_blob, section, passage_text=passage_text)
+                for section in sections
+            )
+        return _has_any_anchor(item_blob, ("sec-6", "sec-7", "sec-19", "/sec-6", "/sec-7", "/sec-19"))
     if "national food security" in lower or re.search(r"\bration\b", lower):
         return "national food security" in item_blob and _has_any_anchor(item_blob, ("sec-3", "sec-12", "sec-14", "sec-15", "/sec-3", "/sec-12", "/sec-14", "/sec-15"))
     if "forest rights act" in lower:
@@ -1167,15 +3160,21 @@ def _canonical_match(required_source: str, item_blob: str, *, query: str) -> boo
         return "hindu succession" in item_blob and _has_any_anchor(item_blob, ("sec-6", "sec-8", "sec-10", "sec-14", "sec-15", "/sec-6", "/sec-8", "/sec-10", "/sec-14", "/sec-15"))
     if "income tax act" in lower or "income-tax act" in lower:
         if _has(lower, ("143(2)", "section 143")) or _has(q, ("143(2)", "section 143", "sec 143")):
-            return (
+            title_match = (
                 "income tax" in item_blob
                 or "income-tax" in item_blob
             ) and (
-                _has_any_anchor(item_blob, (
-                    "sec-143",
-                    "/sec-143",
-                ))
-                or _has(item_blob, ("section 143", "sub-section (2) of section 143"))
+                _has(item_blob, ("section 143", "sub-section (2) of section 143"))
+            )
+            if title_match:
+                return True
+            return (
+                ("income tax" in item_blob or "income-tax" in item_blob)
+                and _section_anchor_matches(
+                    item_blob,
+                    "143",
+                    passage_text=passage_text,
+                )
             )
         return ("income tax" in item_blob or "income-tax" in item_blob) and _has_any_anchor(item_blob, ("sec-5", "sec-9", "sec-45", "sec-54", "sec-54f", "sec-139", "sec-143", "sec-154", "sec-195", "sec-214", "sec-234e", "sec-246a", "sec-249", "sec-250", "sec-253", "sec-254", "sec-255", "sec-80", "sec-80a", "sec-80c", "sec-80ccd", "sec-80cce", "sec-194", "sec-206c", "/sec-5", "/sec-9", "/sec-45", "/sec-54", "/sec-54f", "/sec-139", "/sec-143", "/sec-154", "/sec-195", "/sec-214", "/sec-234e", "/sec-246a", "/sec-249", "/sec-250", "/sec-253", "/sec-254", "/sec-255", "/sec-80", "/sec-80a", "/sec-80c", "/sec-80ccd", "/sec-80cce", "/sec-194", "/sec-206c"))
     if "employees compensation" in lower or "employees' compensation" in lower:
@@ -1358,14 +3357,21 @@ def _canonical_match(required_source: str, item_blob: str, *, query: str) -> boo
         ))
     if _has(lower, ("witch", "witch-hunting", "witch hunting", "daain", "daayan", "tonhi", "tonahi")):
         if _has(q, ("assam", "barpeta")):
-            return "assam-witch-hunting-2015" in item_blob or (
-                "assam" in item_blob and "witch" in item_blob
+            return (
+                ("bare_act" in item_blob or "official_guidance" in item_blob)
+                and "assam-witch-hunting-2015" in item_blob
+                and ("witch" in item_blob or "daain" in item_blob or "daayan" in item_blob)
             )
         if _has(q, ("jharkhand", "ranchi", "chaibasa", "gumla", "khunti", "simdega", "singhbhum")):
             return (
                 ("bare_act" in item_blob or "official_guidance" in item_blob)
                 and "jharkhand" in item_blob
                 and ("witch" in item_blob or "daain" in item_blob or "daayan" in item_blob or "dayan" in item_blob)
+            )
+        if _has(q, ("chhattisgarh", "raipur", "bastar", "tonahi", "tonhi")):
+            return (
+                ("bare_act" in item_blob or "official_guidance" in item_blob)
+                and ("chhattisgarh" in item_blob or "tonahi" in item_blob or "tonhi" in item_blob)
             )
     if "witch" in lower and "jharkhand" in q:
         return (
@@ -1464,6 +3470,46 @@ def _composite_route_source_match(
 ) -> dict[str, Any] | None:
     lower = required_source.lower()
     q = query.lower()
+    if (
+        "rbi integrated ombudsman" in lower
+        and "recovery-agent" in lower
+        and "digital-lending" in lower
+    ):
+        ombudsman_item: dict[str, Any] | None = None
+        recovery_item: dict[str, Any] | None = None
+        digital_lending_item: dict[str, Any] | None = None
+        for item in passages or []:
+            if not isinstance(item, dict):
+                continue
+            blob = _item_blob(item)
+            if ombudsman_item is None and _has(blob, (
+                "rbi integrated ombudsman",
+                "rbi-integrated-ombudsman",
+                "reserve bank integrated ombudsman",
+            )):
+                ombudsman_item = item
+            if recovery_item is None and _has(blob, (
+                "recovery agents", "recovery-agent",
+                "outsourcing of financial services",
+            )):
+                recovery_item = item
+            if digital_lending_item is None and _has(blob, (
+                "digital lending", "digital-lending",
+            )):
+                digital_lending_item = item
+        # The route wording intentionally allows either the Ombudsman route
+        # or the recovery-agent/digital-lending authority family. Preserve
+        # that alternative while still requiring both items for the latter
+        # family instead of accepting a loose RBI title match.
+        if ombudsman_item is not None:
+            return ombudsman_item
+        if recovery_item is not None and digital_lending_item is not None:
+            return {
+                "title": "RBI recovery-agent and digital-lending authority composite",
+                "anchor": f"{recovery_item.get('anchor')}; {digital_lending_item.get('anchor')}",
+                "source_type": "aggregate",
+            }
+        return None
     if "cgst rules" in lower and "86b" in lower and "cgst act" in lower:
         matched: dict[str, dict[str, Any]] = {}
         for item in passages or []:
@@ -1637,6 +3683,14 @@ def _is_hard_canonical_requirement(required_source: str) -> bool:
         or "bocw act" in lower
         or "bocw registration" in lower
         or "welfare-board provisions" in lower
+        or (
+            "negotiable instruments act" in lower
+            and re.search(r"\b(?:section|sec)\.?\s*\d+", lower) is not None
+        )
+        or (
+            re.search(r"\b(?:act|code)\b", lower) is not None
+            and re.search(r"\b(?:section|sec)\.?\s*\d+", lower) is not None
+        )
         or "mental healthcare act" in lower
         or "mental-healthcare" in lower
         or (
@@ -1806,7 +3860,7 @@ def _canonical_alias_match(required_lower: str, item_blob: str) -> bool:
         (
             ("rfctlarr", "land acquisition", "compensation award", "reference-to-authority", "reference to authority"),
             ("right to fair compensation", "rfctlarr", "land acquisition"),
-            ("sec-31", "sec-38", "sec-64", "sec-77", "/sec-31", "/sec-38", "/sec-64", "/sec-77"),
+            ("sec-31", "sec-38", "sec-41", "sec-64", "sec-77", "/sec-31", "/sec-38", "/sec-41", "/sec-64", "/sec-77"),
         ),
         (
             ("legal services authorities", "under trial review committee", "under-trial review committee", "utrc"),
@@ -2345,6 +4399,22 @@ def _has_any_exact_anchor(blob: str, anchors: tuple[str, ...]) -> bool:
     return any(_exact_anchor_term_matches(blob, anchor) for anchor in anchors)
 
 
+def _valid_anchor_snapshot(anchor: str) -> bool:
+    """Reject malformed or impossible @YYYY-MM-DD corpus snapshots."""
+    raw_parts = re.findall(r"@([^/]+)", str(anchor or ""))
+    if not raw_parts:
+        return True
+    if str(anchor or "").count("@") != len(raw_parts):
+        return False
+    for raw in raw_parts:
+        token = raw.split("__", 1)[0]
+        try:
+            date.fromisoformat(token)
+        except ValueError:
+            return False
+    return True
+
+
 def _anchor_term_matches(blob: str, anchor: str) -> bool:
     normalized = anchor.lower().lstrip("/")
     if normalized.startswith("#"):
@@ -2356,10 +4426,21 @@ def _exact_anchor_term_matches(blob: str, anchor: str) -> bool:
     normalized = anchor.lower().lstrip("/")
     if normalized.startswith("#"):
         return normalized in blob
-    return bool(re.search(rf"(?<![a-z0-9])/?{re.escape(normalized)}(?![-a-z0-9])", blob))
+    official_suffix = "" if normalized.endswith("-official") else "(?:-official)?"
+    return bool(
+        re.search(
+            rf"(?<![a-z0-9])/?{re.escape(normalized)}{official_suffix}(?![-a-z0-9])",
+            blob,
+        )
+    )
 
 
-def _single_statute_section_match(required_lower: str, item_blob: str) -> bool:
+def _single_statute_section_match(
+    required_lower: str,
+    item_blob: str,
+    *,
+    passage_text: str | None = None,
+) -> bool:
     section_numbers = re.findall(r"\b(?:section|sec|s)\.?\s*([0-9]+[a-z]?)\b", required_lower)
     if not section_numbers:
         return False
@@ -2380,32 +4461,250 @@ def _single_statute_section_match(required_lower: str, item_blob: str) -> bool:
         for required_terms, item_terms in statute_terms
     ):
         return False
-    return any(_section_anchor_matches(item_blob, section) for section in section_numbers)
+    return any(
+        _section_anchor_matches(item_blob, section, passage_text=passage_text)
+        for section in section_numbers
+    )
 
 
-def _section_anchor_matches(item_blob: str, section: str) -> bool:
+def _section_anchor_matches(
+    item_blob: str,
+    section: str,
+    *,
+    passage_text: str | None = None,
+) -> bool:
     normalized = section.lower()
-    anchors = [f"sec-{normalized}", f"/sec-{normalized}"]
-    split = re.match(r"^([0-9]+)([a-z])$", normalized)
-    if split:
-        numeric, suffix = split.groups()
-        anchors.extend((f"sec-{numeric}-{suffix}", f"/sec-{numeric}-{suffix}"))
-    return _has_any_anchor(item_blob, tuple(anchors))
+    subsection_match = re.fullmatch(r"([0-9]+)\(([0-9a-z]+)\)", normalized)
+    if subsection_match is not None:
+        numeric, subsection = subsection_match.groups()
+        candidates = (
+            f"sec-{numeric}-{subsection}",
+            f"/sec-{numeric}-{subsection}",
+            f"sec-{numeric}({subsection})",
+            f"/sec-{numeric}({subsection})",
+        )
+        # BNSS Section 173(4) is published by this corpus under the stable
+        # split anchor sec-173-c. The heading remains mandatory identity
+        # evidence so neighbouring 173-a/173-b chunks cannot satisfy it.
+        if numeric == "173" and subsection == "4":
+            candidates += ("sec-173-c", "/sec-173-c")
+        if not _has_any_exact_anchor(item_blob, candidates):
+            return False
+        return bool(passage_text) and _passage_heading_matches_section(
+            passage_text,
+            normalized,
+        )
+    section_match = re.fullmatch(r"([0-9]+)([a-z])?", normalized)
+    if section_match is None:
+        return _has_any_exact_anchor(item_blob, (f"sec-{normalized}", f"/sec-{normalized}"))
+    numeric, suffix = section_match.groups()
+    exact_anchor = _has_any_exact_anchor(
+        item_blob,
+        (f"sec-{normalized}", f"/sec-{normalized}"),
+    )
+    if exact_anchor:
+        if not suffix:
+            return True
+        # A native alphanumeric anchor such as sec-66e is already distinct
+        # from a split alias such as sec-142-a. Only the split representation
+        # needs the passage-heading check below.
+        if _has_any_exact_anchor(
+            item_blob,
+            (f"sec-{numeric}{suffix}", f"/sec-{numeric}{suffix}"),
+        ):
+            return True
+        # An explicit alphanumeric provision such as Section 142A may be
+        # represented by the normalized split anchor sec-142-a. Require the
+        # passage heading so a metadata alias cannot prove identity alone.
+        if not passage_text:
+            return False
+        headings = re.finditer(
+            r"\b(?:section|sec\.?|article|order|clause)\s+([0-9][0-9a-z()./-]*)",
+            passage_text[:600],
+            flags=re.IGNORECASE,
+        )
+        expected = re.sub(r"[^0-9a-z]+", "", normalized)
+        return any(
+            re.sub(r"[^0-9a-z]+", "", match.group(1).lower()) == expected
+            for match in headings
+        )
+    if suffix:
+        split_anchor = _has_any_exact_anchor(
+            item_blob,
+            (f"sec-{numeric}-{suffix}", f"/sec-{numeric}-{suffix}"),
+        )
+    else:
+        # Some official Act PDFs are chunked as sec-142-a ... sec-142-e even
+        # though the legal provision is Section 142. Do not accept a suffix
+        # from metadata alone: Section 142A is a neighboring provision.
+        split_anchor = re.search(
+            rf"(?<![a-z0-9])/?sec-{re.escape(numeric)}-[a-z]"
+            rf"(?:-official)?(?![a-z0-9])",
+            item_blob,
+            flags=re.IGNORECASE,
+        ) is not None
+    if not split_anchor:
+        return False
+    # A suffix may represent a split chunk of the requested numeric section,
+    # or a distinct alphanumeric provision such as Section 142A. Metadata
+    # alone cannot distinguish them, so the serving path requires the
+    # passage heading.
+    if not passage_text:
+        return False
+    return _passage_heading_matches_section(passage_text, normalized)
 
 
-def _constitution_article_requirement_match(required_source: str, passages: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _required_title_matches_item(required_lower: str, item_blob: str) -> bool:
+    """Return true when an explicit Act/Code title is present in a passage.
+
+    This is deliberately a conservative token check. It is only used when a
+    requirement names a concrete section; a title match activates the strict
+    section matcher and prevents a later broad fallback from accepting a
+    neighboring provision.
+    """
+    section_match = re.search(
+        r"\b(?:section|sec|s)\.?\s*[0-9]+[a-z]?\b",
+        required_lower,
+    )
+    if section_match is None:
+        return False
+    prefix = required_lower[: section_match.start()]
+    # Route prose after the authority title should not become part of the
+    # identity check ("for limitation", "where relevant", and similar).
+    prefix = re.split(
+        r"\b(?:for|where|based|only|under|as|with|from|relevant|source|provision)\b",
+        prefix,
+        maxsplit=1,
+    )[0]
+    stopwords = {
+        "a", "an", "and", "as", "act", "application", "authority", "based",
+        "code", "of", "on", "or", "section", "s", "the", "to", "under",
+        "where", "with",
+    }
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", prefix)
+        if token not in stopwords and not token.isdigit() and len(token) > 1
+    ]
+    if not tokens:
+        return False
+    return all(
+        re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", item_blob)
+        is not None
+        for token in tokens
+    )
+
+
+def _constitutional_passage_matches_reviewed_plan(
+    passage: dict[str, Any],
+    retrieval_sources: list[Any] | None,
+    article_number: str | None = None,
+) -> bool:
+    """Require pack identity when a MatterPlan provenance contract exists."""
+    if retrieval_sources is None:
+        title = re.sub(r"[^a-z0-9]+", " ", str(passage.get("title") or "").lower()).strip()
+        source_type = str(passage.get("source_type") or "").strip().lower()
+        anchor = str(passage.get("anchor") or "").strip()
+        document_prefix = re.split(r"[/#]", anchor, maxsplit=1)[0]
+        required_source_pack = str(passage.get("required_source_pack") or "").strip()
+        if title != "constitution of india" or source_type != "bare_act":
+            return False
+        if document_prefix not in {"constitution-india", "constitution-of-india"}:
+            return False
+        if required_source_pack:
+            if not required_source_pack.startswith("constitution_"):
+                return False
+            scope_match = re.match(
+                r"^constitution_article_(?P<scope>[0-9a-z_]+)$",
+                required_source_pack,
+            )
+            if scope_match is not None:
+                scope_numbers = set(
+                    re.findall(r"(?<![a-z])[0-9]+[a-z]?", scope_match.group("scope"))
+                )
+                if article_number and article_number not in scope_numbers:
+                    return False
+        if article_number and not _has_any_exact_anchor(
+            str(passage.get("anchor") or "").lower(),
+            (
+                f"sec-{article_number}",
+                f"/sec-{article_number}",
+                f"article-{article_number}",
+                f"/article-{article_number}",
+            ),
+        ):
+            return False
+        return True
+    source_pack_id = str(passage.get("required_source_pack") or "").strip()
+    source = next(
+        (
+            candidate
+            for candidate in retrieval_sources
+            if str(getattr(candidate, "source_pack_id", "")) == source_pack_id
+        ),
+        None,
+    )
+    if source is None:
+        return False
+    if not _source_pack_title_matches(
+        passage.get("title"),
+        getattr(source, "title_patterns", ()) or (),
+        allow_known_document_suffix=bool(getattr(source, "doc_ids", ()) or ()),
+    ):
+        return False
+    passage_source_type = str(passage.get("source_type") or "").strip()
+    if not passage_source_type or passage_source_type not in getattr(source, "source_types", ()):
+        return False
+    anchor = str(passage.get("anchor") or "").strip()
+    if not anchor or not getattr(source, "doc_ids", None):
+        return False
+    document_prefix = re.split(r"[/#]", anchor, maxsplit=1)[0]
+    if document_prefix not in {str(doc_id) for doc_id in source.doc_ids}:
+        return False
+    if not article_number:
+        return True
+    anchor_patterns = tuple(getattr(source, "anchor_patterns", ()) or ())
+    return bool(anchor_patterns) and any(
+        _source_pack_anchor_matches(anchor, pattern)
+        for pattern in anchor_patterns
+    )
+
+
+def _constitution_article_requirement_match(
+    required_source: str,
+    passages: list[dict[str, Any]],
+    *,
+    retrieval_sources: list[Any] | None = None,
+) -> dict[str, Any] | None:
+    def article_anchor_matches(item: dict[str, Any], number: str) -> bool:
+        if not _constitutional_passage_matches_reviewed_plan(
+            item,
+            retrieval_sources,
+            article_number=number,
+        ):
+            return False
+        blob = _item_blob(item)
+        return _section_anchor_matches(
+            blob,
+            number,
+            passage_text=_passage_identity_text(item),
+        ) or _has_any_exact_anchor(
+            blob,
+            (f"article-{number}", f"/article-{number}"),
+        )
+
     lower = required_source.lower()
-    article_numbers = re.findall(r"\barticles?\s+([0-9]+[a-z]?)\b", lower)
-    if re.search(r"\barticle\s+22\b", lower) or re.search(r"\barticles\s+21\s+and\s+22\b", lower):
-        article_numbers.append("22")
-    if "lawyer-access" in lower or "lawyer access" in lower:
+    article_numbers = sorted(_constitution_article_numbers(lower))
+    if (
+        ("lawyer-access" in lower or "lawyer access" in lower)
+        and article_numbers == ["22"]
+    ):
         for item in passages or []:
             if not isinstance(item, dict):
                 continue
             blob = _item_blob(item)
-            if _has(blob, ("constitution",)) and _has_any_anchor(blob, ("sec-22", "/sec-22")):
+            if _has(blob, ("constitution",)) and article_anchor_matches(item, "22"):
                 return item
-    article_numbers = sorted(set(article_numbers))
     if not article_numbers:
         return None
     if len(article_numbers) == 1:
@@ -2414,7 +4713,7 @@ def _constitution_article_requirement_match(required_source: str, passages: list
             if not isinstance(item, dict):
                 continue
             blob = _item_blob(item)
-            if _has(blob, ("constitution",)) and _has_any_anchor(blob, (f"sec-{number}", f"/sec-{number}")):
+            if _has(blob, ("constitution",)) and article_anchor_matches(item, number):
                 return item
         return None
     found: dict[str, dict[str, Any]] = {}
@@ -2425,7 +4724,7 @@ def _constitution_article_requirement_match(required_source: str, passages: list
         if not _has(blob, ("constitution",)):
             continue
         for number in article_numbers:
-            if _has_any_anchor(blob, (f"sec-{number}", f"/sec-{number}")):
+            if article_anchor_matches(item, number):
                 found[number] = item
     if all(number in found for number in article_numbers):
         return {

@@ -23,13 +23,17 @@ import urllib.request
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from apps.api.source_gap import (
+    is_active_plan_authority_entry as runtime_is_active_plan_authority_entry,
+    missing_plan_authorities as runtime_missing_plan_authorities,
     _should_enforce_requirement as runtime_should_enforce_requirement,
     best_source_match as runtime_best_source_match,
     classify_required_source_requirement as runtime_classify_required_source_requirement,
 )
+from apps.api.runtime_identity import runtime_identity
 from scripts.eval_source_gaps import route_required_source_gap_classifications
 from scripts.legal_safety_eval import (
     analyze_safety_row,
@@ -439,6 +443,29 @@ def stream_answer(api: str, query: str, *, timeout_s: int) -> dict[str, Any]:
     out["wall_ms"] = round((time.perf_counter() - t0) * 1000, 1)
     out["events"] = dict(out["events"])
     return out
+
+
+def fetch_runtime_health(api: str, *, timeout_s: int) -> dict[str, Any]:
+    """Fetch the serving identity before an eval and fail on missing identity."""
+    req = urllib.request.Request(
+        f"{api.rstrip('/')}/healthz",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as response:
+            health = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"could not read live API identity: {type(exc).__name__}: {exc}") from exc
+    fingerprint = health.get("build_fingerprint")
+    source = health.get("build_fingerprint_source")
+    if (
+        not isinstance(fingerprint, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
+        or source not in {"git_worktree", "environment_verified"}
+    ):
+        raise RuntimeError("live API does not expose build_fingerprint; refusing benchmark")
+    return health
 
 
 def expected_act_keys(hint: str | None, query: str | None = None) -> list[str]:
@@ -1274,6 +1301,8 @@ def answer_quality_flags(row: dict[str, Any]) -> list[str]:
     flags: list[str] = []
     answer_text = str(row.get("answer_text") or "").strip()
     answer_lower = answer_text.lower()
+    if row.get("source_gap_outcome") == "source_gap_handoff":
+        flags.append("source_gap_handoff")
     if row.get("source_gap_visible"):
         flags.append("visible_source_gap")
     if not answer_text and not row.get("refused") and not row.get("error"):
@@ -1286,7 +1315,7 @@ def answer_quality_flags(row: dict[str, Any]) -> list[str]:
         flags.append("matter_plan_authority_not_retrieved")
     if row.get("plan_authority_ids_uncited"):
         flags.append("matter_plan_authority_not_cited")
-    if row.get("matter_plan_required") and not (row.get("matter_plan_contract") or {}).get("valid"):
+    if matter_plan_applicable_for_eval(row) and not (row.get("matter_plan_contract") or {}).get("valid"):
         flags.append("missing_or_invalid_matter_plan")
     if row.get("judgment_before_actionable_source"):
         flags.append("judgment_before_actionable_source")
@@ -1330,6 +1359,28 @@ def answer_quality_flags(row: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(flags))
 
 
+_INTERNAL_SERVICE_GAP_REASONS = frozenset(
+    {
+        "answer_preparation_error",
+        "answer_retrieval_error",
+        "answer_stream_error",
+        "llm_unavailable",
+        "rerank_unavailable",
+    }
+)
+
+
+def internal_service_error_reason(row: dict[str, Any]) -> str | None:
+    """Expose operational failures even when the API safely hands off.
+
+    The public API intentionally emits a sanitized source-gap handoff instead
+    of an internal exception. The evaluator must retain that safety contract
+    while distinguishing a corpus/source gap from a serving failure.
+    """
+    reason = str(row.get("source_gap_reason") or "").strip()
+    return reason if reason in _INTERNAL_SERVICE_GAP_REASONS else None
+
+
 def _uses_criminal_code_framing(text: str) -> bool:
     return any(
         term in text
@@ -1340,7 +1391,12 @@ def _uses_criminal_code_framing(text: str) -> bool:
     )
 
 
-def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str, Any]:
+def flatten_row(
+    eval_row: dict[str, Any],
+    observed: dict[str, Any],
+    *,
+    runtime: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     route = observed.get("matter_route") or {}
     plan = observed.get("matter_plan") or {}
     workflow = observed.get("workflow") or {}
@@ -1387,24 +1443,29 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
         observed.get("passages") or [],
         query=str(eval_row.get("query") or ""),
     )
-    retrieved_sources = [
-        compact_source_item(s)
+    retrieved_source_records = [
+        s
         for s in [*(observed.get("sources") or []), *(observed.get("passages") or [])]
         if isinstance(s, dict)
     ]
-    cited_sources = cited_source_items(
+    retrieved_sources = [
+        compact_source_item(s)
+        for s in retrieved_source_records
+    ]
+    cited_source_records = cited_source_records_for_sentences(
         observed.get("sources") or [],
         [],
         sentences,
     )
+    cited_sources = [compact_source_item(item) for item in cited_source_records]
     plan_authority_retrieval_coverage = matter_plan_authority_coverage(
         plan,
-        retrieved_sources,
+        retrieved_source_records,
         query=str(eval_row.get("query") or ""),
     )
     plan_authority_cited_coverage = matter_plan_authority_coverage(
         plan,
-        cited_sources,
+        cited_source_records,
         query=str(eval_row.get("query") or ""),
     )
     route_required_source_cited_coverage = required_source_coverage(
@@ -1415,6 +1476,8 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
     )
     action_pack = route.get("action_pack") or {}
     row = {
+        "runtime_fingerprint": runtime.get("build_fingerprint") if runtime else None,
+        "runtime_fingerprint_source": runtime.get("build_fingerprint_source") if runtime else None,
         "query": eval_row.get("query"),
         "persona": eval_row.get("persona"),
         "product_priority": eval_row.get("product_priority"),
@@ -1495,6 +1558,11 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
         ],
         "source_gap_kinds": (observed.get("source_gap") or {}).get("gap_kinds") or [],
         "source_gap_handoff": (observed.get("source_gap") or {}).get("handoff"),
+        "source_gap_outcome": (observed.get("source_gap") or {}).get("outcome"),
+        "source_gap_reason": (observed.get("source_gap") or {}).get("reason"),
+        "source_gap_safe_handoff_only": bool(
+            (observed.get("source_gap") or {}).get("safe_handoff_only")
+        ),
         "source_gap_policy": (observed.get("source_gap") or {}).get("policy") or eval_row.get("source_gap_policy"),
         "refused": bool(refused),
         "refused_reason": refused.get("reason") if isinstance(refused, dict) else None,
@@ -1568,6 +1636,10 @@ def flatten_row(eval_row: dict[str, Any], observed: dict[str, Any]) -> dict[str,
     row["route_required_source_gap_kinds"] = [
         item["kind"] for item in row["route_required_source_gap_classifications"]
     ]
+    row["internal_service_error"] = internal_service_error_reason(row)
+    row["matter_plan_applicable"] = bool(
+        row["matter_plan_required"] and not safe_source_gap_handoff_for_eval(row)
+    )
     row["answer_quality_flags"] = answer_quality_flags(row)
     row["legal_safety"] = analyze_safety_row(row)
     return row
@@ -1582,7 +1654,11 @@ def compact_source_item(source: dict[str, Any]) -> dict[str, Any]:
         "citation": source.get("citation"),
         "source_type": source.get("source_type"),
         "document_id": source.get("document_id"),
+        "provenance_verified": source.get("provenance_verified") is True,
         "statute_short": source.get("statute_short"),
+        "heading": source.get("heading"),
+        "required_source_pack": source.get("required_source_pack"),
+        "as_at": source.get("as_at"),
         "authority_ids": [
             str(authority_id)
             for authority_id in (source.get("authority_ids") or [])
@@ -1688,6 +1764,28 @@ def matter_plan_required_for_eval(
     return observed_route.get("category") != "off_topic"
 
 
+def safe_source_gap_handoff_for_eval(row: dict[str, Any]) -> bool:
+    """Whether the stream intentionally withheld an answer and plan.
+
+    A safe source-gap handoff is still a product failure until the corpus is
+    repaired, but it is not a malformed MatterPlan. Keeping this distinction
+    makes the report identify the missing authority rather than blaming the
+    renderer for correctly refusing to answer.
+    """
+    return bool(
+        row.get("source_gap_outcome") == "source_gap_handoff"
+        and row.get("source_gap_safe_handoff_only") is True
+        and int(row.get("source_count") or 0) == 0
+    )
+
+
+def matter_plan_applicable_for_eval(row: dict[str, Any]) -> bool:
+    """Whether a row should carry a renderable MatterPlan contract."""
+    if "matter_plan_applicable" in row:
+        return bool(row["matter_plan_applicable"])
+    return bool(row.get("matter_plan_required") and not safe_source_gap_handoff_for_eval(row))
+
+
 def _is_string_list(value: Any) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
@@ -1746,34 +1844,33 @@ def matter_plan_authority_coverage(
     query: str = "",
 ) -> dict[str, Any]:
     """Measure every activated MatterPlan authority obligation by stable ID."""
+    ledger = plan.get("authority_ledger") or []
+    invalid_entry_indices = [
+        index
+        for index, item in enumerate(ledger)
+        if not isinstance(item, dict) or not str(item.get("authority_id") or "").strip()
+    ]
     required_entries = [
         item
-        for item in (plan.get("authority_ledger") or [])
+        for item in ledger
         if isinstance(item, dict)
         and item.get("authority_id")
         and item.get("priority") != "background"
-        and (
-            item.get("must_cite") is True
-            or (
-                item.get("conditional") is True
-                and runtime_should_enforce_requirement(
-                    str(item.get("source") or ""),
-                    "conditional_authority",
-                    query,
-                )
-            )
-        )
+        and runtime_is_active_plan_authority_entry(item, plan=plan, query=query)
     ]
     required_ids = sorted({str(item["authority_id"]) for item in required_entries})
-    present_ids = {
-        str(authority_id)
-        for item in source_items
-        if isinstance(item, dict)
-        for authority_id in (item.get("authority_ids") or [])
-        if authority_id
-    }
-    found_ids = [authority_id for authority_id in required_ids if authority_id in present_ids]
-    missing_ids = [authority_id for authority_id in required_ids if authority_id not in present_ids]
+    runtime_plan = _runtime_plan_from_payload(plan)
+    missing_entries = runtime_missing_plan_authorities(
+        plan=runtime_plan,
+        passages=source_items,
+        query=query,
+    )
+    missing_ids = sorted({
+        str(item.get("authority_id"))
+        for item in missing_entries
+        if item.get("authority_id")
+    })
+    found_ids = [authority_id for authority_id in required_ids if authority_id not in missing_ids]
     sources_by_id = {
         str(item["authority_id"]): str(item.get("source") or "")
         for item in required_entries
@@ -1784,11 +1881,56 @@ def matter_plan_authority_coverage(
         "missing_ids": missing_ids,
         "missing_sources": [sources_by_id[authority_id] for authority_id in missing_ids],
         "coverage": (len(found_ids) / len(required_ids)) if required_ids else None,
-        "ok": not missing_ids,
-        "applicable": bool(required_ids),
+        "invalid_entry_indices": invalid_entry_indices,
+        "ok": not missing_ids and not invalid_entry_indices,
+        "applicable": bool(required_ids or invalid_entry_indices),
     }
 
 
+def _runtime_plan_from_payload(plan: dict[str, Any]) -> SimpleNamespace:
+    """Adapt an event payload to the runtime matcher used by serving.
+
+    The evaluator must not award authority coverage from an ID alone. The
+    serving matcher also checks source-pack identity, document/type metadata,
+    and provision anchors. This small adapter keeps one matching function for
+    both paths without making the event JSON schema depend on Python classes.
+    """
+    def namespace(value: Any) -> Any:
+        if isinstance(value, dict):
+            return SimpleNamespace(**{key: namespace(item) for key, item in value.items()})
+        if isinstance(value, list):
+            return [namespace(item) for item in value]
+        return value
+
+    ledger = []
+    for item in plan.get("authority_ledger") or []:
+        if not isinstance(item, dict):
+            continue
+        entry = dict(item)
+        for field in (
+            "authority_id", "identity_status", "registry_key", "source_pack_id",
+            "required_anchor_patterns", "section", "note", "canonical_name", "act",
+        ):
+            default = [] if field == "required_anchor_patterns" else None
+            if field == "identity_status":
+                default = "provisional"
+            if field == "authority_id":
+                default = ""
+            entry.setdefault(field, default)
+        ledger.append(namespace(entry))
+    retrieval_sources = []
+    for item in plan.get("retrieval_sources") or []:
+        if not isinstance(item, dict):
+            continue
+        source = dict(item)
+        for field in ("doc_ids", "source_types", "title_patterns", "anchor_patterns", "authority_ids"):
+            source.setdefault(field, [])
+        retrieval_sources.append(namespace(source))
+    return SimpleNamespace(
+        incident_date_status=plan.get("incident_date_status"),
+        authority_ledger=ledger,
+        retrieval_sources=retrieval_sources,
+    )
 def citation_integrity_metrics(
     sources: list[dict[str, Any]],
     passages: list[dict[str, Any]],
@@ -3244,6 +3386,18 @@ def cited_source_items(
     passages: list[dict[str, Any]],
     sentences: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    return [
+        compact_source_item(item)
+        for item in cited_source_records_for_sentences(sources, passages, sentences)
+    ]
+
+
+def cited_source_records_for_sentences(
+    sources: list[dict[str, Any]],
+    passages: list[dict[str, Any]],
+    sentences: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return raw cited records so provenance checks see every source field."""
     cited_indices = _cited_source_indices(sentences)
     if not cited_indices:
         return []
@@ -3254,7 +3408,7 @@ def cited_source_items(
         idx = item.get("index")
         if isinstance(idx, int) and idx not in by_index:
             by_index[idx] = item
-    return [compact_source_item(by_index[idx]) for idx in sorted(cited_indices) if idx in by_index]
+    return [by_index[idx] for idx in sorted(cited_indices) if idx in by_index]
 
 
 def percentile(values: list[float], pct: float) -> float | None:
@@ -3290,9 +3444,14 @@ def product_pass(row: dict[str, Any]) -> bool:
     fails, cite the expected controlling authority when the prompt declares one,
     and avoid unfilled must-cite route source slots.
     """
-    if row.get("refused") or row.get("error"):
+    if (
+        row.get("refused")
+        or row.get("error")
+        or row.get("internal_service_error")
+        or row.get("source_gap_outcome") == "source_gap_handoff"
+    ):
         return False
-    if row.get("matter_plan_required") and not (row.get("matter_plan_contract") or {}).get("valid"):
+    if matter_plan_applicable_for_eval(row) and not (row.get("matter_plan_contract") or {}).get("valid"):
         return False
     if row.get("relevance_verdict") != "ok":
         return False
@@ -3331,8 +3490,10 @@ def _rows_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "plan_authority_citation_gaps": 0,
             "matter_plan_contract_failures": 0,
             "visible_source_gaps": 0,
+            "source_gap_handoffs": 0,
             "refused": 0,
             "errors": 0,
+            "internal_service_errors": 0,
             "p90_total_ms": None,
         }
     scored_cited = [r for r in rows if r.get("expected_act_cited_hit") is not None]
@@ -3358,12 +3519,16 @@ def _rows_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "plan_authority_citation_gaps": sum(1 for r in rows if r.get("plan_authority_ids_uncited")),
         "matter_plan_contract_failures": sum(
             1 for r in rows
-            if r.get("matter_plan_required")
+            if matter_plan_applicable_for_eval(r)
             and not (r.get("matter_plan_contract") or {}).get("valid")
         ),
         "visible_source_gaps": sum(1 for r in rows if r.get("source_gap_visible")),
+        "source_gap_handoffs": sum(
+            1 for r in rows if r.get("source_gap_outcome") == "source_gap_handoff"
+        ),
         "refused": sum(1 for r in rows if r.get("refused")),
-        "errors": sum(1 for r in rows if r.get("error")),
+        "errors": sum(1 for r in rows if r.get("error") or r.get("internal_service_error")),
+        "internal_service_errors": sum(1 for r in rows if r.get("internal_service_error")),
         "p90_total_ms": percentile(total_vals, 0.90),
     }
 
@@ -3415,7 +3580,13 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
     scored_cited_act = [r for r in rows if r.get("expected_act_cited_hit") is not None]
     cited_act_hits = sum(1 for r in scored_cited_act if r.get("expected_act_cited_hit"))
     refused = sum(1 for r in rows if r["refused"])
-    errors = sum(1 for r in rows if r["error"])
+    transport_errors = sum(1 for r in rows if r["error"])
+    internal_service_errors = sum(1 for r in rows if r.get("internal_service_error"))
+    errors = sum(
+        1
+        for r in rows
+        if r["error"] or r.get("internal_service_error")
+    )
     verdicts = Counter(r["relevance_verdict"] or ("refused" if r["refused"] else "no_relevance") for r in rows)
     routes = Counter(r["route_category"] or "unknown" for r in rows)
     action_packs = Counter(r["action_pack_id"] or "none" for r in rows)
@@ -3445,10 +3616,13 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
     ]
     matter_plan_contract_failures = [
         r for r in rows
-        if r.get("matter_plan_required")
+        if matter_plan_applicable_for_eval(r)
         and not (r.get("matter_plan_contract") or {}).get("valid")
     ]
-    matter_plan_required_rows = [r for r in rows if r.get("matter_plan_required")]
+    matter_plan_required_rows = [
+        r for r in rows
+        if matter_plan_applicable_for_eval(r)
+    ]
     plan_authority_required_count = sum(
         len(r.get("plan_authority_ids_required") or []) for r in plan_authority_rows
     )
@@ -3480,7 +3654,16 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
         for coverage in (r.get("expected_procedure_anchor_coverage") or {}).values()
     ]
     procedure_cited_ok = sum(1 for coverage in procedure_coverages if coverage.get("cited_ok"))
-    answered_rows = [r for r in rows if not r["refused"] and not r["error"] and r.get("sentence_count")]
+    answered_rows = [
+        r for r in rows
+        if not r["refused"]
+        and not r["error"]
+        and r.get("sentence_count")
+        and r.get("source_gap_outcome") != "source_gap_handoff"
+    ]
+    source_gap_handoffs = sum(
+        1 for r in rows if r.get("source_gap_outcome") == "source_gap_handoff"
+    )
     first_actionable = sum(1 for r in answered_rows if r.get("first_cited_is_actionable") is True)
     judgment_before_actionable = sum(1 for r in answered_rows if r.get("judgment_before_actionable_source") is True)
     template_path_rows = [r for r in rows if _generation_path(r) == "template_or_rule"]
@@ -3488,6 +3671,11 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
     product_pass_rows = sum(1 for r in rows if product_pass(r))
     critical_rows = [r for r in rows if str(r.get("product_priority") or "").lower() == "critical"]
     critical_pass_rows = sum(1 for r in critical_rows if product_pass(r))
+    runtime_fingerprints = sorted({
+        str(r.get("runtime_fingerprint"))
+        for r in rows
+        if r.get("runtime_fingerprint")
+    })
 
     stage_names = [
         "total_ms",
@@ -3510,11 +3698,15 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
         "",
         f"Rows: {len(rows)}",
         f"Input/output: `{out}`",
+        f"Runtime fingerprint(s): `{', '.join(runtime_fingerprints) or 'missing'}`",
         "",
         "## Outcome",
         "",
         f"- Refused: {refused}/{len(rows)}",
+        f"- Source-gap handoffs (non-answers): {source_gap_handoffs}/{len(rows)}",
         f"- Errors: {errors}/{len(rows)}",
+        f"- Transport errors: {transport_errors}/{len(rows)}",
+        f"- Internal service errors hidden behind safe handoff: {internal_service_errors}/{len(rows)}",
         f"- Relevance verdicts: {dict(verdicts)}",
         f"- Expected Act hit: {act_hits}/{len(scored_act)} ({(act_hits / len(scored_act) * 100) if scored_act else 0:.1f}%)",
         f"- Expected Act cited hit: {cited_act_hits}/{len(scored_cited_act)} ({(cited_act_hits / len(scored_cited_act) * 100) if scored_cited_act else 0:.1f}%)",
@@ -3527,7 +3719,8 @@ def write_report(rows: list[dict[str, Any]], out: Path, report: Path) -> None:
         f"- Unknown citation indices: {len(unknown_citation_rows)}/{len(rows)}",
         f"- Route required-source retrieval gaps: {len(route_source_gaps)}/{len(rows)}",
         f"- Route required-source citation gaps: {len(route_source_citation_gaps)}/{len(rows)}",
-        f"- MatterPlan contract valid: {len(matter_plan_required_rows) - len(matter_plan_contract_failures)}/{len(matter_plan_required_rows)} required legal rows",
+        f"- MatterPlan contract valid: {len(matter_plan_required_rows) - len(matter_plan_contract_failures)}/{len(matter_plan_required_rows)} applicable answer rows",
+        f"- MatterPlan not applicable on safe source-gap handoffs: {sum(1 for r in rows if safe_source_gap_handoff_for_eval(r))}/{len(rows)}",
         f"- MatterPlan authority-obligation retrieval: {plan_authority_retrieved_count}/{plan_authority_required_count} authority obligations ({len(plan_authority_retrieval_gaps)} rows with gaps)",
         f"- MatterPlan authority-obligation citation: {plan_authority_cited_count}/{plan_authority_required_count} authority obligations ({len(plan_authority_citation_gaps)} rows with gaps)",
         f"- Visible source-gap warnings: {len(visible_source_gap_rows)}/{len(rows)}",
@@ -3870,6 +4063,11 @@ def main() -> None:
     parser.add_argument("--timeout-s", type=int, default=180)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--report", type=Path, default=None)
+    parser.add_argument(
+        "--expected-fingerprint",
+        default=None,
+        help="expected live API fingerprint; defaults to this worktree's fingerprint",
+    )
     args = parser.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3880,17 +4078,43 @@ def main() -> None:
     if not rows_in:
         raise SystemExit(f"no eval rows found under {args.queries_dir}")
 
-    print(f"=== timed eval: {len(rows_in)} queries -> {out} ===", flush=True)
+    runtime_health = fetch_runtime_health(args.api, timeout_s=min(args.timeout_s, 20))
+    expected_fingerprint = args.expected_fingerprint or runtime_identity()["fingerprint"]
+    if expected_fingerprint == "unknown":
+        raise SystemExit("local worktree fingerprint is unavailable; refusing benchmark")
+    if runtime_health["build_fingerprint"] != expected_fingerprint:
+        raise SystemExit(
+            "refusing benchmark: live API fingerprint does not match the evaluated "
+            f"worktree (live={runtime_health['build_fingerprint']}, expected={expected_fingerprint})"
+        )
+    runtime_metadata = {
+        "build_fingerprint": runtime_health["build_fingerprint"],
+        "build_fingerprint_source": runtime_health.get("build_fingerprint_source"),
+    }
+
+    print(
+        f"=== timed eval: {len(rows_in)} queries -> {out} "
+        f"(runtime={runtime_metadata['build_fingerprint']}) ===",
+        flush=True,
+    )
     rows: list[dict[str, Any]] = []
     with out.open("w", encoding="utf-8") as f:
         for idx, eval_row in enumerate(rows_in, 1):
             observed = stream_answer(args.api, eval_row["query"], timeout_s=args.timeout_s)
-            row = flatten_row(eval_row, observed)
+            row = flatten_row(eval_row, observed, runtime=runtime_metadata)
             rows.append(row)
             f.write(jsonl_dumps(row) + "\n")
             f.flush()
             timing = row.get("timing") or {}
-            outcome = "ERR" if row["error"] else "REF" if row["refused"] else row["relevance_verdict"] or "NO_REL"
+            outcome = (
+                "ERR"
+                if row["error"] or row.get("internal_service_error")
+                else "REF"
+                if row["refused"]
+                else "GAP"
+                if row.get("source_gap_outcome") == "source_gap_handoff"
+                else row["relevance_verdict"] or "NO_REL"
+            )
             route_name = row.get("route_category") or "unknown"
             print(
                 f"[{idx:03}/{len(rows_in)}] {outcome:<7} "

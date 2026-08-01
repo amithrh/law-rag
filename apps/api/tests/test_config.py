@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 import pytest  # noqa: F401  — used by tests below
+from pydantic import ValidationError
 
 from apps.api.config import Settings
 
@@ -102,6 +103,46 @@ class TestDatabaseUrlResolution:
 
 
 class TestSettingsDefaults:
+    def test_postgres_connect_timeout_is_bounded(self):
+        assert Settings(database_url="postgresql://x").postgres_connect_timeout_sec == 5.0
+        for value in (0, -1, 61, float("inf"), float("nan")):
+            with pytest.raises(ValidationError):
+                Settings(database_url="postgresql://x", postgres_connect_timeout_sec=value)
+
+    def test_answer_admission_limits_are_bounded(self):
+        defaults = Settings(database_url="postgresql://x")
+        assert defaults.answer_max_body_bytes == 16_384
+        assert defaults.answer_max_waiters == 32
+        assert defaults.answer_network_rate_limit_per_minute == 6_000
+        for field, value in (
+            ("answer_max_body_bytes", 0),
+            ("answer_max_body_bytes", 1_048_577),
+            ("answer_max_concurrent", 0),
+            ("answer_max_waiters", -1),
+            ("answer_rate_limit_per_minute", 0),
+            ("answer_rate_limit_per_minute", 100_001),
+        ):
+            with pytest.raises(ValidationError):
+                Settings(database_url="postgresql://x", **{field: value})
+
+    def test_llm_generation_capacity_is_bounded(self):
+        defaults = Settings(database_url="postgresql://x")
+        assert defaults.llm_max_concurrent == 1
+        assert defaults.llm_admission_wait_sec == 120.0
+        assert defaults.llm_preflight_cache_sec == 5.0
+        for field, value in (("llm_max_concurrent", 0), ("llm_admission_wait_sec", 0)):
+            with pytest.raises(ValidationError):
+                Settings(database_url="postgresql://x", **{field: value})
+
+    def test_redis_password_is_url_encoded(self):
+        settings = Settings(
+            database_url="postgresql://x",
+            redis_host="127.0.0.1",
+            redis_host_port=6380,
+            redis_password="p@ss/word",
+        )
+        assert settings.resolved_redis_url == "redis://:p%40ss%2Fword@127.0.0.1:6380"
+
     def test_rerank_enabled_by_default(self):
         assert Settings(database_url="postgresql://x").rerank_enabled is True
 
@@ -147,11 +188,13 @@ class TestSettingsDefaults:
             "input must be larger than output for rerank to be meaningful"
         )
 
-    def test_require_provenance_verified_off_by_default(self):
-        """In development (where the corpus is being loaded), we don't want
-        to block queries against unverified content. Production overrides
-        via env var REQUIRE_PROVENANCE_VERIFIED=true."""
-        assert Settings(database_url="postgresql://x").require_provenance_verified is False
+    def test_rerank_device_can_be_pinned_for_long_running_serving(self, monkeypatch):
+        monkeypatch.setenv("RERANK_DEVICE", "cpu")
+        assert Settings(database_url="postgresql://x").rerank_device == "cpu"
+
+    def test_require_provenance_verified_on_by_default(self):
+        """Serving fails closed; offline evaluation must opt out explicitly."""
+        assert Settings(database_url="postgresql://x").require_provenance_verified is True
 
     def test_verifier_backend_defaults_to_bge(self):
         """Default is `bge` after head-to-head battery v3 comparison: bge

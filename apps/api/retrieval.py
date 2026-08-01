@@ -48,7 +48,7 @@ from datetime import date
 import asyncpg
 from apps.api.config import get_settings
 from apps.api.embeddings import embedding_to_halfvec_literal, get_embedder
-from apps.api.legal_issue_plan import MatterPlan
+from apps.api.legal_issue_plan import MatterPlan, _passage_anchor_matches_section
 from apps.api.matter_router import MatterRoute, route_matter
 from apps.api.source_packs import SourcePack, source_packs_for_route
 
@@ -77,6 +77,9 @@ class RetrievedChunk:
     # produced by the RRF path (e.g. legacy `dense_bm25` mode).
     rrf_score: float | None = None
     metadata: dict = field(default_factory=dict)
+    # Stable corpus document slug selected from documents.doc_id. This is
+    # separate from document_id, the internal numeric DB foreign key.
+    document_key: str | None = None
 
     @property
     def combined_score(self) -> float:
@@ -95,6 +98,10 @@ class RequiredAuthorityAnchor:
     authority_id: str
     source_pack_id: str
     anchor_patterns: tuple[str, ...]
+    # A single source pack can carry multiple mandatory provisions. Keep the
+    # ledger section attached so preservation cannot satisfy Section 142 with
+    # a neighboring Section 138 chunk from the same pack.
+    section: str | None = None
 
 
 def _retrieval_policy(
@@ -217,7 +224,9 @@ async def sparse_retrieve(
         WITH q AS (SELECT ${base + 1}::jsonb AS qs)
         SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                c.subject_area, c.as_at, c.paragraph_no, c.metadata,
+               {_effective_provenance_select_sql()},
                d.title, d.citation, d.court, d.statute_short,
+               d.doc_id AS document_key,
                (
                    SELECT COALESCE(SUM(
                        (kv.value)::float8
@@ -245,10 +254,12 @@ def _bm25_retrieve_sql(
 ) -> str:
     query_param = where_param_count + 1
     limit_param = where_param_count + 2
-    common_select = """
+    common_select = f"""
                c.id, c.document_id, c.anchor, c.text, c.source_type,
                c.subject_area, c.as_at, c.paragraph_no, c.metadata,
+               {_effective_provenance_select_sql()},
                d.title, d.citation, d.court, d.statute_short,
+               d.doc_id AS document_key,
     """
 
     if not fielded:
@@ -319,6 +330,14 @@ def _hydrate_row(r) -> RetrievedChunk:
         metadata = parsed if isinstance(parsed, dict) else {}
     else:
         metadata = {}
+    try:
+        metadata["_provenance_verified"] = bool(r["provenance_verified"])
+    except (KeyError, TypeError):
+        metadata["_provenance_verified"] = False
+    try:
+        raw_document_key = r["document_key"]
+    except (KeyError, TypeError):
+        raw_document_key = None
     return RetrievedChunk(
         chunk_id=r["id"],
         document_id=r["document_id"],
@@ -333,6 +352,7 @@ def _hydrate_row(r) -> RetrievedChunk:
         court=r["court"],
         statute_short=r["statute_short"],
         metadata=dict(metadata),
+        document_key=(str(raw_document_key) if raw_document_key else None),
     )
 
 
@@ -349,7 +369,7 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
                 "Juvenile Justice (Care and Protection of Children) Act 2015, Section 9\n\n"
                 + match.group(0).strip()
             )
-            chunk.anchor = "jj-2015/sec-9"
+            chunk.metadata["display_anchor"] = "jj-2015/sec-9"
             chunk.metadata["section_no"] = "9"
         return
     if pack.id == "jj_2015_age_documents":
@@ -370,7 +390,7 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
                 "Juvenile Justice (Care and Protection of Children) Act 2015, Section 94\n\n"
                 + match.group(0).strip()
             )
-            chunk.anchor = "jj-2015/sec-94"
+            chunk.metadata["display_anchor"] = "jj-2015/sec-94"
             chunk.metadata["section_no"] = "94"
         return
     if pack.id == "constitution_article_46":
@@ -381,7 +401,7 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
         )
         if match:
             chunk.text = "Constitution of India, Article 46\n\n" + match.group(0).strip()
-            chunk.anchor = "constitution-india/sec-46"
+            chunk.metadata["display_anchor"] = "constitution-india/sec-46"
             chunk.metadata["section_no"] = "46"
         return
     if pack.id == "constitution_article_47":
@@ -405,7 +425,7 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
                 "Narcotic Drugs and Psychotropic Substances Act 1985, Section 37\n\n"
                 + match.group(0).strip()
             )
-            chunk.anchor = "ndps-1985/sec-37"
+            chunk.metadata["display_anchor"] = "ndps-1985/sec-37"
             chunk.metadata["section_no"] = "37"
             return
     if pack.id != "ndps_1985" or "section 36a" not in pack.search_query.lower():
@@ -418,7 +438,10 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
                     "Juvenile Justice (Care and Protection of Children) Act 2015, "
                     f"Section {sec_no}\n\n" + match.group(0).strip()
                 )
-                chunk.anchor = f"jj-2015/sec-{sec_no}"
+                # The stored anchor is the provenance key. Keep it intact so
+                # a public citation still resolves to the verified corpus
+                # chunk; expose a shorter label separately for presentation.
+                chunk.metadata["display_anchor"] = f"jj-2015/sec-{sec_no}"
                 chunk.metadata["section_no"] = sec_no
         return
     text = chunk.text or ""
@@ -432,7 +455,7 @@ def _focus_required_source_pack_text(chunk: RetrievedChunk, pack: SourcePack) ->
             "Narcotic Drugs and Psychotropic Substances Act 1985, Section 36A\n\n"
             + match.group(0).strip()
         )
-        chunk.anchor = "ndps-1985/sec-36A"
+        chunk.metadata["display_anchor"] = "ndps-1985/sec-36A"
         chunk.metadata["section_no"] = "36A"
 
 
@@ -577,6 +600,122 @@ def _filter_query_ineligible_sources(
     return [c for c in chunks if _query_allows_state_specific_source(query, c)]
 
 
+def _required_source_pack_ids(metadata: dict | None) -> tuple[str, ...]:
+    """Return every reviewed pack that selected a physical corpus chunk.
+
+    One statute section can satisfy more than one reviewed route contract.
+    The legacy singular value remains the primary label for ordering and UI
+    compatibility; the alias list prevents deduplication from discarding a
+    separately verified obligation.
+    """
+    raw = metadata or {}
+    values: list[object] = [raw.get("_required_source_pack")]
+    aliases = raw.get("_required_source_packs")
+    if isinstance(aliases, (list, tuple, set)):
+        values.extend(aliases)
+    elif aliases is not None:
+        values.append(aliases)
+    return tuple(dict.fromkeys(
+        str(value).strip()
+        for value in values
+        if str(value or "").strip()
+    ))
+
+
+def _required_source_pack_authority_ids(metadata: dict | None) -> dict[str, tuple[str, ...]]:
+    """Return the explicit registry authorities proven for each reviewed pack.
+
+    A chunk can be selected through several packs. A flat authority-ID list is
+    insufficient after that merge because it no longer tells which pack proved
+    which registry authority. Keep the association narrow and ordered so
+    registry-owned checks cannot borrow an authority from a neighboring pack.
+    """
+    raw_mapping = (metadata or {}).get("_required_source_pack_authority_ids")
+    if not isinstance(raw_mapping, dict):
+        return {}
+    out: dict[str, tuple[str, ...]] = {}
+    for raw_pack_id, raw_ids in raw_mapping.items():
+        pack_id = str(raw_pack_id or "").strip()
+        if not pack_id:
+            continue
+        if isinstance(raw_ids, (list, tuple, set)):
+            values = raw_ids
+        else:
+            values = (raw_ids,)
+        authority_ids = tuple(dict.fromkeys(
+            str(value).strip()
+            for value in values
+            if str(value or "").strip()
+        ))
+        if authority_ids:
+            out[pack_id] = authority_ids
+    return out
+
+
+def _explicit_authority_ids(metadata: dict | None) -> tuple[str, ...]:
+    raw_ids = (metadata or {}).get("_authority_ids")
+    if isinstance(raw_ids, (list, tuple, set)):
+        values = raw_ids
+    else:
+        values = (raw_ids,)
+    return tuple(dict.fromkeys(
+        str(value).strip()
+        for value in values
+        if str(value or "").strip()
+    ))
+
+
+def _merge_required_source_pack_metadata(existing: dict, incoming: dict) -> None:
+    """Merge source-pack aliases without severing pack-to-authority evidence."""
+    existing_pack = existing.get("_required_source_pack")
+    existing_pack_ids = _required_source_pack_ids(existing)
+    existing_priority = float(existing.get("_required_source_priority") or 0.0)
+    existing_query = existing.get("_required_source_query")
+    existing_authority_ids = _explicit_authority_ids(existing)
+    existing_by_pack = _required_source_pack_authority_ids(existing)
+
+    incoming_pack = incoming.get("_required_source_pack")
+    incoming_pack_ids = _required_source_pack_ids(incoming)
+    incoming_priority = float(incoming.get("_required_source_priority") or 0.0)
+    incoming_authority_ids = _explicit_authority_ids(incoming)
+    incoming_by_pack = _required_source_pack_authority_ids(incoming)
+
+    # Older candidates may predate the per-pack map. Their explicit IDs are
+    # attributable only to their primary reviewed pack, never every alias.
+    if existing_pack and existing_authority_ids and str(existing_pack) not in existing_by_pack:
+        existing_by_pack[str(existing_pack)] = existing_authority_ids
+    if incoming_pack and incoming_authority_ids and str(incoming_pack) not in incoming_by_pack:
+        incoming_by_pack[str(incoming_pack)] = incoming_authority_ids
+
+    existing.update(incoming)
+    if existing_pack and incoming_pack and existing_priority > incoming_priority:
+        existing["_required_source_pack"] = existing_pack
+        existing["_required_source_priority"] = existing_priority
+        if existing_query:
+            existing["_required_source_query"] = existing_query
+
+    existing["_required_source_packs"] = list(
+        dict.fromkeys((*existing_pack_ids, *incoming_pack_ids))
+    )
+    merged_by_pack: dict[str, tuple[str, ...]] = dict(existing_by_pack)
+    for pack_id, authority_ids in incoming_by_pack.items():
+        merged_by_pack[pack_id] = tuple(dict.fromkeys(
+            (*merged_by_pack.get(pack_id, ()), *authority_ids)
+        ))
+    if merged_by_pack:
+        existing["_required_source_pack_authority_ids"] = {
+            pack_id: list(authority_ids)
+            for pack_id, authority_ids in merged_by_pack.items()
+        }
+    all_authority_ids = tuple(dict.fromkeys(
+        (*existing_authority_ids, *incoming_authority_ids,
+         *(authority_id for authority_ids in merged_by_pack.values() for authority_id in authority_ids))
+    ))
+    if all_authority_ids:
+        existing["_authority_ids"] = list(all_authority_ids)
+
+
+
 def _preserve_required_source_packs(
     candidates: list[RetrievedChunk],
     pack_ids: list[str],
@@ -601,7 +740,9 @@ def _preserve_required_source_packs(
     selected = candidates[:limit]
     selected_chunk_ids = {c.chunk_id for c in selected}
     present_pack_ids = {
-        str(pack_id) for c in selected if (pack_id := c.metadata.get("_required_source_pack"))
+        pack_id
+        for c in selected
+        for pack_id in _required_source_pack_ids(c.metadata)
     }
 
     for pack_id in pack_ids:
@@ -611,7 +752,7 @@ def _preserve_required_source_packs(
             (
                 c
                 for c in candidates[limit:]
-                if c.metadata.get("_required_source_pack") == pack_id
+                if pack_id in _required_source_pack_ids(c.metadata)
                 and c.chunk_id not in selected_chunk_ids
             ),
             None,
@@ -663,7 +804,7 @@ def _required_authority_anchors(plan: MatterPlan | None) -> tuple[RequiredAuthor
     if plan is None:
         return ()
     requirements: list[RequiredAuthorityAnchor] = []
-    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    seen: set[tuple[str, str, tuple[str, ...], str | None]] = set()
     for entry in plan.authority_ledger:
         if (
             not entry.must_cite
@@ -676,11 +817,13 @@ def _required_authority_anchors(plan: MatterPlan | None) -> tuple[RequiredAuthor
             authority_id=entry.authority_id,
             source_pack_id=entry.source_pack_id,
             anchor_patterns=tuple(entry.required_anchor_patterns),
+            section=entry.section,
         )
         key = (
             requirement.authority_id,
             requirement.source_pack_id,
             requirement.anchor_patterns,
+            requirement.section,
         )
         if key not in seen:
             seen.add(key)
@@ -692,9 +835,27 @@ def _chunk_matches_required_authority(
     chunk: RetrievedChunk,
     requirement: RequiredAuthorityAnchor,
 ) -> bool:
-    if chunk.metadata.get("_required_source_pack") != requirement.source_pack_id:
+    if requirement.source_pack_id not in _required_source_pack_ids(chunk.metadata):
+        return False
+    authority_ids_by_pack = _required_source_pack_authority_ids(chunk.metadata)
+    if authority_ids_by_pack and requirement.source_pack_id not in authority_ids_by_pack:
+        # This physical chunk can serve several reviewed packs. Once that
+        # metadata exists, an authority proven for one pack cannot satisfy a
+        # requirement for another pack merely because the chunk was merged.
+        return False
+    per_pack_authority_ids = authority_ids_by_pack.get(requirement.source_pack_id)
+    explicit_authority_ids = _explicit_authority_ids(chunk.metadata)
+    if per_pack_authority_ids and requirement.authority_id not in per_pack_authority_ids:
+        return False
+    if explicit_authority_ids and requirement.authority_id not in explicit_authority_ids:
         return False
     anchor = chunk.anchor or ""
+    if requirement.section:
+        return _passage_anchor_matches_section(
+            anchor.lower(),
+            requirement.section,
+            passage_text=chunk.text,
+        )
     return any(
         re.search(pattern, anchor, flags=re.IGNORECASE)
         for pattern in _anchor_regexes_from_patterns(requirement.anchor_patterns)
@@ -804,7 +965,7 @@ def _preserve_section_diverse_required_packs(
             continue
 
         pack_candidates = [
-            c for c in candidates if c.metadata.get("_required_source_pack") == pack_id
+            c for c in candidates if pack_id in _required_source_pack_ids(c.metadata)
         ]
         if not pack_candidates:
             continue
@@ -812,7 +973,7 @@ def _preserve_section_diverse_required_packs(
         selected_sections = {
             sec
             for c in selected
-            if c.metadata.get("_required_source_pack") == pack_id
+            if pack_id in _required_source_pack_ids(c.metadata)
             if (sec := _chunk_section_number(c))
         }
         for section_no in section_order:
@@ -907,7 +1068,7 @@ def _promote_required_source_packs(
     present_pack_ids = [
         pack_id
         for pack_id in pack_ids
-        if any(c.metadata.get("_required_source_pack") == pack_id for c in selected)
+        if any(pack_id in _required_source_pack_ids(c.metadata) for c in selected)
     ]
     if not present_pack_ids:
         return
@@ -919,7 +1080,7 @@ def _promote_required_source_packs(
             (
                 i
                 for i, c in enumerate(selected)
-                if c.metadata.get("_required_source_pack") == pack_id
+                if pack_id in _required_source_pack_ids(c.metadata)
             ),
             None,
         )
@@ -1204,6 +1365,40 @@ def _required_source_pack_limit(pack: SourcePack, configured_limit: int) -> int:
     return max(configured_limit, section_count)
 
 
+_SNAPSHOT_SUFFIX_RE = re.compile(r"@\d{4}-\d{2}-\d{2}$")
+
+
+def _drop_superseded_required_source_snapshots(
+    union: dict[int, RetrievedChunk],
+    required_chunks: list[RetrievedChunk],
+) -> None:
+    """Keep older snapshots out of a reviewed current-law answer window.
+
+    Authority migrations deliberately retain historical chunks. When a
+    required-source pack supplies a dated canonical projection, however, a
+    dense/BM25 head may also have surfaced an older undated projection of the
+    same section. Remove only those superseded copies from this request's
+    candidate union; the historical chunks remain stored for temporal search.
+    """
+    newest_by_section: dict[tuple[int, str], date] = {}
+    for chunk in required_chunks:
+        if chunk.as_at is None:
+            continue
+        key = (chunk.document_id, _SNAPSHOT_SUFFIX_RE.sub("", chunk.anchor))
+        newest = newest_by_section.get(key)
+        if newest is None or chunk.as_at > newest:
+            newest_by_section[key] = chunk.as_at
+
+    if not newest_by_section:
+        return
+
+    for chunk_id, chunk in list(union.items()):
+        key = (chunk.document_id, _SNAPSHOT_SUFFIX_RE.sub("", chunk.anchor))
+        newest = newest_by_section.get(key)
+        if newest is not None and (chunk.as_at is None or chunk.as_at < newest):
+            union.pop(chunk_id, None)
+
+
 async def _fetch_source_pack_candidates(
     pool: asyncpg.Pool,
     query: str,
@@ -1227,7 +1422,9 @@ async def _fetch_source_pack_candidates(
                     f"""
                     SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                            c.subject_area, c.as_at, c.paragraph_no, c.metadata,
+                           {_effective_provenance_select_sql()},
                            d.title, d.citation, d.court, d.statute_short,
+                           d.doc_id AS document_key,
                            ts_rank(c.text_tsv, plainto_tsquery('english', $1)) AS bm25_score,
                            1 AS anchor_priority,
                            1 AS anchor_order
@@ -1259,6 +1456,7 @@ async def _fetch_source_pack_candidates(
                     _focus_required_source_pack_text(chunk, pack)
                     chunk.bm25_score = float(row["bm25_score"] or 0.0)
                     chunk.metadata["_required_source_pack"] = pack.id
+                    chunk.metadata["_required_source_packs"] = [pack.id]
                     chunk.metadata["_required_source_priority"] = pack.priority
                     chunk.metadata["_required_source_query"] = pack.search_query
                     out.append(chunk)
@@ -1276,7 +1474,9 @@ async def _fetch_source_pack_candidates(
                 f"""
                 SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                        c.subject_area, c.as_at, c.paragraph_no, c.metadata,
+                       {_effective_provenance_select_sql()},
                        d.title, d.citation, d.court, d.statute_short,
+                       d.doc_id AS document_key,
                        da.authority_id AS registry_authority_id,
                        ts_rank(c.text_tsv, plainto_tsquery('english', $6)) AS bm25_score,
                        CASE
@@ -1320,15 +1520,30 @@ async def _fetch_source_pack_candidates(
                 list(pack.authority_ids),
             )
             pack_chunks: list[RetrievedChunk] = []
+            needs_ndps_36a = (
+                pack.id == "ndps_1985"
+                and "section 36a" in pack.search_query.lower()
+                and "one hundred eighty" in pack.search_query.lower()
+            )
             for row in rows:
                 chunk = _hydrate_row(row)
+                if needs_ndps_36a:
+                    # Some legacy NDPS chunks contain a 36A paragraph but are
+                    # stored under section 35 anchors. They must not become
+                    # authority evidence merely because the document audit is
+                    # trusted; only a naturally anchored/canonical 36A row is
+                    # eligible for this required-source pack. An empty
+                    # section_no is not evidence of a section and must not
+                    # allow a legacy section-35 anchor through.
+                    raw_section = str(chunk.metadata.get("section_no") or "").upper()
+                    raw_anchor = chunk.anchor.lower()
+                    raw_is_36a_anchor = bool(
+                        re.search(r"(?:^|/)sec-36a(?:@|-|$)", raw_anchor)
+                    )
+                    if raw_section != "36A" or not raw_is_36a_anchor:
+                        continue
                 _focus_required_source_pack_text(chunk, pack)
-                if (
-                    pack.id == "ndps_1985"
-                    and "section 36a" in pack.search_query.lower()
-                    and "one hundred eighty" in pack.search_query.lower()
-                    and chunk.metadata.get("section_no") != "36A"
-                ):
+                if needs_ndps_36a and chunk.metadata.get("section_no") != "36A":
                     continue
                 if (
                     pack.id == "constitution_article_46"
@@ -1343,6 +1558,7 @@ async def _fetch_source_pack_candidates(
                     continue
                 chunk.bm25_score = float(row["bm25_score"] or 0.0)
                 chunk.metadata["_required_source_pack"] = pack.id
+                chunk.metadata["_required_source_packs"] = [pack.id]
                 chunk.metadata["_required_source_priority"] = pack.priority
                 chunk.metadata["_required_source_query"] = pack.search_query
                 registry_authority_id = row.get("registry_authority_id")
@@ -1387,16 +1603,18 @@ async def _merge_required_source_packs(
     if timings is not None:
         timings["required_source_pack"] = time.perf_counter() - t_source_pack
 
-    for c in _filter_query_ineligible_sources(query, source_candidates):
+    eligible_source_candidates = _filter_query_ineligible_sources(query, source_candidates)
+    _drop_superseded_required_source_snapshots(union, eligible_source_candidates)
+
+    for c in eligible_source_candidates:
         existing = union.get(c.chunk_id)
         if existing is None:
             union[c.chunk_id] = c
             continue
-        existing_pack = existing.metadata.get("_required_source_pack")
-        existing_priority = float(existing.metadata.get("_required_source_priority") or 0.0)
-        existing_query = existing.metadata.get("_required_source_query")
         incoming_pack = c.metadata.get("_required_source_pack")
         incoming_priority = float(c.metadata.get("_required_source_priority") or 0.0)
+        existing_priority = float(existing.metadata.get("_required_source_priority") or 0.0)
+        existing_pack = existing.metadata.get("_required_source_pack")
         incoming_wins = bool(incoming_pack) and (
             not existing_pack or incoming_priority >= existing_priority
         )
@@ -1411,12 +1629,7 @@ async def _merge_required_source_packs(
             existing.citation = c.citation
             existing.court = c.court
             existing.statute_short = c.statute_short
-        existing.metadata.update(c.metadata)
-        if existing_pack and incoming_pack and existing_priority > incoming_priority:
-            existing.metadata["_required_source_pack"] = existing_pack
-            existing.metadata["_required_source_priority"] = existing_priority
-            if existing_query:
-                existing.metadata["_required_source_query"] = existing_query
+        _merge_required_source_pack_metadata(existing.metadata, c.metadata)
         existing.bm25_score = max(existing.bm25_score, c.bm25_score)
 
 
@@ -1558,12 +1771,40 @@ def _rerank_candidate_union(
 
 
 def _provenance_filter_sql() -> str:
-    return (
-        "(c.provenance_verified = true OR ("
-        "NOT EXISTS (SELECT 1 FROM document_authorities da WHERE da.chunk_id = c.id) "
-        "AND EXISTS (SELECT 1 FROM documents d2 WHERE d2.id = c.document_id "
-        "AND d2.provenance_verified = true)))"
-    )
+    # A fully verified document is safe for ordinary, unmapped chunks. Registry
+    # ownership changes that: those chunks need their own exact audit verdict so
+    # a partial section promotion cannot bless neighboring authority chunks.
+    return """(
+        c.provenance_verified = true
+        OR (
+            d.provenance_verified = true
+            AND NOT EXISTS (
+                SELECT 1
+                FROM document_authorities AS provenance_authority_scope
+                WHERE provenance_authority_scope.chunk_id = c.id
+            )
+        )
+    )"""
+
+
+def _effective_provenance_select_sql() -> str:
+    """Expose the same effective trust decision used by the retrieval gate.
+
+    An ordinary chunk may inherit a complete document audit, but an authority-
+    mapped chunk may not. Returning the effective decision keeps the public
+    citation contract aligned with the SQL filter instead of reporting every
+    document-inherited chunk as unverified.
+    """
+    return """CASE
+        WHEN c.provenance_verified = true THEN true
+        WHEN d.provenance_verified = true
+         AND NOT EXISTS (
+           SELECT 1
+           FROM document_authorities AS provenance_authority_scope
+           WHERE provenance_authority_scope.chunk_id = c.id
+         ) THEN true
+        ELSE false
+    END AS provenance_verified"""
 
 
 async def hybrid_retrieve(
@@ -1650,9 +1891,8 @@ async def hybrid_retrieve(
         params.append(as_of)
         where.append(f"(c.as_at IS NULL OR c.as_at <= ${len(params)})")
 
-    # Provenance gate: legacy documents may be verified as a whole. Registry
-    # authorities are verified at exact chunk scope so one reviewed section
-    # cannot accidentally bless every neighboring section in the document.
+    # Provenance gate: document-level verification is allowed only for chunks
+    # without an authority-specific mapping; mapped chunks require exact proof.
     if s.require_provenance_verified:
         where.append(_provenance_filter_sql())
 
@@ -1667,7 +1907,9 @@ async def hybrid_retrieve(
         dense_rows = await conn.fetch(
             f"""SELECT c.id, c.document_id, c.anchor, c.text, c.source_type,
                        c.subject_area, c.as_at, c.paragraph_no, c.metadata,
+                       {_effective_provenance_select_sql()},
                        d.title, d.citation, d.court, d.statute_short,
+                       d.doc_id AS document_key,
                        1 - (c.embedding <=> ${len(params) + 1}::halfvec) AS dense_score
                 FROM chunks c JOIN documents d ON d.id = c.document_id
                 WHERE {where_clause}
@@ -1868,7 +2110,15 @@ async def multi_query_hybrid_retrieve(
         )
         if timings is not None:
             timings["retrieval_plain"] = time.perf_counter() - t_plain
-        return chunks, []
+        union = {c.chunk_id: c for c in chunks}
+        await _merge_required_source_packs(
+            pool,
+            query,
+            union=union,
+            packs=packs,
+            timings=timings,
+        )
+        return list(union.values()), []
 
     # Stage 1: LLM-expand
     t_expand = time.perf_counter()
@@ -1900,9 +2150,6 @@ async def multi_query_hybrid_retrieve(
             )
             if timings is not None:
                 timings["retrieval_single_query"] = time.perf_counter() - t_single
-            if not chunks:
-                return [], []
-
             union = {c.chunk_id: c for c in chunks}
             await _merge_required_source_packs(
                 pool,
@@ -1943,7 +2190,15 @@ async def multi_query_hybrid_retrieve(
         )
         if timings is not None:
             timings["retrieval_single_query"] = time.perf_counter() - t_single
-        return chunks, []
+        union = {c.chunk_id: c for c in chunks}
+        await _merge_required_source_packs(
+            pool,
+            query,
+            union=union,
+            packs=packs,
+            timings=timings,
+        )
+        return list(union.values()), []
 
     if getattr(s, "query_expansion_strategy", "single") == "single":
         t_single_expanded = time.perf_counter()
@@ -1959,9 +2214,6 @@ async def multi_query_hybrid_retrieve(
         )
         if timings is not None:
             timings["single_expanded_retrieval"] = time.perf_counter() - t_single_expanded
-        if not chunks:
-            return [], variants[1:]
-
         union = {c.chunk_id: c for c in chunks}
         await _merge_required_source_packs(
             pool,
@@ -2037,9 +2289,6 @@ async def multi_query_hybrid_retrieve(
             existing = union.get(c.chunk_id)
             if existing is None or (c.combined_score > existing.combined_score):
                 union[c.chunk_id] = c
-
-    if not union:
-        return [], variants[1:]
 
     await _merge_required_source_packs(
         pool,

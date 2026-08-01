@@ -1,7 +1,16 @@
 from __future__ import annotations
 
-from apps.api.matter_router import route_matter, route_matter_trace
+import pytest
+
+from apps.api.matter_router import (
+    criminal_transition_status,
+    has_mgnrega_context,
+    route_matter,
+    route_matter_trace,
+)
+from apps.api.legal_issue_plan import build_matter_plan
 from apps.api.source_packs import source_packs_for_route
+from apps.api.source_gap import matter_plan_integrity_gap
 
 
 def _has_text(values: list[str], needle: str) -> bool:
@@ -14,6 +23,38 @@ def test_routes_fir_and_marks_regime_unknown_without_incident_date():
     assert "police station" in route.forums
     assert route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
     assert any("BNSS" in source for source in route.required_sources)
+
+
+def test_msme_unpaid_supplier_query_uses_exact_delayed_payment_route():
+    route = route_matter(
+        "i supplied parts to a buyer, delivery was accepted, 60 days unpaid, can i use msme samadhan"
+    )
+
+    assert route.category == "business_contract_partnership"
+    assert route.label == "MSME delayed-payment / 43B(h) dispute"
+    assert any(
+        "MSMED Act 2006 sections 15, 16, and 18" in source
+        for source in route.required_sources
+    )
+
+
+def test_negated_acid_event_does_not_route_to_emergency_attack_workflow():
+    route = route_matter("no one threw acid on me")
+
+    assert not (
+        route.category == "police_fir"
+        and route.label == "Acid or chemical attack / urgent FIR"
+    )
+
+
+def test_accidental_industrial_chemical_exposure_stays_environmental():
+    for query in (
+        "factory spilled acid on me",
+        "factory chemical leak caused eyes burning",
+    ):
+        route = route_matter(query)
+        assert route.category == "environment_compensation", query
+        assert route.label != "Acid or chemical attack / urgent FIR", query
 
 
 def test_priority_routes_final_eval_hard_fail_prompts():
@@ -56,6 +97,36 @@ def test_priority_routes_final_eval_hard_fail_prompts():
         assert route.missing_facts, query
 
 
+def test_insurance_rejection_with_police_as_an_escalation_option_stays_consumer():
+    route = route_matter(
+        "pls tell health insurance rejected surgery claim saying hypertension pre existing need lawyer or police"
+    )
+
+    assert route.category == "consumer"
+    assert route.label == "Insurance claim / service deficiency"
+    assert any("Insurance Ombudsman" in source for source in route.required_sources)
+    assert any("Insurance Ombudsman" in forum for forum in route.forums)
+
+
+def test_unrelated_police_phrase_does_not_override_insurance_route():
+    route = route_matter(
+        "my insurer refused a claim, police complaint is unrelated to this insurance dispute"
+    )
+
+    assert route.category == "consumer"
+
+
+def test_non_parent_maintenance_cheque_does_not_route_to_senior_citizen():
+    for query in (
+        "my landlord gave me a maintenance cheque which bounced",
+        "my tenant gave me a cheque for maintenance bounced",
+        "friend gave me cheque for maintenance of my house and it bounced",
+    ):
+        route = route_matter(query)
+        assert route.category == "cheque_bounce", query
+        assert route.action_pack is not None, query
+
+
 def test_fresh500_common_failures_route_to_user_primary_job():
     cases = {
         "friend gave cheque for loan repayment and bank returned it": (
@@ -85,6 +156,204 @@ def test_fresh500_common_failures_route_to_user_primary_job():
         assert route.category == category, query
         assert route.label == label, query
         assert route.action_pack is not None, query
+
+
+def test_stage_regime_aware_cheque_route_selects_the_correct_procedure_pack():
+    legacy = route_matter("cheque bounced in 2023 insufficient funds")
+    assert legacy.category == "cheque_bounce"
+    assert legacy.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+    legacy_packs = {pack.id for pack in source_packs_for_route(legacy, "cheque bounced in 2023 insufficient funds")}
+    assert "crpc_cheque_complaint_legacy" in legacy_packs
+    assert "bnss_cheque_complaint" not in legacy_packs
+
+    current = route_matter("cheque bounced today insufficient funds")
+    assert current.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident"
+    current_packs = {pack.id for pack in source_packs_for_route(current, "cheque bounced today insufficient funds")}
+    assert "bnss_cheque_complaint" in current_packs
+    assert "crpc_cheque_complaint_legacy" not in current_packs
+
+    unknown = route_matter("friend gave cheque for loan repayment and bank returned it")
+    unknown_packs = {pack.id for pack in source_packs_for_route(unknown, "friend gave cheque for loan repayment and bank returned it")}
+    assert unknown.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    assert {"bnss_cheque_complaint", "crpc_cheque_complaint_legacy"} <= unknown_packs
+
+
+def test_stage_natural_mgnrega_and_security_cheque_wording_uses_dedicated_routes():
+    mgnrega = route_matter("MGNREGA wages have not been paid for four months")
+    assert mgnrega.label == "MGNREGA wage / job-card grievance"
+    assert any("MGNREGA" in source for source in mgnrega.required_sources)
+
+    for query in (
+        "landlord is presenting my security cheque after I paid rent",
+        "builder is using my blank security cheque",
+        "employer is presenting my security cheque",
+    ):
+        route = route_matter(query)
+        assert route.label == "Security cheque misuse / NI Act defence", query
+
+    assert route_matter(
+        "employer is holding my security cheque and refusing to return it"
+    ).label == "Security cheque return / misuse"
+
+
+def test_mgnrega_mixed_social_audit_and_allowance_declares_both_authority_families():
+    route = route_matter(
+        "Gram Sabha social audit found no work was provided and no unemployment allowance was paid"
+    )
+    assert any("Section 7 unemployment allowance" in source for source in route.required_sources)
+    assert any("Section 17 social-audit" in source for source in route.required_sources)
+
+
+def test_mgnrega_ordinary_muster_wage_delay_is_not_promoted_to_social_audit():
+    route = route_matter("muster roll shows my 20 days but wages not paid")
+    assert route.label == "MGNREGA wage / job-card grievance"
+    assert not any("section 17" in source.lower() for source in route.required_sources)
+
+
+def test_mining_gram_sabha_query_is_not_claimed_by_mgnrega():
+    route = route_matter(
+        "sand mine in scheduled area on forest land without gram sabha recommendation"
+    )
+
+    assert route.label == "Mining / Gram Sabha consent challenge"
+    assert route.category == "environment_compensation"
+
+
+def test_mgnrega_negated_integrity_facts_stay_on_wage_route():
+    route = route_matter("there is no fake muster or corruption, only wages are late")
+    assert not any("BNS/Prevention of Corruption" in source for source in route.required_sources)
+
+
+def test_mgnrega_aliases_route_to_the_scheme_without_exact_spelling():
+    for query in (
+        "MGNREGS wages not paid for three months",
+        "NREGS job card was not issued",
+        "MNREGA work demand ignored and no allowance paid",
+    ):
+        route = route_matter(query)
+        assert has_mgnrega_context(query), query
+        assert route.label == "MGNREGA wage / job-card grievance", query
+
+
+def test_mining_muster_wording_does_not_claim_mgnrega_owner():
+    for query in (
+        "sand mine in scheduled area on forest land without gram sabha recommendation, muster shown",
+        "no MGNREGA issue, mining lease on forest land without gram sabha consent",
+        "urgent mining company doing blasting next to village no gram sabha consent jharkhand west singhbhum how to complain",
+        "urgent gram sabha passed my IFR claim but SDLC rejected without reason what to do gadchiroli how to complain",
+        "urgent DM gave NOC to bauxite project bastar without gram sabha resolution how to challenge how to complain",
+    ):
+        assert not has_mgnrega_context(query), query
+        route = route_matter(query)
+        assert route.category != "employment_wages", query
+
+
+def test_mgnrega_mixed_accountability_is_not_suppressed_by_environment_terms():
+    for query in (
+        "Gram Sabha social audit found fake muster and wages not paid in scheduled area",
+        "social audit found fake muster and wage payment irregularities in a Scheduled Area",
+    ):
+        assert has_mgnrega_context(query), query
+        route = route_matter(query)
+        assert route.category == "labour_exploitation_discrimination", query
+        assert route.label in {
+            "MGNREGA wage / job-card grievance",
+            "MGNREGA wage / social-audit grievance",
+        }, query
+
+
+def test_environmental_muster_words_do_not_create_a_false_mgnrega_owner():
+    for query in (
+        "Gram Sabha social audit of mining lease found fake muster and wages not paid",
+        "Gram Sabha social audit says mining company forged muster and did not pay wages",
+        "PESA Gram Sabha says mining lease wages not paid and muster is fake",
+    ):
+        assert not has_mgnrega_context(query), query
+        assert route_matter(query).category != "employment_wages", query
+        assert route_matter(query).category != "labour_exploitation_discrimination", query
+
+
+def test_environmental_gram_sabha_failures_use_the_specific_route_before_mgnrega():
+    assert route_matter(
+        "urgent mining company doing blasting next to village no gram sabha consent jharkhand west singhbhum how to complain"
+    ).category == "environment_compensation"
+    assert route_matter(
+        "urgent gram sabha passed my IFR claim but SDLC rejected without reason what to do gadchiroli how to complain"
+    ).category == "tribal_caste_atrocity"
+    assert route_matter(
+        "urgent DM gave NOC to bauxite project bastar without gram sabha resolution how to challenge how to complain"
+    ).category == "environment_compensation"
+
+
+def test_security_cheque_return_has_return_specific_action_pack():
+    route = route_matter("employer is holding my security cheque and refusing to return it")
+
+    assert route.label == "Security cheque return / misuse"
+    assert route.action_pack is not None
+    assert route.action_pack.id == "security_cheque_return"
+    assert any("written request" in step.lower() for step in route.action_pack.next_steps)
+
+    not_deposited = route_matter(
+        "employer is holding my security cheque, not deposited yet and refusing to return it"
+    )
+    assert not_deposited.label == "Security cheque return / misuse"
+
+
+def test_stage_rera_full_payment_is_time_sensitive():
+    route = route_matter("builder took full payment in Gujarat but possession is delayed")
+    assert route.category == "consumer"
+    assert route.urgency == "high"
+
+
+def test_rera_jurisdiction_question_routes_to_bounded_intake():
+    route = route_matter("which state's RERA rules apply to my project?")
+
+    assert route.category == "consumer"
+    assert route.label == "RERA jurisdiction / filing intake"
+    assert any("state RERA rules" in source for source in route.required_sources)
+    assert route.action_pack is not None
+
+    natural = route_matter(
+        "which RERA authority should I file with for my project in Kochi"
+    )
+    assert natural.label == "RERA jurisdiction / filing intake"
+
+    filing = route_matter(
+        "where should I file a RERA complaint for my builder project in Kochi"
+    )
+    assert filing.label == "RERA jurisdiction / filing intake"
+
+
+def test_stage_minimum_wage_route_keeps_state_rate_authority_in_scope():
+    route = route_matter("employer paying below minimum wage in Kerala")
+
+    assert route.category == "labour_exploitation_discrimination"
+    assert any("state labour-department notification" in source for source in route.required_sources)
+
+
+def test_digital_platform_source_requirements_follow_financial_or_gaming_facts():
+    generic_app = route_matter("Blue Trunks app froze my account showing KYC pending and 80k stuck")
+    assert generic_app.category == "digital_platform_account"
+    assert any("Information Technology Act" in source for source in generic_app.required_sources)
+    assert any("Consumer Protection Act" in source for source in generic_app.required_sources)
+    assert not any("RBI/KYC" in source for source in generic_app.required_sources)
+    assert not any("online-gaming" in source for source in generic_app.required_sources)
+
+    wallet = route_matter("my payment wallet is frozen after KYC and 80k is stuck")
+    assert wallet.category == "digital_platform_account"
+    assert any("RBI/KYC" in source for source in wallet.required_sources)
+
+    crypto_wallet = route_matter("my crypto wallet account is frozen after KYC and 80k is stuck")
+    assert crypto_wallet.category == "digital_platform_account"
+    assert not any("RBI/KYC" in source for source in crypto_wallet.required_sources)
+
+    casual_gaming = route_matter("my gaming app account is suspended after KYC verification")
+    assert casual_gaming.category == "digital_platform_account"
+    assert not any("online-gaming" in source for source in casual_gaming.required_sources)
+
+    gaming = route_matter("Dream11 app froze my KYC account and my 80k withdrawal is stuck")
+    assert gaming.category == "digital_platform_account"
+    assert any("online-gaming" in source for source in gaming.required_sources)
 
 
 def test_stage_e8_real_prompt_route_precedence_regressions():
@@ -138,6 +407,210 @@ def test_uapa_bail_variants_preempt_generic_undertrial_without_false_place_match
     assert nuapada_place.category == "criminal_defence_bail"
     assert nuapada_place.label != "UAPA bail / criminal defence"
     assert not any("Unlawful Activities" in source for source in nuapada_place.required_sources)
+
+    notice = route_matter("I received a UAPA notice when should I appear before police")
+    assert notice.label == "Police questioning / appearance notice"
+
+    seized_phone = route_matter(
+        "Police searched my house under UAPA when can I get my phone back"
+    )
+    assert seized_phone.label == "Police seizure of digital device"
+
+    transfer = route_matter("Can a UAPA trial be transferred to another court")
+    assert transfer.label != "UAPA bail / criminal defence"
+
+    custody_harm = route_matter(
+        "My brother arrested under UAPA is being beaten in custody"
+    )
+    assert custody_harm.label == "Custodial violence / police extortion"
+
+    medical = route_matter(
+        "UAPA prisoner in jail is denied medicine and hospital treatment"
+    )
+    assert medical.label == "Custody medical care / interim bail"
+
+    mulaqat = route_matter(
+        "My husband is in UAPA custody and family mulaqat is not allowed"
+    )
+    assert mulaqat.label == "Prison mulaqat / interview access"
+
+    hidden_station = route_matter(
+        "Police arrested my son under UAPA but will not tell us which station he is in"
+    )
+    assert hidden_station.label == "Arrest / production before Magistrate"
+
+    seized_phone_release = route_matter(
+        "Police seized my phone in UAPA case how can I get a release order"
+    )
+    assert seized_phone_release.label == "Police seizure of digital device"
+
+    seized_car_release = route_matter("How to release my seized car in a UAPA case")
+    assert seized_car_release.label == "Police seizure / return of property"
+    assert any("BNSS 2023 sections 106, 497, and 503" in source for source in seized_car_release.required_sources)
+
+    frozen_funds = route_matter("UAPA case bank account frozen how to release my funds")
+    assert frozen_funds.label == "Bank account freeze / lien / KYC hold"
+
+    passport_return = route_matter(
+        "Court released my passport in UAPA case but police will not return it"
+    )
+    assert passport_return.label == "Police seizure / return of property"
+
+    retained_passport = route_matter(
+        "Magistrate ordered my passport returned in UAPA case but IO retained it"
+    )
+    assert retained_passport.label == "Police seizure / return of property"
+
+    unfreeze_funds = route_matter("Unfreeze my account and release funds in UAPA case")
+    assert unfreeze_funds.label == "Bank account freeze / lien / KYC hold"
+
+    mixed_person_object = route_matter(
+        "My brother and his phone are in custody under UAPA; can he be released?"
+    )
+    assert mixed_person_object.label == "UAPA bail / criminal defence"
+
+    for human_release_query in (
+        "How to get my brother released under UAPA?",
+        "I need my brother released from UAPA custody",
+        "Need release for my brother in UAPA case",
+        "How can I secure my husband's release under UAPA?",
+        "What about release of the accused under UAPA?",
+        "My UAPA co-accused seeks release",
+        "Please get him released under UAPA",
+        "She wants to be released from UAPA custody",
+        "The applicant needs to be released under UAPA",
+        "The petitioner requests his release under UAPA",
+        "My brother seeks immediate release in the UAPA case",
+        "Can court release him and release his seized phone in the UAPA case?",
+        "Can court release my brother and release his phone in the UAPA case?",
+        "Can they release the phone and release the UAPA detainee?",
+        "Release my phone after he is released from UAPA custody",
+        "I want him to be released under UAPA",
+        "We need her to be released from UAPA custody",
+        "I want my brother to be released under UAPA",
+        "Help secure release for him in the UAPA case",
+        "UAPA me brother ko release kaise karaye",
+        "mera bhai UAPA me release kaise hoga",
+        "UAPA case me husband ko release karwana hai",
+        "Can the court release my younger brother under UAPA?",
+        "Can the court release the main accused under UAPA?",
+        "Please get my elderly father released under UAPA",
+        "Can he please be released under UAPA?",
+        "Can she also be released from UAPA custody?",
+        "The applicant should immediately be released under UAPA",
+        "UAPA me bhai ko kab release hoga",
+        "UAPA case me bhai ko release chahiye",
+        "The UAPA accused seeks release because police returned his phone",
+        "My brother needs urgent release, police kept his phone in the UAPA case",
+        "The UAPA petitioner requests release; his passport is still seized",
+        "The co-accused wants temporary release in the UAPA case because his bank funds are frozen",
+        "Please get my arrested brother released under UAPA",
+        "The UAPA accused is seeking release",
+        "My brother is asking for release in the UAPA case",
+        "The applicant applies for release under UAPA",
+        "Can the court grant release to the accused under UAPA?",
+        "Can court release the second accused under UAPA?",
+        "The UAPA accused seeks his release",
+        "The UAPA applicant is seeking his release",
+        "My brother is asking for his release in the UAPA case",
+        "The accused filed an application for release under UAPA",
+        "Release application for the accused under UAPA",
+        "The accused filed a release application under UAPA",
+        "The accused moved an application for release under UAPA",
+        "The applicant submitted an application for release under UAPA",
+        "Release plea for the second accused under UAPA",
+    ):
+        human_release = route_matter(human_release_query)
+        assert human_release.label == "UAPA bail / criminal defence", human_release_query
+
+    actor_phone = route_matter("Can they release my seized phone in the UAPA case?")
+    assert actor_phone.label == "Police seizure of digital device"
+
+    actor_car = route_matter("They released my seized car after the UAPA case")
+    assert actor_car.label == "Police seizure / return of property"
+
+    recipient_passport = route_matter(
+        "The officer told her that the court released her passport in the UAPA case"
+    )
+    assert recipient_passport.label == "Police seizure / return of property"
+
+    actor_phone_future = route_matter(
+        "Police told him they will release the phone seized in his UAPA case"
+    )
+    assert actor_phone_future.label == "Police seizure of digital device"
+
+    embedded_phone = route_matter("She asked that her phone be released in the UAPA case")
+    assert embedded_phone.label == "Police seizure of digital device"
+
+    embedded_passport = route_matter(
+        "She wants her passport to be released in the UAPA case"
+    )
+    assert embedded_passport.label == "Police seizure / return of property"
+
+    embedded_car = route_matter("He requested his seized car be released in the UAPA case")
+    assert embedded_car.label == "Police seizure / return of property"
+
+    possessive_phone = route_matter(
+        "Police should release her seized phone in the UAPA case"
+    )
+    assert possessive_phone.label == "Police seizure of digital device"
+
+    possessive_passport = route_matter(
+        "Court released her personal passport in the UAPA case"
+    )
+    assert possessive_passport.label == "Police seizure / return of property"
+
+    applicant_passport = route_matter(
+        "Court released the applicant's passport in the UAPA case"
+    )
+    assert applicant_passport.label == "Police seizure / return of property"
+
+    scooter_release = route_matter(
+        "Court released my brother's seized scooter in the UAPA case"
+    )
+    assert scooter_release.label == "Police seizure / return of property"
+
+    jewellery_release = route_matter(
+        "The petitioner asked the court to release her seized jewellery in the UAPA case"
+    )
+    assert jewellery_release.label == "Police seizure / return of property"
+
+    cash_release = route_matter(
+        "My brother asked when the seized cash will be released in the UAPA case"
+    )
+    assert cash_release.label == "Police seizure / return of property"
+
+    footage_release = route_matter(
+        "My detained brother wants police to release the CCTV footage in the UAPA case"
+    )
+    assert footage_release.label == "Police seizure / return of property"
+
+    designation_release = route_matter(
+        "The UAPA petitioner asked to release the organisation from the designation list"
+    )
+    assert designation_release.label != "UAPA bail / criminal defence"
+
+    for property_release_query, expected_label in (
+        ("The UAPA petitioner requests release of her seized passport", "Police seizure / return of property"),
+        ("My brother wants release of his seized scooter in the UAPA case", "Police seizure / return of property"),
+        ("The applicant needs release of frozen bank funds in the UAPA case", "Bank account freeze / lien / KYC hold"),
+        ("The co-accused seeks release of seized cash in the UAPA case", "Police seizure / return of property"),
+        ("My detained brother requests release of CCTV footage in the UAPA case", "Police seizure / return of property"),
+        ("Court considered my brother's release of the seized vehicle in the UAPA case", "Police seizure / return of property"),
+        ("The UAPA petitioner requests release for her seized passport", "Police seizure / return of property"),
+        ("My brother wants release for his seized scooter in the UAPA case", "Police seizure / return of property"),
+        ("The co-accused requests release/return of seized cash in the UAPA case", "Police seizure / return of property"),
+        ("The UAPA applicant wants release order for the seized phone", "Police seizure of digital device"),
+        ("The petitioner requests release application for her vehicle in the UAPA case", "Police seizure / return of property"),
+        ("My brother needs urgent release order for his passport in the UAPA case", "Police seizure / return of property"),
+        ("My brother's release application is for the seized phone in the UAPA case", "Police seizure of digital device"),
+        ("The UAPA applicant wants release certificate for the seized phone", "Police seizure of digital device"),
+        ("Release the accused vehicle seized in the UAPA case", "Police seizure / return of property"),
+        ("Police should release the accused person's phone in the UAPA case", "Police seizure of digital device"),
+        ("Release the applicant-owned vehicle in the UAPA case", "Police seizure / return of property"),
+    ):
+        property_release = route_matter(property_release_query)
+        assert property_release.label == expected_label, property_release_query
 
     pension_stopped = route_matter("pension stopped but no fraud call no otp")
     assert pension_stopped.category == "social_welfare_identity"
@@ -767,6 +1240,8 @@ def test_pmla_router_uses_ed_word_boundary_not_deed_substring():
     assert route_matter("ed tech company sent legal notice for unpaid course fee").category != "pmla_ed"
     assert route_matter("ed tech company director received PMLA summons").category == "pmla_ed"
     assert route_matter("ed tech company director received ED summons from enforcement directorate").category == "pmla_ed"
+    assert route_matter("Enforcement Directorate froze my bank account under PMLA").category == "pmla_ed"
+    assert route_matter("bank account frozen after ED notice in money laundering case").category == "pmla_ed"
 
 
 def test_custodial_violence_does_not_treat_bus_station_as_lockup():
@@ -941,7 +1416,74 @@ def test_routes_consumer_with_action_pack():
     assert route.category == "consumer"
     assert route.action_pack is not None
     assert route.action_pack.id == "consumer"
-    assert any("Consumer Protection Act" in source for source in route.required_sources)
+
+
+def test_gratuity_service_duration_and_exit_wording_uses_gratuity_source():
+    query = "urgent i worked 6 yrs n quit. Am I entitled to gratuity how to complain"
+    route = route_matter(query)
+
+    assert route.category == "employment_wages"
+    assert "Payment of Gratuity Act 1972" in route.required_sources
+    assert "Payment of Wages Act / Code on Wages" not in route.required_sources
+    assert "Industrial Disputes Act" not in route.required_sources
+
+
+def test_mixed_gratuity_and_final_salary_dues_keep_separate_wage_authority():
+    query = "I worked 6 years, resigned, gratuity and final salary were not paid"
+    route = route_matter(query)
+
+    assert route.category == "employment_wages"
+    assert "Payment of Gratuity Act 1972" in route.required_sources
+    assert any("Code on Wages" in source for source in route.required_sources)
+
+
+def test_gratuity_wording_negative_does_not_override_salary_route():
+    query = "I worked 6 years and resigned; I am not asking about gratuity, only unpaid salary"
+    route = route_matter(query)
+
+    assert route.category == "employment_wages"
+    assert not any(source == "Payment of Gratuity Act 1972" for source in route.required_sources)
+    assert any("Code on Wages" in source for source in route.required_sources)
+
+
+def test_family_route_requirement_selects_pwdva_pack_for_economic_neglect_wording():
+    query = "please help i want divorce my husband stopped working drinks all day any remedy"
+    route = route_matter(query)
+    packs = {pack.id for pack in source_packs_for_route(route, query)}
+
+    assert route.category == "family_domestic"
+    assert any("PWDVA" in source for source in route.required_sources)
+    assert "pwdva_2005" in packs
+
+
+def test_family_route_pwdva_requirement_is_bound_in_the_matter_plan():
+    query = "please help i want divorce my husband stopped working drinks all day any remedy"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    assert plan is not None
+    pwdva = next(entry for entry in plan.authority_ledger if entry.source == "PWDVA 2005")
+    assert pwdva.source_pack_id == "pwdva_2005"
+    assert matter_plan_integrity_gap(plan, query) is None
+
+
+@pytest.mark.parametrize(
+    "query, expected_category",
+    (
+        (
+            "my husband stopped giving money for household expenses and I need maintenance",
+            "family_marriage_status",
+        ),
+        ("my husband threatened to throw acid on me what can I do", "police_fir"),
+    ),
+)
+def test_route_declared_pwdva_pack_invariant_applies_across_categories(query, expected_category):
+    route = route_matter(query)
+    packs = {pack.id for pack in source_packs_for_route(route, query)}
+
+    assert route.category == expected_category
+    assert any("PWDVA" in source for source in route.required_sources)
+    assert "pwdva_2005" in packs
 
 
 def test_routes_builder_occupancy_certificate_to_rera_consumer_workflow():
@@ -1014,6 +1556,68 @@ def test_mixed_criminal_dates_require_regime_clarification():
         route = route_matter(query)
         assert route.category == "criminal_defence_bail"
         assert route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+
+
+def test_saved_crpc_transition_requires_pending_or_investigation_fact():
+    saved = route_matter(
+        "Police seized my phone in 2025, but the investigation was pending before 1 July 2024"
+    )
+    assert saved.legal_regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+
+    ambiguous = route_matter(
+        "Police seized my phone in 2025, but the FIR was registered in 2023"
+    )
+    assert ambiguous.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+
+
+def test_device_transition_does_not_infer_regime_from_seizure_date_or_old_start():
+    yesterday = route_matter(
+        "Police seized my phone yesterday, produced it before the Magistrate, and will not return it"
+    )
+    assert yesterday.label == "Police seizure of digital device"
+    assert yesterday.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    assert criminal_transition_status(
+        "Police seized my phone yesterday, produced it before the Magistrate, and will not return it"
+    ) == "unknown"
+
+    concluded = route_matter(
+        "Investigation started in 2023 but ended in January 2024; phone seized in 2025"
+    )
+    assert concluded.label == "Police seizure of digital device"
+    assert concluded.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    assert criminal_transition_status(
+        "Investigation started in 2023 but ended in January 2024; phone seized in 2025"
+    ) == "unknown"
+
+    old_seizure_only = route_matter(
+        "Police seized my phone in May 2023 and will not return it"
+    )
+    assert old_seizure_only.label == "Police seizure of digital device"
+    assert old_seizure_only.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    assert criminal_transition_status(
+        "Police seized my phone in May 2023 and will not return it"
+    ) == "unknown"
+
+    current = route_matter(
+        "Police seized my phone in 2025, investigation started in 2025, and will not return it"
+    )
+    assert current.label == "Police seizure of digital device"
+    assert current.legal_regime == "current_bns_bnss_bsa_for_post_2024_incident"
+    assert criminal_transition_status(
+        "Police seized my phone in 2025, investigation started in 2025, and will not return it"
+    ) == "current_bnss"
+
+
+def test_device_route_preserves_human_release_flag_only_for_mixed_queries():
+    pure_device = route_matter(
+        "Police seized my phone in a UAPA case and will not return it"
+    )
+    assert pure_device.label == "Police seizure of digital device"
+    assert "Liberty/custody issue" not in pure_device.red_flags
+
+    mixed = route_matter("UAPA bail is pending and police will not return my phone")
+    assert mixed.label == "Police seizure of digital device"
+    assert "Liberty/custody issue" in mixed.red_flags
 
 
 def test_routes_off_topic():
@@ -1188,6 +1792,138 @@ def test_routes_acid_threat_before_domestic_family():
     assert any("PWDVA" in source for source in route.required_sources)
 
 
+def test_routes_chemical_exposure_variants_to_emergency_fir():
+    for query in (
+        "he poured a chemical on my face",
+        "chemical was used to attack me",
+        "my mother in law threatened acid attack but acid was later thrown",
+    ):
+        route = route_matter(query)
+        assert route.category == "police_fir", query
+        assert route.urgency == "emergency", query
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "he threw acid at me but it missed",
+        "he threw acid at me but acid did not touch me",
+        "he threw acid at me but it didn’t touch me",
+    ),
+)
+def test_failed_directed_acid_throw_keeps_emergency_attack_owner(query: str):
+    route = route_matter(query)
+    assert route.category == "police_fir"
+    assert route.label == "Acid or chemical attack / urgent FIR"
+    assert route.urgency == "emergency"
+
+
+def test_factory_acid_spill_stays_on_environmental_route():
+    route = route_matter("acid spill from factory what to do")
+    assert route.category == "environment_compensation"
+
+
+def test_negated_attack_clause_does_not_reclassify_factory_exposure():
+    route = route_matter("factory spilled acid on me, no one attacked me")
+    assert route.category == "environment_compensation"
+
+
+def test_direct_chemical_attack_wording_does_not_use_environment_route():
+    for query in (
+        "I was attacked with chemicals but no acid",
+        "Someone threw chemicals on me",
+        "He attacked me using chemical liquid",
+    ):
+        route = route_matter(query)
+        assert route.category == "police_fir", query
+        assert route.label == "Acid or chemical attack / urgent FIR"
+
+
+def test_factory_chemical_dump_stays_environmental():
+    route = route_matter("Factory dumped chemicals near my borewell")
+    assert route.category == "environment_compensation"
+
+
+def test_security_cheque_timing_is_explicit_before_presentation():
+    cases = (
+        "security cheque not deposited yet",
+        "lender is threatening to deposit my security cheque",
+        "cheque bounced but it has not been deposited yet",
+    )
+    for query in cases:
+        route = route_matter(query)
+        assert route.label == "Security cheque return / misuse", query
+        assert route.action_pack is not None
+        assert route.action_pack.id == "security_cheque_return"
+
+    presented = route_matter("security cheque was presented and bounced")
+    assert presented.label == "Security cheque misuse / NI Act defence"
+
+
+def test_common_user_consumer_and_cheque_wording_does_not_cross_route_boundaries():
+    damaged_phone = route_matter(
+        "I have got damaged phone, company is not accepting the return, can I file case"
+    )
+    assert damaged_phone.category == "consumer"
+    assert damaged_phone.label == "Consumer complaint / defective goods or warranty service"
+
+    damaged_phone_with_optional_police = route_matter(
+        "damaged phone received, company is not accepting return warranty, need lawyer or police"
+    )
+    assert damaged_phone_with_optional_police.category == "consumer"
+    assert damaged_phone_with_optional_police.action_pack is not None
+
+    consumer_police_variants = (
+        "damaged phone received, company is not accepting return warranty, can I go to police",
+        "damaged phone received, company is not accepting return warranty, can I complain to police",
+        "company retained my phone during repair and police are unrelated",
+        "warranty company is refusing replacement, police is only an escalation option",
+        "damaged phone, customer care refuses refund, police are not helping",
+    )
+    for query in consumer_police_variants:
+        route = route_matter(query)
+        assert route.category == "consumer", query
+        assert route.action_pack is not None, query
+
+    theft_with_police_question = route_matter(
+        "my phone was stolen, company refuses return, can I go to police"
+    )
+    assert theft_with_police_question.category != "consumer"
+
+    seized_with_police_question = route_matter(
+        "police seized my phone, can I go to police to get it back"
+    )
+    assert seized_with_police_question.category == "police_fir"
+
+    seized_phone = route_matter(
+        "police seized my phone during an FIR investigation, how do I get it back"
+    )
+    assert seized_phone.category == "police_fir"
+    assert seized_phone.label == "Police seizure of digital device"
+
+    course_fee = route_matter(
+        "ed tech company sent legal notice for unpaid course fee"
+    )
+    assert course_fee.category == "consumer"
+    assert course_fee.label == "Consumer complaint / defective goods or warranty service"
+
+    cheque = route_matter(
+        "need help, cheque bounce notice sent after 45 days is complaint still maintainable what next"
+    )
+    assert cheque.category == "cheque_bounce"
+    assert cheque.label == "Cheque dishonour"
+
+
+def test_lost_aadhaar_with_raid_context_stays_identity_route():
+    route = route_matter(
+        "what to do lost aadhaar in morbi tile factory raid how to get new one "
+        "no original village papers gone is this legal"
+    )
+    assert route.category == "social_welfare_identity"
+    assert route.label == "Lost Aadhaar / identity-record reissue"
+    assert any("Aadhaar Act" in source for source in route.required_sources)
+
+
 def test_routes_education_loan_denial_before_social_welfare():
     route = route_matter("bank not giving education loan to my daughter even though we have scholarship paper")
     assert route.category == "education_loan_denial"
@@ -1349,6 +2085,47 @@ def test_routes_lok_adalat_award_challenge():
     assert route.category == "lok_adalat_award_challenge"
     assert route.action_pack is not None
     assert any("section 21" in source.lower() for source in route.required_sources)
+
+
+def test_lok_adalat_traffic_paraphrases_use_the_exact_traffic_workflow():
+    for query in (
+        "what happens if my traffic challan is referred to Lok Adalat",
+        "I want to fight a traffic challan in Lok Adalat",
+        "is my traffic challan final after Lok Adalat",
+        "I was forced to settle my traffic ticket in Lok Adalat, can I challenge it",
+    ):
+        route = route_matter(query)
+        if "forced" in query or "final" in query:
+            assert route.category == "lok_adalat_award_challenge", query
+        else:
+            assert route.category == "legal_aid", query
+            assert route.label == "Lok Adalat traffic challan settlement", query
+        assert route.action_pack is not None, query
+
+
+def test_lok_adalat_settlement_finality_is_not_treated_as_generic_legal_aid():
+    route = route_matter("Lok Adalat settlement is it final and binding")
+    assert route.category == "lok_adalat_award_challenge"
+
+
+def test_lok_adalat_traffic_challenge_paraphrases_use_challenge_route():
+    for query in (
+        "Can I challenge a traffic ticket settled in Lok Adalat?",
+        "Lok Adalat made my traffic fine final and binding",
+    ):
+        route = route_matter(query)
+        assert route.category == "lok_adalat_award_challenge", query
+        assert route.action_pack is not None
+
+
+def test_edtech_employee_salary_is_not_consumer_service():
+    route = route_matter("edtech employer has not paid my salary")
+    assert route.category == "employment_wages"
+
+
+def test_coaching_teacher_salary_is_not_consumer_refund():
+    route = route_matter("I am a teacher and the coaching company has not paid my monthly salary")
+    assert route.category == "employment_wages"
 
 
 def test_routes_migrant_return_ticket_issue_as_labour_exploitation():
@@ -1633,6 +2410,9 @@ def test_stage3_overroute_regressions_stay_out_of_wrong_buckets():
     assert route_matter("Loan app is harassing my contacts").label == "Loan-app / recovery harassment"
     assert route_matter("My shop is in Gujarat and municipality sealed it.").label == "Municipal sealing / shop closure notice"
     assert route_matter("my pan and aadhaar is mismatch").label == "PAN/Aadhaar mismatch / identity linking"
+    juvenile_bail = route_matter("my 17-year-old brother was arrested and court says bail")
+    assert juvenile_bail.label == "Juvenile age / JJB custody route"
+    assert "Juvenile Justice Act 2015 section 12 bail provision" in juvenile_bail.required_sources
     assert route_matter("death certificate has wrong name hospital says they cannot correct it what is process").category == "social_welfare_identity"
     assert route_matter("kanya vivah scheme money not given by government after my daughter wedding").category == "social_welfare_identity"
     assert route_matter("my husband died in army no service pension widow what papers needed").category == "social_welfare_identity"
@@ -1951,8 +2731,8 @@ def test_stage5_money_cyber_identity_paraphrase_routes_with_negatives():
             "bank_account_freeze",
         ),
         "ED freeze marked on my current account, bank only says legal hold, how to get order copy": (
-            "banking_credit_dispute",
-            "bank_account_freeze",
+            "pmla_ed",
+            "pmla_ed",
         ),
         "fake CBI video call said my Aadhaar used in drug parcel and made me transfer 2 lakh": (
             "cyber_fraud_or_harassment",
@@ -2054,6 +2834,23 @@ def test_common_user_smoke_route_guards_do_not_overfit_family_words():
 def test_routes_child_adoption_and_return():
     route = route_matter("we adopted child from sister but no papers now real parents want him back")
     assert route.category == "child_custody_adoption"
+    plain_language_route = route_matter(
+        "we are not a Hindu family and adopted my sister child without papers; "
+        "now the biological parents want him back"
+    )
+    assert plain_language_route.category == "child_custody_adoption"
+    planned_adoption_route = route_matter(
+        "we are not Hindu and want to adopt my sister's child; what paperwork is needed"
+    )
+    assert planned_adoption_route.category == "child_custody_adoption"
+    for non_personal_adoption_query in (
+        "our company wants to adopt a child-friendly leave policy",
+        "school wants to adopt child protection policy",
+        "we adopted a puppy for our child",
+    ):
+        assert (
+            route_matter(non_personal_adoption_query).category != "child_custody_adoption"
+        ), non_personal_adoption_query
     route2 = route_matter("my ex husband took our son to UK on tourist visa and is not bringing back")
     assert route2.category == "child_custody_adoption"
     assert route2.urgency == "high"
@@ -2099,6 +2896,31 @@ def test_routes_market_vendor_license_fine_to_street_vendor():
     assert challan_bribe.category == "street_vendor_municipal"
     assert "traffic" not in challan_bribe.label.lower()
     assert route.action_pack is not None
+
+
+def test_private_or_bare_corporation_vendor_actor_is_not_municipal():
+    for query in (
+        "private corporation removed my street cart",
+        "a company seized my hawker cart",
+        "vegetable cart seized by corporation",
+        "private premises operator seized my hawker cart",
+        "landlord removed my street cart",
+        "security agency seized my vendor goods",
+        "landlord removed my street cart and municipality refused to help",
+        "security guard seized my vendor goods and BMC said it is private",
+    ):
+        assert route_matter(query).category != "street_vendor_municipal", query
+
+
+def test_specific_hawker_permit_corporation_removal_is_public_vendor_route():
+    route = route_matter("hawker license pending but corporation removed my stall before hearing")
+    assert route.category == "street_vendor_municipal"
+    assert route_matter(
+        "company named Vadodara Corporation removed my stall after hawker license pending"
+    ).category != "street_vendor_municipal"
+    assert route_matter(
+        "private Vadodara Corporation removed my stall after hawker license pending"
+    ).category != "street_vendor_municipal"
 
 
 def test_routes_pmla_ed():
@@ -2358,7 +3180,6 @@ def test_family_safety_variants_with_dlsa_stay_family_safety():
     for query in (
         "my husband locked me in room need free legal aid in dlsa",
         "my husband hit me need free legal aid in dlsa",
-        "my wife is beating me need free legal aid in dlsa",
         "my husband is not giving food need free lawyer dlsa",
         "my husband threw me out need free legal aid in dlsa",
     ):
@@ -2366,6 +3187,11 @@ def test_family_safety_variants_with_dlsa_stay_family_safety():
         assert route.category == "family_domestic", query
         assert route.urgency == "emergency"
         assert route.red_flags
+
+    wife_as_aggressor = route_matter("my wife is beating me need free legal aid in dlsa")
+    assert wife_as_aggressor.category == "criminal_general"
+    assert wife_as_aggressor.urgency == "high"
+    assert wife_as_aggressor.red_flags
 
 
 def test_adult_forced_marriage_does_not_become_child_marriage():
@@ -2588,6 +3414,9 @@ def test_software_vendor_license_is_not_street_vendor():
 def test_housing_and_cooperative_recovery_require_local_documents_conditionally():
     pet = route_matter("society management fine 25000 for keeping pet without prior approval")
     assert pet.category == "consumer"
+    assert pet.action_pack is not None
+    assert pet.action_pack.id == "housing_society_pet_dispute"
+    assert "exact bye-law" in pet.action_pack.next_steps[0]
     assert any("based on state/city" in source for source in pet.required_sources)
     assert not any(source.startswith("Consumer/civil remedy only after") for source in pet.required_sources)
 
@@ -3027,6 +3856,68 @@ def test_stage24_hard_fail_prompts_route_to_safer_forums():
         assert route_matter(query).category == category, query
 
 
+def test_birth_cert_abbreviation_keeps_civil_registration_route():
+    route = route_matter(
+        "sir panchayat secretary not giving me birth cert of my child born at home where to go"
+    )
+
+    assert route.category == "social_welfare_identity"
+    assert route.label == "Civil registration / identity record"
+    assert "Registration of Births and Deaths Act 1969" in route.required_sources[0]
+
+
+def test_certificate_record_near_misses_keep_their_controlling_route():
+    school = route_matter(
+        "my daughter school admission rejected because birth cert is not available"
+    )
+    assert school.category == "education_rights"
+    assert school.action_pack is not None
+    assert school.action_pack.id == "education_rights"
+
+    school_document = route_matter(
+        "school asked for birth cert copy to complete admission"
+    )
+    assert school_document.category == "education_rights"
+
+    workplace = route_matter(
+        "worker died at site employer not giving compensation, death cert is ready"
+    )
+    assert workplace.category == "workplace_injury_compensation"
+    assert workplace.action_pack is not None
+
+    duplicate = route_matter("need duplicate death cert from municipality")
+    assert duplicate.category == "social_welfare_identity"
+    assert duplicate.label == "Civil registration / identity record"
+    assert duplicate.action_pack is not None
+    assert duplicate.action_pack.id == "civil_registration"
+
+    missing_record = route_matter("my child birth cert is missing from municipal records")
+    assert missing_record.category == "social_welfare_identity"
+    assert missing_record.label == "Civil registration / identity record"
+
+    workplace_record = route_matter(
+        "worker died at site need duplicate death cert from municipality"
+    )
+    assert workplace_record.category == "social_welfare_identity"
+
+    record_correction = route_matter(
+        "my husband died at factory, death certificate has wrong name"
+    )
+    assert record_correction.category == "social_welfare_identity"
+
+    missing_person = route_matter(
+        "my daughter is missing since yesterday and her birth certificate is missing"
+    )
+    assert missing_person.category == "police_fir"
+    assert missing_person.label == "Missing person / police complaint"
+
+    school_record = route_matter(
+        "school asked for birth certificate but panchayat is not issuing it"
+    )
+    assert school_record.category == "social_welfare_identity"
+    assert school_record.label == "Civil registration / identity record"
+
+
 def test_stage24_posh_near_misses_do_not_steal_non_sexual_work_or_vendor_queries():
     for query in (
         "company put me on PIP and terminated me",
@@ -3038,6 +3929,82 @@ def test_stage24_posh_near_misses_do_not_steal_non_sexual_work_or_vendor_queries
     assert route_matter(
         "after I complained to ICC against my reporting manager he is now giving me bad rating and PIP"
     ).category == "workplace_sexual_harassment"
+
+
+def test_common_sexually_harassed_wording_routes_to_workplace_safety_path():
+    route = route_matter("my manager sexually harassed me at work what can I do")
+
+    assert route.category == "workplace_sexual_harassment"
+    assert "POSH Act 2013" in route.required_sources
+
+
+def test_workplace_sexual_harassment_wording_requires_workplace_context():
+    for query in (
+        "a stranger sexually harassed me on a train",
+        "my husband is sexually harassing me at home",
+        "sexual misconduct by a police officer",
+        "sexual misconduct by my school teacher",
+    ):
+        assert route_matter(query).category != "workplace_sexual_harassment", query
+
+
+def test_workplace_sexual_harassment_accused_gets_respondent_action_pack():
+    route = route_matter("I am accused of sexually harassing a colleague and got an ICC notice")
+
+    assert route.category == "workplace_sexual_harassment"
+    assert "respondent" in route.label.lower()
+    assert route.action_pack is not None
+    assert route.action_pack.id == "workplace_sexual_harassment_respondent"
+
+
+def test_bare_icc_does_not_route_unrelated_queries_to_posh():
+    for query in (
+        "ICC cricket match ticket refund",
+        "ICC score complaint",
+    ):
+        assert route_matter(query).category != "workplace_sexual_harassment", query
+
+
+def test_non_workplace_respondent_accusations_do_not_route_to_posh():
+    for query in (
+        "I am accused of sexually harassing someone at a party",
+        "I am accused of sexual harassment by a stranger on a train",
+        "I am accused of sexual harassment by my neighbour at home",
+    ):
+        assert route_matter(query).category != "workplace_sexual_harassment", query
+
+
+def test_workplace_respondent_phrasings_get_respondent_pack_but_complainant_does_not():
+    respondent_queries = (
+        "I am respondent in a sexual harassment inquiry",
+        "I got a sexual harassment complaint against me at work",
+        "I was falsely accused of sexual harassment by my colleague and must reply to HR",
+        "My employer sent me a notice because a colleague complained I harassed her",
+        "ICC sent me a notice for allegedly harassing a colleague",
+        "I have been accused by a colleague of sexual harassment and must appear before the ICC",
+        "I was accused by a colleague and must appear before ICC",
+        "My coworker accused me and the internal committee wants my reply",
+    )
+    for query in respondent_queries:
+        route = route_matter(query)
+        assert route.category == "workplace_sexual_harassment", query
+        assert route.action_pack is not None
+        assert route.action_pack.id == "workplace_sexual_harassment_respondent", query
+
+    complainant_query = "I accused my colleague of sexual harassment and got an ICC notice"
+    complainant_route = route_matter(complainant_query)
+    assert complainant_route.category == "workplace_sexual_harassment"
+    assert complainant_route.action_pack is not None
+    assert complainant_route.action_pack.id != "workplace_sexual_harassment_respondent"
+
+
+def test_mixed_respondent_criminal_facts_keep_respondent_action_pack():
+    route = route_matter(
+        "I am accused of sexually harassing a colleague and the police filed an FIR"
+    )
+    assert route.category == "workplace_sexual_harassment"
+    assert route.action_pack is not None
+    assert route.action_pack.id == "workplace_sexual_harassment_respondent"
 
 
 def test_esi_forums_include_dlsa_abbreviation_for_safety_gate():
@@ -3904,6 +4871,145 @@ def test_stage2_factory_worksite_harm_preempts_environment_and_general_routes():
     contractor_assault = route_matter("contractor beat me at construction site head injury and not paying old wages")
     assert contractor_assault.category == "workplace_injury_compensation"
     assert contractor_assault.label == "Worksite assault / injury and wage dispute"
+
+
+def test_explicit_municipal_closure_owns_restaurant_question_over_food_bucket():
+    municipal = route_matter("BMC issued a closure notice for my restaurant")
+    assert municipal.label == "Municipal sealing / shop closure notice"
+    assert any("municipal" in source.lower() for source in municipal.required_sources)
+
+    food = route_matter("FSSAI issued a closure notice for my restaurant")
+    assert food.label == "FSSAI / food licence compliance"
+
+    assert route_matter("MCD closed my commercial premises").label == "Municipal sealing / shop closure notice"
+    assert route_matter("municipality stopped my shop").label == "Municipal sealing / shop closure notice"
+
+
+def test_generic_inspection_does_not_override_named_municipal_closure():
+    assert route_matter(
+        "local authority closed my hotel after health inspection"
+    ).label == "Municipal sealing / shop closure notice"
+    assert route_matter(
+        "local health authority sealed my restaurant"
+    ).label == "Municipal sealing / shop closure notice"
+    assert route_matter(
+        "BMC sealed my restaurant after food inspection"
+    ).label == "Municipal sealing / shop closure notice"
+    assert route_matter(
+        "vadodara corporation sealed our commercial shop"
+    ).label == "Municipal sealing / shop closure notice"
+
+
+def test_named_food_authority_owns_food_only_closure_but_not_municipal_action():
+    assert route_matter(
+        "FSSAI issued a closure notice for my restaurant"
+    ).label == "FSSAI / food licence compliance"
+    assert route_matter(
+        "BMC sealed my restaurant after FSSAI inspection"
+    ).label == "Municipal sealing / shop closure notice"
+
+
+def test_private_corporation_closure_is_not_municipal_sealing():
+    cases = [
+        "the corporation that owns my hotel issued a closure notice",
+        "my restaurant corporation sent a closure notice",
+        "a private corporation closed my restaurant after an internal inspection",
+        "the food corporation issued a closure notice for my restaurant",
+    ]
+    for query in cases:
+        route = route_matter(query)
+        assert route.label not in {
+            "Municipal sealing / shop closure notice",
+            "FSSAI / food licence compliance",
+        }, query
+    for query in (
+        "private Vadodara corporation closed my hotel",
+        "Vadodara Corporation Ltd. closed my restaurant",
+        "the company that owns the Vadodara corporation hotel issued closure notice",
+        "private city corporation sealed my shop",
+        "a private Vadodara municipal corporation Ltd. closed my shop",
+    ):
+        assert route_matter(query).label != "Municipal sealing / shop closure notice", query
+    assert route_matter(
+        "my owner says Vadodara corporation sealed my shop"
+    ).label == "Municipal sealing / shop closure notice"
+    assert route_matter(
+        "my company owns a shop and Vadodara corporation sealed it"
+    ).label == "Municipal sealing / shop closure notice"
+    for query in (
+        "my private restaurant was sealed by the local authority",
+        "private company premises sealed by BMC",
+        "my private shop was sealed by Vadodara corporation",
+        "a private factory was sealed by local health authority",
+    ):
+        assert route_matter(query).label == "Municipal sealing / shop closure notice", query
+    for query in (
+        "landlord sealed my shop and municipality refused to help",
+        "private premises operator closed my restaurant and BMC said it is private",
+        "the entity named Vadodara Corporation sealed my shop",
+        "Vadodara Corporation is my company and sealed my shop",
+    ):
+        assert route_matter(query).label != "Municipal sealing / shop closure notice", query
+
+
+def test_health_actor_variants_preserve_municipal_boundary():
+    assert route_matter(
+        "health officer sealed my restaurant after hygiene inspection"
+    ).label == "Business license / shop registration"
+    assert route_matter(
+        "health inspector closed my hotel after food inspection"
+    ).label == "Business license / shop registration"
+    assert route_matter(
+        "local health inspector closed my hotel after hygiene inspection"
+    ).label == "Municipal sealing / shop closure notice"
+    assert route_matter(
+        "municipal health inspector sealed my restaurant after inspection"
+    ).label == "Municipal sealing / shop closure notice"
+
+
+def test_common_food_safety_wording_selects_food_route():
+    queries = [
+        "my restaurant was closed due to food poisoning",
+        "my restaurant was sealed because contaminated food was found",
+        "my restaurant was closed after a sanitation inspection",
+        "my restaurant was closed due to unsafe food",
+        "my restaurant was closed because of adulterated food",
+    ]
+    for query in queries:
+        assert route_matter(query).label == "FSSAI / food licence compliance", query
+
+
+def test_negated_food_wording_does_not_select_fssai_route():
+    queries = [
+        "my hotel closure notice does not mention food or hygiene",
+        "my hotel closure notice is not due to contaminated food",
+        "my hotel closure notice is unrelated to food safety",
+        "my restaurant closure is not an unsafe food issue",
+        "my restaurant closure is not an adulterated food issue",
+        "my restaurant closure is not a food poisoning issue",
+        "my restaurant closure is not due to contamination",
+        "my hotel closure notice does not involve food or hygiene",
+        "my hotel closure notice has no food or hygiene issue",
+        "my hotel closure notice was not for food or hygiene",
+    ]
+    for query in queries:
+        assert route_matter(query).label != "FSSAI / food licence compliance", query
+
+
+def test_unnamed_health_or_food_department_stays_ambiguous():
+    queries = [
+        "health department closed my hotel after hygiene inspection",
+        "local food department closed my hotel",
+        "health department sealed my restaurant after food inspection",
+    ]
+    for query in queries:
+        assert route_matter(query).label != "FSSAI / food licence compliance", query
+
+
+def test_food_inspector_sample_action_is_not_lost_to_general_route():
+    route = route_matter("food inspector took samples from my restaurant")
+    assert route.category == "business_license_compliance"
+    assert route.label == "FSSAI / food licence compliance"
 
 
 def test_stage2_prohibition_accused_route_does_not_capture_liquor_license_admin():

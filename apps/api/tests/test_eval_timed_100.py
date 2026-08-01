@@ -15,6 +15,7 @@ from scripts.eval_timed_100 import (
     expected_act_keys,
     expected_procedure_anchor_coverage,
     flatten_row,
+    internal_service_error_reason,
     jsonl_dumps,
     load_eval_rows,
     matter_plan_authority_coverage,
@@ -22,7 +23,9 @@ from scripts.eval_timed_100 import (
     matter_plan_required_for_eval,
     product_pass,
     required_source_coverage,
+    safe_source_gap_handoff_for_eval,
     stream_answer,
+    _rows_summary,
     write_report,
 )
 
@@ -288,7 +291,62 @@ def test_visible_source_gap_is_quality_flag_and_product_failure():
     assert product_pass(row) is False
 
 
-def test_matter_plan_authority_coverage_uses_canonical_and_provisional_obligation_ids():
+def test_source_gap_handoff_is_always_a_non_answer():
+    row = {
+        "answer_text": "**What you can do next** Keep records and seek legal aid.",
+        "source_gap_outcome": "source_gap_handoff",
+        "source_gap_visible": False,
+        "refused": False,
+        "error": None,
+        "relevance_verdict": "ok",
+        "legal_safety": {"hard_fail": False},
+        "expected_act_cited_hit": True,
+        "unknown_citation_count": 0,
+        "route_required_sources_missing": [],
+        "ok_sentences": 1,
+    }
+
+    assert "source_gap_handoff" in answer_quality_flags(row)
+    assert product_pass(row) is False
+
+
+def test_internal_retrieval_failure_is_counted_even_when_public_handoff_is_safe():
+    row = flatten_row(
+        {"query": "bank account answer during service outage", "expected_act_hint": None},
+        {
+            "matter_route": {
+                "category": "banking_credit_dispute",
+                "required_sources": [],
+            },
+            "matter_plan": {},
+            "workflow": {},
+            "source_gap": {
+                "has_gap": True,
+                "reason": "answer_retrieval_error",
+                "outcome": "source_gap_handoff",
+                "safe_handoff_only": True,
+            },
+            "sentences": [],
+            "sources": [],
+            "passages": [],
+            "relevance": {},
+            "timing": {"total_ms": 1000},
+            "wall_ms": 1000,
+            "events": {},
+        },
+    )
+
+    assert internal_service_error_reason(row) == "answer_retrieval_error"
+    assert _rows_summary([row])["errors"] == 1
+    assert _rows_summary([row])["internal_service_errors"] == 1
+    assert product_pass(row) is False
+
+
+def test_corpus_source_gap_is_not_mislabeled_as_service_failure():
+    assert internal_service_error_reason({"source_gap_reason": "required_source_gap"}) is None
+
+
+def test_matter_plan_authority_coverage_excludes_nonbinding_context_pointers():
     plan = {
         "authority_ledger": [
             {
@@ -326,18 +384,76 @@ def test_matter_plan_authority_coverage_uses_canonical_and_provisional_obligatio
     assert coverage == {
         "required_ids": [
             "authority_constitution_342",
-            "authority_provisional_state_rule",
         ],
         "found_ids": [
             "authority_constitution_342",
-            "authority_provisional_state_rule",
         ],
         "missing_ids": [],
         "missing_sources": [],
         "coverage": 1.0,
+        "invalid_entry_indices": [],
         "ok": True,
         "applicable": True,
     }
+
+
+def test_matter_plan_authority_coverage_keeps_activated_conditional_authority():
+    plan = matter_plan_payload(authority_id="authority_provisional_fir")
+    plan["authority_ledger"][0].update({
+        "source": "BNSS 2023 / CrPC 1973 FIR procedure based on incident date",
+        "identity_status": "provisional",
+        "canonical_name": None,
+        "source_pack_id": "bnss_crpc_fir_procedure",
+        "required_anchor_patterns": ["/sec-173"],
+        "priority": "conditional",
+        "must_cite": False,
+        "conditional": True,
+    })
+    plan["retrieval_sources"][0].update({
+        "source_pack_id": "bnss_crpc_fir_procedure",
+        "title_patterns": ["Bharatiya Nagarik Suraksha Sanhita 2023"],
+        "doc_ids": ["bnss-2023"],
+        "anchor_patterns": ["/sec-173"],
+        "source_types": ["bare_act"],
+    })
+
+    coverage = matter_plan_authority_coverage(
+        plan,
+        [{
+            "authority_ids": ["authority_provisional_fir"],
+            "required_source_pack": "bnss_crpc_fir_procedure",
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-173",
+            "source_type": "bare_act",
+        }],
+        query="police refused to file FIR for my stolen bike",
+    )
+
+    assert coverage["applicable"] is True
+    assert coverage["ok"] is True
+    assert coverage["found_ids"] == ["authority_provisional_fir"]
+
+
+def test_matter_plan_authority_coverage_fails_closed_on_malformed_ledger_metadata():
+    plan = {
+        "incident_date_status": "not_required",
+        "authority_ledger": [{
+            "source": "Consumer Protection Act 2019 Section 35",
+            "priority": "must_cite",
+            "must_cite": True,
+            "conditional": False,
+            # identity_status, source_pack_id, and anchors intentionally omitted
+        }],
+        "retrieval_sources": [],
+    }
+
+    coverage = matter_plan_authority_coverage(plan, [])
+
+    assert coverage["required_ids"] == []
+    assert coverage["ok"] is False
+    assert coverage["missing_ids"] == []
+    assert coverage["invalid_entry_indices"] == [0]
+    assert coverage["applicable"] is True
 
 
 def test_flatten_row_keeps_legacy_metrics_and_fails_when_plan_authority_is_uncited():
@@ -451,6 +567,30 @@ def test_product_pass_fails_closed_when_required_matter_plan_is_missing():
     assert product_pass(row) is False
 
 
+def test_safe_source_gap_handoff_is_not_reported_as_malformed_matter_plan():
+    row = {
+        "matter_plan_required": True,
+        "matter_plan_contract": {"valid": False, "errors": ["invalid_plan_id"]},
+        "source_gap_outcome": "source_gap_handoff",
+        "source_gap_safe_handoff_only": True,
+        "source_count": 0,
+        "source_gap_visible": True,
+        "refused": False,
+        "error": None,
+        "relevance_verdict": "ok",
+        "legal_safety": {"hard_fail": False},
+        "expected_act_cited_hit": False,
+        "route_required_sources_missing": [],
+        "route_required_sources_cited_missing": [],
+        "plan_authority_ids_missing": [],
+        "plan_authority_ids_uncited": [],
+    }
+
+    assert safe_source_gap_handoff_for_eval(row) is True
+    assert "missing_or_invalid_matter_plan" not in answer_quality_flags(row)
+    assert product_pass(row) is False
+
+
 def test_matter_plan_contract_rejects_shallow_placeholder_payload():
     status = matter_plan_contract_status({
         "schema_version": 2,
@@ -490,14 +630,29 @@ def test_matter_plan_authority_coverage_measures_activated_provisional_obligatio
         "source": "BNSS 2023 / CrPC 1973 FIR procedure based on incident date",
         "identity_status": "provisional",
         "canonical_name": None,
+        "source_pack_id": "bnss_crpc_fir_procedure",
+        "required_anchor_patterns": ["/sec-173"],
         "priority": "conditional",
         "must_cite": False,
         "conditional": True,
     })
+    plan["retrieval_sources"][0].update({
+        "source_pack_id": "bnss_crpc_fir_procedure",
+        "title_patterns": ["Bharatiya Nagarik Suraksha Sanhita 2023"],
+        "doc_ids": ["bnss-2023"],
+        "anchor_patterns": ["/sec-173"],
+        "source_types": ["bare_act"],
+    })
 
     coverage = matter_plan_authority_coverage(
         plan,
-        [{"authority_ids": ["authority_provisional_fir"]}],
+        [{
+            "authority_ids": ["authority_provisional_fir"],
+            "required_source_pack": "bnss_crpc_fir_procedure",
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-173",
+            "source_type": "bare_act",
+        }],
         query="police refused to file FIR for my stolen bike",
     )
 
@@ -534,7 +689,7 @@ def test_write_report_uses_required_legal_denominator_and_keeps_all_plan_failure
     write_report(rows, output_path, report_path)
     report = report_path.read_text(encoding="utf-8")
 
-    assert "MatterPlan contract valid: 0/101 required legal rows" in report
+    assert "MatterPlan contract valid: 0/101 applicable answer rows" in report
     assert "failure-100" in report
     assert "MatterPlan authority-obligation retrieval" in report
     assert "MatterPlan canonical-authority" not in report
@@ -567,7 +722,7 @@ def test_expected_legal_category_requires_plan_even_when_observed_route_is_off_t
     report = report_path.read_text(encoding="utf-8")
 
     assert row["matter_plan_required"] is True
-    assert "MatterPlan contract valid: 0/1 required legal rows" in report
+    assert "MatterPlan contract valid: 0/1 applicable answer rows" in report
     assert "bank deducted money wrongly" in report
 
 
@@ -719,6 +874,12 @@ def test_required_source_coverage_recognizes_cited_route_source_aliases():
                 "index": 8,
                 "title": "Copyright Act 1957",
                 "anchor": "copyright-1957/sec-51",
+                "source_type": "bare_act",
+            },
+            {
+                "index": 9,
+                "title": "Constitution of India",
+                "anchor": "constitution-india/sec-21",
                 "source_type": "bare_act",
             },
         ],
@@ -922,6 +1083,7 @@ def test_required_source_coverage_recognizes_common_user_route_authorities():
                 "index": 13,
                 "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
                 "anchor": "bnss-2023/sec-35-a@2024-07-01",
+                "heading": "Bharatiya Nagarik Suraksha Sanhita 2023, Section 35",
                 "source_type": "bare_act",
             },
             {

@@ -78,8 +78,12 @@ query_total = Counter(
 
 refused_total = Counter(
     "rag_refused_total",
-    "Number of /answer requests that emitted a `refused` event "
-    "(empty retrieval or no clean answer).",
+    "Number of /answer requests that emitted a `refused` event after a service or composition failure.",
+)
+
+source_gap_handoff_total = Counter(
+    "rag_source_gap_handoff_total",
+    "Number of /answer requests that stopped at a verified-source gap and emitted a safe handoff.",
 )
 
 stopped_total = Counter(
@@ -95,6 +99,7 @@ __all__ = [
     "llm_ttft",
     "query_total",
     "refused_total",
+    "source_gap_handoff_total",
     "rerank_latency",
     "retrieval_latency",
     "skip_ratio",

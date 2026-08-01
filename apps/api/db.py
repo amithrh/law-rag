@@ -28,7 +28,12 @@ async def get_pool() -> asyncpg.Pool:
             dsn = s.resolved_database_url
         else:
             dsn = s.resolved_database_url_host_side
-        _state.pool = await asyncpg.create_pool(dsn=dsn, min_size=2, max_size=8)
+        _state.pool = await asyncpg.create_pool(
+            dsn=dsn,
+            min_size=2,
+            max_size=8,
+            timeout=min(max(float(s.postgres_connect_timeout_sec), 0.1), 60.0),
+        )
     return _state.pool
 
 

@@ -12,8 +12,16 @@ from dataclasses import dataclass
 from datetime import date
 
 from apps.api.authority_graph import (
+    authority_graph_contract_query_matches,
     authority_graph_contract_template_result,
     authority_graph_template_result,
+)
+from apps.api.incident_facts import (
+    is_acid_attempt_query as _is_acid_attempt_query,
+    is_acid_exposure_uncertain_query as _is_acid_exposure_uncertain_query,
+    is_acid_threat_only_query as _is_acid_threat_only_query,
+    is_completed_acid_attack_query as _is_completed_acid_attack_query,
+    is_positive_acid_chemical_context as _is_positive_acid_chemical_context,
 )
 from apps.api.customs_logic import (
     customs_classification_issue,
@@ -22,8 +30,14 @@ from apps.api.customs_logic import (
     customs_related_party_negated,
     customs_svb_issue,
 )
-from apps.api.matter_router import MatterRoute, has_person_custody_context
-
+from apps.api.matter_router import (
+    MatterRoute,
+    _is_lok_adalat_challenge,
+    _is_workplace_harassment_respondent,
+    _is_workplace_harassment_respondent_criminal_context,
+    criminal_transition_status,
+    has_person_custody_context,
+)
 
 _WORKFLOW_ANSWER_MODES: dict[str, str] = {
     # Safety / liberty / high-risk contracts own the answer when source-gated.
@@ -58,6 +72,7 @@ _WORKFLOW_ANSWER_MODES: dict[str, str] = {
     "bank_wrong_debit": "primary",
     "bank_account_freeze": "primary",
     "bank_account_freeze_legal_hold": "primary",
+    "pmla_ed_asset_freeze": "primary",
     "loan_app_harassment": "primary",
     "crypto_exchange_wallet": "primary",
     "intimate_image_blackmail": "primary",
@@ -77,10 +92,15 @@ _WORKFLOW_ANSWER_MODES: dict[str, str] = {
     "senior_parent_pension_neglect": "primary",
     "pension_aadhaar_bank_closure": "primary",
     "pension_aadhaar_biometric_mismatch": "primary",
+    # An explicit PAN-Aadhaar linking failure needs the dedicated Section
+    # 139AA workflow, not the older record-correction template.
+    "pan_aadhaar_linking_bank_kyc": "primary",
     "pan_aadhaar_bank_kyc_mismatch": "primary",
     "caste_slur_assault_fir_refusal": "primary",
     "caste_access_police_refusal": "primary",
     "school_caste_slur_assault": "primary",
+    "scst_targeted_violence_intake": "primary",
+    "scst_poa_accused_bail_defence": "primary",
     "forest_mfp_false_dacoity_case": "primary",
     "witch_branding_violence": "primary",
     "false_fir_defence": "primary",
@@ -232,8 +252,11 @@ _WORKFLOW_ANSWER_MODES: dict[str, str] = {
     "digital_creator_payout_freeze": "primary",
     "gig_delivery_accident_compensation": "primary",
     "traffic_police_challan_bribe": "primary",
+    "lok_adalat_traffic_settlement": "primary",
+    "lok_adalat_award_challenge": "primary",
     "posh_pip_retaliation": "primary",
     "workplace_sexual_harassment_first_action": "primary",
+    "workplace_sexual_harassment_respondent": "primary",
     "procedure_writ_32_226_difference": "primary",
     "procedure_nclat_appeal": "primary",
     "procedure_nclt_insolvency_petition": "primary",
@@ -297,6 +320,35 @@ def common_workflow_contract_query_matches(
             })
             and _is_loan_app(q)
         )
+    if workflow_id == "police_seized_device_return":
+        return (
+            route.label != "UAPA bail / criminal defence"
+            and
+            (route_independent or route.category in {"police_fir", "criminal_general"})
+            and _is_police_seized_device(q)
+        )
+    if workflow_id == "workplace_sexual_harassment_respondent":
+        return (
+            (route_independent or route.category == "workplace_sexual_harassment")
+            and not _is_workplace_harassment_respondent_criminal_context(q)
+            and _is_workplace_harassment_respondent(q)
+        )
+    if workflow_id == "workplace_sexual_harassment_first_action":
+        return (
+            route.category == "workplace_sexual_harassment"
+            and not _is_workplace_harassment_respondent(q)
+            and _is_workplace_sexual_harassment_general(q)
+        )
+    if workflow_id == "lok_adalat_award_challenge":
+        return (
+            (route_independent or route.category == "lok_adalat_award_challenge")
+            and _is_lok_adalat_challenge(q)
+        )
+    if workflow_id == "lok_adalat_traffic_settlement":
+        return (
+            (route_independent or route.category == "legal_aid")
+            and _is_lok_adalat_traffic_settlement(q)
+        )
     return False
 
 
@@ -304,6 +356,35 @@ _COMMON_WORKFLOW_ACTIVATION_SPECS: dict[
     str,
     tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...],
 ] = {
+    "lok_adalat_traffic_settlement": (
+        (
+            "lsa_organisation",
+            ("legal services authorities",),
+            ("/sec-19",),
+        ),
+        (
+            "lsa_cognizance",
+            ("legal services authorities",),
+            ("/sec-20",),
+        ),
+        (
+            "lsa_award",
+            ("legal services authorities",),
+            ("/sec-21",),
+        ),
+        (
+            "traffic_eligibility",
+            ("motor vehicles",),
+            ("/sec-3", "/sec-130", "/sec-200"),
+        ),
+    ),
+    "lok_adalat_award_challenge": (
+        (
+            "lsa_award_challenge",
+            ("legal services authorities",),
+            ("/sec-21",),
+        ),
+    ),
     "loan_app_harassment": (
         (
             "digital_grievance",
@@ -346,6 +427,27 @@ _COMMON_WORKFLOW_ACTIVATION_SPECS: dict[
             ("/sec-10",),
         ),
     ),
+    "workplace_sexual_harassment_respondent": (
+        (
+            "posh_process",
+            ("sexual harassment of women at workplace",),
+            ("/sec-9",),
+        ),
+    ),
+    "workplace_sexual_harassment_first_action": (
+        (
+            "posh_process",
+            ("sexual harassment of women at workplace",),
+            ("/sec-3",),
+        ),
+    ),
+}
+
+_COMMON_WORKFLOW_REQUIRED_SOURCE_PACKS = {
+    "lok_adalat_traffic_settlement": "legal_services_authorities_1987_lok_adalat",
+    "lok_adalat_award_challenge": "legal_services_authorities_1987_lok_adalat",
+    "workplace_sexual_harassment_respondent": "posh_2013",
+    "workplace_sexual_harassment_first_action": "posh_2013",
 }
 
 
@@ -366,6 +468,11 @@ def common_workflow_contract_required_source_specs(
         for _key, title_terms, anchor_terms
         in _COMMON_WORKFLOW_ACTIVATION_SPECS.get(workflow_id, ())
     )
+
+
+def common_workflow_contract_required_source_pack(workflow_id: str) -> str | None:
+    """Return the physical reviewed pack that owns a workflow's evidence."""
+    return _COMMON_WORKFLOW_REQUIRED_SOURCE_PACKS.get(workflow_id)
 
 
 def plan_owned_workflow_contract_result(
@@ -407,13 +514,67 @@ def plan_owned_workflow_contract_result(
             owner_contract_id,
             (),
         ):
+            workflow_source_pack = common_workflow_contract_required_source_pack(
+                owner_contract_id
+            )
+            required_source_pack = (
+                workflow_source_pack
+                if workflow_source_pack is not None
+                and (
+                    owner_contract_id != "lok_adalat_traffic_settlement"
+                    or key.startswith("lsa_")
+                )
+                else None
+            )
+            candidate_passages = passages
+            if required_source_pack is not None:
+                # The immutable owner must fail closed when provenance is
+                # absent, not merely when a foreign pack is present. The
+                # generic workflow helper intentionally remains fixture-
+                # friendly; this plan-owned path is the release boundary.
+                candidate_passages = [
+                    passage
+                    for passage in passages
+                    if str(
+                        passage.get("required_source_pack")
+                        or passage.get("_required_source_pack")
+                        or ""
+                    ).strip().lower() == required_source_pack.lower()
+                    and any(
+                        _strict_anchor_matches(
+                            str(passage.get("anchor") or "").lower(),
+                            anchor_term,
+                        )
+                        for anchor_term in anchor_terms
+                    )
+                ]
             source_index = _find(
-                passages,
+                candidate_passages,
                 title_terms=title_terms,
                 anchor_terms=anchor_terms,
+                required_source_pack=required_source_pack,
             )
             if source_index is None:
                 return None
+            if owner_contract_id in {
+                "lok_adalat_traffic_settlement",
+                "lok_adalat_award_challenge",
+            } and key.startswith("lsa_"):
+                passage = next(
+                    (item for item in passages if item.get("index") == source_index),
+                    None,
+                )
+                expected_authority_id = {
+                    "lsa_organisation": "authority_4311cfc807f876973217",
+                    "lsa_cognizance": "authority_73374f30d45eec49c931",
+                    "lsa_award": "authority_71a26d0ccbf7b61f6d84",
+                    "lsa_award_challenge": "authority_71a26d0ccbf7b61f6d84",
+                }[key]
+                if passage is None or not _canonical_lsa_passage(
+                    passage,
+                    expected_authority_id,
+                ):
+                    return None
             source_indices[key] = source_index
         builder = dict(_workflow_builders()).get(owner_contract_id)
         if owner_contract_id == "loan_app_harassment":
@@ -440,6 +601,7 @@ def plan_owned_workflow_contract_result(
 
 _REVIEWED_COMMON_PRIMARY_OWNERS = frozenset({
     "arms_act_farming_tool_defence",
+    "bank_credit_noc_cibil",
     "blank_paper_moneylender_fraud",
     "business_contract_first_action",
     "cab_aggregator_driver_account",
@@ -473,8 +635,12 @@ _REVIEWED_COMMON_PRIMARY_OWNERS = frozenset({
     "social_media_account_suspension",
     "street_vendor_removal",
     "streedhan_return",
+    "traffic_police_challan_bribe",
+    "lok_adalat_traffic_settlement",
+    "lok_adalat_award_challenge",
     "witch_branding_violence",
     "workplace_sexual_harassment_first_action",
+    "workplace_sexual_harassment_respondent",
     "caste_access_police_refusal",
     "family_notice_response",
 })
@@ -574,6 +740,33 @@ def common_workflow_contract_result(
                 answer_mode=workflow_contract_answer_mode("marriage_misrepresentation_voidable"),
             )
 
+    # Vehicle-theft FIR refusal is a narrower reviewed authority contract than
+    # the generic police-FIR first-response workflow. Resolve it first. If its
+    # strict source set is incomplete, stop here instead of allowing the
+    # non-strict global selector to revive the same workflow.
+    if route.category in {"police_fir", "criminal_general"} and authority_graph_contract_query_matches(
+        query,
+        route,
+        "vehicle_theft_fir_refusal",
+    ):
+        vehicle_theft_result = authority_graph_contract_template_result(
+            query,
+            route,
+            passages,
+            "vehicle_theft_fir_refusal",
+        )
+        if vehicle_theft_result is not None:
+            return WorkflowTemplateResult(
+                id=vehicle_theft_result.id,
+                source="authority_graph",
+                lines=vehicle_theft_result.lines,
+                answer_mode=workflow_contract_answer_mode(vehicle_theft_result.id),
+                required_sources=vehicle_theft_result.required_sources,
+                optional_sources=vehicle_theft_result.optional_sources,
+                source_indices=vehicle_theft_result.source_indices,
+            )
+        return None
+
     authority_result = authority_graph_template_result(query, route, passages)
     if authority_result is not None:
         return WorkflowTemplateResult(
@@ -589,11 +782,17 @@ def common_workflow_contract_result(
     for workflow_id, builder in _workflow_builders():
         lines = builder(q, route, passages)
         if lines:
+            selected_workflow_id = (
+                "bank_account_freeze_legal_hold"
+                if workflow_id == "bank_account_freeze"
+                and _is_bank_freeze_legal_hold_context(q)
+                else workflow_id
+            )
             return WorkflowTemplateResult(
-                id=workflow_id,
+                id=selected_workflow_id,
                 source="common_workflow_contracts",
                 lines=lines,
-                answer_mode=workflow_contract_answer_mode(workflow_id),
+                answer_mode=workflow_contract_answer_mode(selected_workflow_id),
             )
     return None
 
@@ -700,6 +899,8 @@ def _workflow_builders():
         ("digital_creator_payout_freeze", _digital_creator_payout_freeze_lines),
         ("cab_aggregator_passenger", _cab_aggregator_passenger_lines),
         ("traffic_police_challan_bribe", _traffic_police_challan_bribe_lines),
+        ("lok_adalat_traffic_settlement", _lok_adalat_traffic_settlement_lines),
+        ("lok_adalat_award_challenge", _lok_adalat_award_challenge_lines),
         ("relative_adoption_no_papers", _relative_adoption_no_papers_lines),
         ("child_cross_border_return", _child_cross_border_return_lines),
         ("child_access", _child_access_lines),
@@ -739,6 +940,7 @@ def _workflow_builders():
         ("scheme_worker_honorarium", _scheme_worker_honorarium_lines),
         ("maternity_return_role_change", _maternity_return_role_change_lines),
         ("posh_pip_retaliation", _posh_pip_retaliation_lines),
+        ("workplace_sexual_harassment_respondent", _workplace_sexual_harassment_respondent_lines),
         ("workplace_sexual_harassment_first_action", _workplace_sexual_harassment_first_action_lines),
         ("gig_delivery_accident_compensation", _gig_delivery_accident_compensation_lines),
         ("sexual_offence_survivor_procedure", _sexual_offence_survivor_procedure_lines),
@@ -1583,6 +1785,11 @@ def _mining_gram_sabha_consent_challenge_lines(q: str, route: MatterRoute, passa
 def _tribal_forest_land_access_lines(q: str, route: MatterRoute, passages: list[dict]) -> list[str]:
     if route.category not in {"tribal_caste_atrocity", "land_revenue_records", "environment_compensation"}:
         return []
+    environmental_damage_context = _has_any(q, (
+        "borewell", "bad water", "water has come", "chemicals", "effluent",
+        "pollution", "polluting", "factory", "thermal plant", "power plant",
+        "contaminated", "contamination", "pollution board",
+    ))
     forest_context = _has_any(q, (
         "fra", "forest rights", "ifr", "cfr", "community forest", "forest department",
         "forest guard", "forest officer", "bamboo", "reserve forest", "reserved forest",
@@ -1595,9 +1802,10 @@ def _tribal_forest_land_access_lines(q: str, route: MatterRoute, passages: list[
         "mortgage", "transferred my", "patwari changed", "tehsildar transferred",
     ))
     public_access_context = _has_any(q, (
-        "temple", "well", "dirty water", "cannot touch", "cant enter", "can't enter",
+        "temple", "cannot touch", "cant enter", "can't enter",
         "not enter", "stopped us from entering", "public access", "untouchable",
-        "dalit cannot", "caste cant", "caste can't",
+        "dalit cannot", "caste cant", "caste can't", "not allowed to draw water",
+        "stopped from using the well", "denied access to the well",
     ))
     atrocity_procedure_context = _has_any(q, (
         "atrocity", "poa", "sc st", "sc/st", "dsp", "special court",
@@ -1610,6 +1818,22 @@ def _tribal_forest_land_access_lines(q: str, route: MatterRoute, passages: list[
         ))
     )
     if not (forest_context or land_transfer_context or public_access_context or atrocity_procedure_context):
+        return []
+
+    # A contaminated-water or factory-damage query can contain "well" or
+    # "water", but that is environmental harm, not caste-based public-access
+    # exclusion. Do not let this shared safety workflow emit caste remedies.
+    if (
+        route.category == "environment_compensation"
+        and environmental_damage_context
+        and not (forest_context or land_transfer_context or atrocity_procedure_context or public_access_context)
+    ):
+        return []
+
+    # Land-transfer questions have a dedicated authority-graph contract. The
+    # shared forest/access workflow must not mask it with a generic caste or
+    # forest-rights answer when the state-law contract is source-eligible.
+    if route.label == "Tribal land transfer / restoration" and land_transfer_context:
         return []
 
     # PoA investigation, Special Court, and FIR-refusal matters have dedicated
@@ -1986,29 +2210,178 @@ def _custody_habeas_lockup_abuse_lines(q: str, route: MatterRoute, passages: lis
 def _police_seized_device_return_lines(q: str, route: MatterRoute, passages: list[dict]) -> list[str]:
     if route.category not in {"police_fir", "criminal_general"} or not _is_police_seized_device(q):
         return []
-    bnss_property = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-497",))
+    bnss_court_property = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-497",))
+    bnss_police_property = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-503",))
+    bnss_savings = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-531",))
+    crpc_court_property = _find(passages, title_terms=("code of criminal procedure",), anchor_terms=("/sec-451",))
+    crpc_police_property = _find(passages, title_terms=("code of criminal procedure",), anchor_terms=("/sec-457",))
     it_act = _find(passages, title_terms=("information technology",), anchor_terms=("/sec-2", "/sec-65B", "/sec-67C", "/sec-79"))
-    bnss_fir = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-173", "/sec-175"))
-    if bnss_property is None:
+    transition = criminal_transition_status(q)
+    legacy_regime = transition in {"saved_crpc", "legacy_incident"}
+    current_regime = transition == "current_bnss"
+    unknown_regime = transition == "unknown"
+    explicitly_not_produced = _has_any(q, (
+        "not produced before court", "not produced in court", "not produced before magistrate",
+        "never produced before court", "still with police", "only in police custody",
+        "not produced it before court", "not produced the device before court",
+        "did not produce before court", "didn't produce before court",
+        "did not produce it before court", "didn't produce it before court",
+        "did not produce the device before court", "didn't produce the device before court",
+        "police still have",
+    ))
+    explicitly_produced = not explicitly_not_produced and _has_any(q, (
+        "produced before court", "produced in court", "produced before magistrate",
+        "produced it before court", "produced it before the magistrate",
+        "produced the device before court",
+        "deposited in court", "in court custody", "court has the device",
+        "court has my phone", "court has the phone", "magistrate has the device",
+        "magistrate has my phone", "magistrate has the phone", "submitted to court",
+    ))
+    court_status_unknown = not explicitly_produced and not explicitly_not_produced
+    if transition == "saved_crpc" and bnss_savings is None:
+        # The savings rule is the legal bridge for an explicit pre-commencement
+        # pending proceeding. Do not emit a CrPC answer with an uncited bridge.
         return []
+    bnss_selected = tuple(
+        index for index in (
+            bnss_court_property if explicitly_produced or court_status_unknown else None,
+            bnss_police_property if explicitly_not_produced or court_status_unknown else None,
+        ) if index is not None
+    )
+    crpc_selected = tuple(
+        index for index in (
+            crpc_court_property if explicitly_produced or court_status_unknown else None,
+            crpc_police_property if explicitly_not_produced or court_status_unknown else None,
+        ) if index is not None
+    )
+    if (
+        (legacy_regime and len(crpc_selected) != (2 if court_status_unknown else 1))
+        or (current_regime and len(bnss_selected) != (2 if court_status_unknown else 1))
+        or (
+            unknown_regime
+            and (
+                len(bnss_selected) != (2 if court_status_unknown else 1)
+                or len(crpc_selected) != (2 if court_status_unknown else 1)
+            )
+        )
+    ):
+        return []
+
+    if legacy_regime:
+        property_cites = _cite_many(*crpc_selected)
+        if explicitly_produced:
+            if transition == "saved_crpc":
+                savings_cite = _cite_many(bnss_savings)
+                regime_line = (
+                    "BNSS Section 531's savings rule keeps the CrPC procedure for an "
+                    "investigation or proceeding pending immediately before 1 July 2024 "
+                    f"{savings_cite}; CrPC Section 451 then covers property produced before "
+                    f"a Criminal Court and its proper custody {property_cites}."
+                )
+            else:
+                regime_line = (
+                    "CrPC Section 451 covers property produced before a Criminal Court during an "
+                    "inquiry or trial, and allows the Court to order its proper custody pending "
+                    f"the proceeding {property_cites}."
+                )
+        elif explicitly_not_produced:
+            if transition == "saved_crpc":
+                savings_cite = _cite_many(bnss_savings)
+                regime_line = (
+                    "BNSS Section 531's savings rule keeps the CrPC procedure for an "
+                    "investigation or proceeding pending immediately before 1 July 2024 "
+                    f"{savings_cite}; CrPC Section 457 then covers police-seized property "
+                    f"not produced before a Criminal Court and delivery or custody {property_cites}."
+                )
+            else:
+                regime_line = (
+                    "CrPC Section 457 covers police-seized property reported to a Magistrate but "
+                    "not produced before a Criminal Court during an inquiry or trial, and allows "
+                    f"an order for its disposal, delivery, custody, or production {property_cites}."
+                )
+        else:
+            if transition == "saved_crpc":
+                regime_line = (
+                    "BNSS Section 531's savings rule keeps the CrPC procedure for an "
+                    "investigation or proceeding pending immediately before 1 July 2024 "
+                    f"{_cite_many(bnss_savings)}; confirm from the custody record whether "
+                    f"CrPC Section 451 or Section 457 is the matching property route {property_cites}."
+                )
+            else:
+                regime_line = (
+                    "Because the seizure/incident is expressly before 1 July 2024 and no later "
+                    "transition conflict is indicated, use the CrPC provision for property "
+                    f"produced before court or for police-seized property not yet produced there, as the custody record shows {property_cites}."
+                )
+    elif current_regime:
+        property_cites = _cite_many(*bnss_selected)
+        if explicitly_produced:
+            regime_line = (
+                "BNSS Section 497 covers property produced before a Criminal Court or the "
+                "Magistrate during an investigation, inquiry, or trial, and allows an order "
+                f"for its proper custody pending the proceeding {property_cites}."
+            )
+        elif explicitly_not_produced:
+            regime_line = (
+                "BNSS Section 503 covers police-seized property reported to a Magistrate but "
+                "not produced before a Criminal Court, and allows an order for its disposal, "
+                f"delivery, custody, or production {property_cites}."
+            )
+        else:
+            regime_line = (
+                "Because the proceeding is expressly post-commencement, use the BNSS provision for property "
+                f"produced before court or for police-seized property not yet produced there, as the custody record shows {property_cites}."
+            )
+    else:
+        property_cites = _cite_many(*bnss_selected, *crpc_selected)
+        if explicitly_produced:
+            regime_line = (
+                "The applicable regime depends on whether an investigation or proceeding was pending "
+                "immediately before 1 July 2024; with that transition fact unknown, and because the device was "
+                f"produced before the court, use the corresponding court-custody provision {property_cites}."
+            )
+        elif explicitly_not_produced:
+            regime_line = (
+                "The applicable regime depends on whether an investigation or proceeding was pending "
+                "immediately before 1 July 2024; with that transition fact unknown, and because the device was not "
+                f"produced before the criminal court, use the corresponding police-seizure delivery provision {property_cites}."
+            )
+        else:
+            regime_line = (
+                "The applicable regime depends on whether an investigation or proceeding was pending "
+                "immediately before 1 July 2024; with that transition fact unknown, whether "
+                f"the device was produced before the court selects the court-custody or police-seizure provision {property_cites}."
+            )
+    if bnss_savings is not None and transition == "unknown":
+        regime_line = (
+            f"BNSS Section 531 preserves CrPC for an investigation or proceeding pending immediately "
+            f"before 1 July 2024; confirm that transition fact before choosing the applicable regime {_cite_many(bnss_savings)}. "
+            f"{regime_line}"
+        )
 
     lines = [
         "**Short answer**",
-        f"For a company laptop or device seized in another person's investigation, treat it as a search/seizure and property-custody problem: ask for the seizure memo, case reference, officer/court details, and release/superdari or court-return route; keep ownership and work-device proof separate from the accused person's case [{bnss_property}].",
-        f"Use the court-supervision/custody source to ask for interim custody, release, copying, or preservation directions where business data or the device is needed while the case continues [{bnss_property}].",
+        f"For a phone, laptop, or other device seized or retained during a criminal investigation, treat its return as a search/seizure and property-custody problem: ask for the seizure memo, case reference, officer/court details, and the release/superdari or court-return route {property_cites}.",
+        regime_line,
     ]
+    if court_status_unknown:
+        lines.append(
+            "First confirm from the seizure memo, police report, or court record whether the device "
+            f"has been produced before the court; the two property provisions are not interchangeable {property_cites}."
+        )
     if it_act is not None:
         lines.append(
             f"Because the item is an electronic device, preserve device identifiers, account/email details, work ownership proof, and any electronic-record request or imaging/hash details separately [{it_act}]."
         )
-    if bnss_fir is not None:
-        lines.append(
-            f"If police do not give a seizure memo or status, use the criminal-procedure complaint/status route with the written request and acknowledgement [{bnss_fir}]."
-        )
-    action_cites = _cite_many(bnss_property, it_act, bnss_fir)
+    action_cites = _cite_many(
+        *(bnss_selected if not legacy_regime else ()),
+        *(crpc_selected if not current_regime else ()),
+        bnss_savings if transition in {"saved_crpc", "unknown"} else None,
+        it_act,
+    )
     lines.extend([
         "**What you can do next**",
-        f"- Keep laptop serial/asset tag, employer ownership letter, seizure memo, case/FIR number, officer/station details, date/time/place of seizure, work-data urgency, and any notice; ask the investigating officer or court for a written return/release status before filing further applications {action_cites}.",
+        f"- Keep the device IMEI/serial/asset tag, ownership or authorised-use proof, seizure memo, case/FIR number, officer/station details, date/time/place of seizure, data-access urgency, and any notice; give the investigating officer and supervising court a written request for return, interim custody, copying, or preservation directions {action_cites}.",
     ])
     return lines
 
@@ -2059,61 +2432,185 @@ def _forced_sexual_exploitation_victim_lines(q: str, route: MatterRoute, passage
 
 
 def _acid_chemical_attack_first_response_lines(q: str, route: MatterRoute, passages: list[dict]) -> list[str]:
-    if route.category not in {"police_fir", "criminal_general"} or not _has_any(q, (
-        "acid", "chemical", "eyes burning", "threw something on my face", "face burning",
-    )):
+    acid_safety_context = _is_positive_acid_chemical_context(q)
+    if route.category not in {"police_fir", "criminal_general"} or not acid_safety_context:
         return []
-    bns_acid = _find(passages, title_terms=("bharatiya nyaya",), anchor_terms=("/sec-124",))
-    bns_hurt = _find(passages, title_terms=("bharatiya nyaya",), anchor_terms=("/sec-115", "/sec-117", "/sec-118", "/sec-125", "/sec-351"))
-    bnss_fir = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-173", "/sec-175"))
-    crpc_fir = _find(passages, title_terms=("code of criminal procedure",), anchor_terms=("/sec-154", "/sec-156"))
-    pwdva = _find(passages, title_terms=("domestic violence",), anchor_terms=("/sec-3", "/sec-18"))
-    mere_threat = _has_any(q, (
-        "threatened to throw", "threatening to throw", "threatens to throw",
-        "will throw acid", "throw acid on me", "throw chemical on me",
-    )) and not _has_any(q, (
-        "threw acid", "acid thrown", "chemical thrown", "eyes burning", "face burning",
-    ))
-    primary = bns_acid or bns_hurt or bnss_fir or crpc_fir or pwdva
+    bns_acid = _find(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-124",),
+        required_source_pack="bns_2023_acid_attack",
+    )
+    bns_hurt = _find(
+        passages,
+        title_terms=("bharatiya nyaya",),
+        anchor_terms=("/sec-115", "/sec-117", "/sec-118", "/sec-125", "/sec-351"),
+        required_source_pack="bns_2023_acid_attack",
+    )
+    bnss_fir = _find(
+        passages,
+        title_terms=("bharatiya nagarik suraksha",),
+        anchor_terms=("/sec-173", "/sec-175", "/sec-184", "/sec-193"),
+        required_source_pack="bnss_2023_fir_information_acid",
+    )
+    crpc_fir = _find(
+        passages,
+        title_terms=("code of criminal procedure",),
+        anchor_terms=("/sec-154", "/sec-156", "/sec-164a"),
+        required_source_pack="crpc_1973_fir_information_acid",
+    )
+    pwdva = _find(
+        passages,
+        title_terms=("domestic violence",),
+        anchor_terms=("/sec-3", "/sec-18"),
+        required_source_pack="pwdva_2005",
+    )
+    mere_threat = _is_acid_threat_only_query(q)
+    attempted_acid_facts = _is_acid_attempt_query(q)
+    uncertain_acid_facts = _is_acid_exposure_uncertain_query(q)
+    completed_acid_facts = _is_completed_acid_attack_query(q)
+    ipc_acid = _find(
+        passages,
+        title_terms=("indian penal",),
+        anchor_terms=("/sec-326a",),
+        required_source_pack="ipc_1860_acid_attack",
+    )
+    ipc_attempt = _find(
+        passages,
+        title_terms=("indian penal",),
+        anchor_terms=("/sec-326b", "/sec-511"),
+        required_source_pack="ipc_1860_acid_attack",
+    )
+    ipc_threat = _find(
+        passages,
+        title_terms=("indian penal",),
+        anchor_terms=("/sec-506",),
+        required_source_pack="ipc_1860_acid_attack",
+    )
+    ipc_hurt = _find(
+        passages,
+        title_terms=("indian penal",),
+        anchor_terms=("/sec-326b", "/sec-511", "/sec-506"),
+        required_source_pack="ipc_1860_acid_attack",
+    )
+    if (
+        completed_acid_facts
+        and "acid" in q
+        and bns_acid is None
+        and bns_hurt is None
+        and ipc_acid is None
+        and ipc_hurt is None
+    ):
+        # Do not downgrade a completed acid incident to a generic hurt source.
+        # The runtime source-gap layer will hand off when the exact authority
+        # is absent or the incident-date regime is unresolved.
+        return []
+    primary = bns_acid or ipc_acid or bns_hurt or ipc_hurt or bnss_fir or crpc_fir or pwdva
     if primary is None:
         return []
 
     lines = ["**Short answer**"]
-    if mere_threat and bns_hurt is not None:
+    if mere_threat and (bns_hurt is not None or ipc_threat is not None):
+        threat_source = bns_hurt if bns_hurt is not None else ipc_threat
         lines.append(
-            f"A threat to throw acid is an urgent prevention and criminal-intimidation issue; do not describe it as a completed acid injury unless acid or another chemical was actually thrown [{bns_hurt}]."
+            f"A threat to throw acid is an urgent prevention and criminal-intimidation issue; do not describe it as a completed acid injury unless acid or another chemical was actually thrown [{threat_source}]."
         )
-    elif bns_acid is not None:
+    elif uncertain_acid_facts:
         lines.append(
-            f"For suspected acid or chemical injury to the face/eyes, treat this as an emergency acid-attack/hurt track first, not a normal road quarrel or only a compensation question [{bns_acid}]."
+            f"The facts describe a possible acid or chemical exposure, but contact or the substance is not confirmed; keep this as a safety/intake question, preserve the exact words and available records, and do not treat an injury or offence section as established [{bns_hurt or ipc_hurt or bns_acid or ipc_acid or pwdva}]."
         )
-    elif bns_hurt is not None:
+    elif attempted_acid_facts and not completed_acid_facts:
         lines.append(
-            f"For burning eyes or chemical injury where the exact substance is still being confirmed, keep the hurt/endangering-life source with the hospital papers and complaint [{bns_hurt}]."
+            f"The facts describe a possible attempted acid or chemical attack, not a confirmed completed exposure; preserve the exact attempt, target, witnesses, messages, and any injury evidence, and have the applicable offence and incident-date regime verified before relying on a section [{bns_acid or ipc_attempt or ipc_acid or bns_hurt or ipc_hurt or pwdva}]."
         )
-    if pwdva is not None and _has_any(q, (
-        "mother in law", "mother-in-law", "in laws", "in-laws", "dowry",
-        "more money", "parents",
-    )):
+    elif completed_acid_facts:
+        if bns_acid is not None or ipc_acid is not None:
+            offence_source = bns_acid if bns_acid is not None else ipc_acid
+            offence_label = "BNS Section 124" if bns_acid is not None else "IPC Section 326A"
+            lines.append(
+                f"The question reports an acid or chemical attack; treat it as an emergency acid-attack/hurt track and verify the {offence_label} source against the incident date and medical evidence [{offence_source}]."
+            )
+        elif bns_hurt is not None or ipc_hurt is not None:
+            hurt_source = bns_hurt if bns_hurt is not None else ipc_hurt
+            lines.append(
+                f"The question reports an acid or chemical attack; treat it as an emergency medical and criminal track, preserve the hospital/MLC record and other evidence, and verify the exact offence against the incident date [{hurt_source}]."
+            )
+    elif not mere_threat and (bns_acid is not None or ipc_acid is not None):
+        offence_source = bns_acid if bns_acid is not None else ipc_acid
         lines.append(
-            f"Because the threat is from an in-law or linked to pressure for money from your parents, keep the PWDVA protection-order route active alongside the police track [{pwdva}]."
+            f"For suspected acid or chemical injury to the face/eyes, treat this as an emergency acid-attack/hurt track first, not a normal road quarrel or only a compensation question [{offence_source}]."
         )
+    elif bns_hurt is not None or ipc_hurt is not None:
+        hurt_source = bns_hurt if bns_hurt is not None else ipc_hurt
+        lines.append(
+            f"For burning eyes or chemical injury where the exact substance is still being confirmed, keep the hurt/endangering-life source with the hospital papers and complaint [{hurt_source}]."
+        )
+    inlaw_context = _has_any(q, (
+        "mother in law", "mother-in-law", "father in law", "father-in-law",
+        "in laws", "in-laws", "in law", "in-law", "sasural",
+    ))
+    money_pressure = _has_any(q, (
+        "more money", "money from my parents", "dowry", "money demand",
+        "demand for money", "bring money", "give money",
+    ))
+    if pwdva is not None and inlaw_context:
+        if completed_acid_facts:
+            lines.append(
+                f"Because the question reports an attack by an in-law, keep the PWDVA protection-order route active alongside the police and medical tracks where the domestic-relationship conditions apply [{pwdva}]."
+            )
+        elif money_pressure and "money from my parents" in q:
+            lines.append(
+                f"Because the threat is from an in-law or linked to pressure for money from your parents, keep the PWDVA protection-order route active alongside the police track [{pwdva}]."
+            )
+        elif money_pressure:
+            lines.append(
+                f"Because the threat is from an in-law and the question also mentions money or dowry pressure, keep the PWDVA protection-order route active alongside the police track [{pwdva}]."
+            )
+        else:
+            lines.append(
+                f"Because the threat is from an in-law, keep the PWDVA protection-order route active alongside the police track where the domestic-relationship conditions apply [{pwdva}]."
+            )
     if bnss_fir is not None or crpc_fir is not None:
         procedure = bnss_fir or crpc_fir
         if mere_threat:
+            if bns_hurt is not None:
+                lines.append(
+                    f"Preserve the exact threat, messages/calls, witness details, location, and any attempt to obtain acid or another chemical; file a written police complaint and keep its acknowledgement [{procedure}]."
+                )
+            else:
+                lines.append(
+                    f"A threat to throw acid is urgent even before any acid is thrown; preserve the exact threat, messages/calls, witness details, location, and any attempt to obtain acid or another chemical, then file a written police complaint and keep its acknowledgement [{procedure}]."
+                )
+        elif uncertain_acid_facts:
             lines.append(
-                f"Preserve the exact threat, messages/calls, witness details, location, and any attempt to obtain acid or another chemical; file a written police complaint and keep its acknowledgement [{procedure}]."
+                f"Because contact or the substance is unconfirmed, do not state that an injury occurred; if there is pain, burning, or eye exposure, seek emergency care and keep the medical record, otherwise preserve the exact words, messages, location, witnesses, and complaint acknowledgement [{procedure}]."
             )
         else:
             lines.append(
                 f"Do the medical and police steps together: get emergency treatment/MLC, preserve clothes/photos/CCTV/witnesses, and file a written complaint/FIR with acknowledgement [{procedure}]."
             )
-    action_cites = _cite_many(bns_acid, bns_hurt, bnss_fir, crpc_fir, pwdva)
+    if uncertain_acid_facts:
+        action_cites = _cite_many(bnss_fir, crpc_fir, pwdva)
+    elif mere_threat:
+        action_cites = _cite_many(bns_hurt, ipc_threat, bnss_fir, crpc_fir, pwdva)
+    else:
+        action_cites = _cite_many(
+            bns_acid,
+            ipc_acid,
+            bns_hurt,
+            ipc_attempt,
+            ipc_hurt,
+            bnss_fir,
+            crpc_fir,
+            pwdva,
+        )
     lines.extend([
         "**What you can do next**",
         (
             f"- Move to a safe place, tell a trusted person, contact 112/police if danger is immediate, and keep the written threat complaint, messages/calls, witnesses, location, and any known access to acid/chemicals; contact a Protection Officer/One Stop Centre where the domestic relationship applies, and use DLSA or senior police if the station delays {action_cites}."
             if mere_threat
+            else f"- Do not assume that contact or injury occurred; if there is pain, burning, or eye exposure, seek emergency care, and preserve the exact words, messages, location, witnesses, clothing or photos if available, and complaint acknowledgement; contact DLSA/legal aid or police senior officers if the station delays {action_cites}."
+            if uncertain_acid_facts
             else f"- Go to hospital/emergency care first, ask for MLC/medical record, preserve the container/substance if safe, clothes, photos, vehicle/auto details, CCTV location, witness names, and complaint acknowledgement; contact DLSA/legal aid or police senior officers if the station delays {action_cites}."
         ),
     ])
@@ -2127,13 +2624,17 @@ def _police_fir_first_response_lines(q: str, route: MatterRoute, passages: list[
         return []
     if _is_witch_branding(q):
         return []
-    police_need = _has_any(q, (
-        "fir", "zero fir", "online fir", "police refused", "police refusing",
-        "thana refused", "complaint", "how to complain", "sp", "magistrate",
-        "stalking", "follows my", "acid", "eyes burning", "hut", "burnt",
-        "theft of my bike", "lost phone", "laptop has been seized",
-        "company laptop", "khap", "honour", "honor", "eloped",
-    ))
+    acid_police_need = _is_positive_acid_chemical_context(q)
+    police_need = (
+        _has_any(q, (
+            "fir", "zero fir", "online fir", "police refused", "police refusing",
+            "thana refused", "complaint", "how to complain", "sp", "magistrate",
+            "stalking", "follows my", "eyes burning", "hut", "burnt",
+            "theft of my bike", "lost phone", "laptop has been seized",
+            "company laptop", "khap", "honour", "honor", "eloped",
+        ))
+        or acid_police_need
+    )
     if not police_need:
         return []
     bnss_fir = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-173",))
@@ -2168,7 +2669,7 @@ def _police_fir_first_response_lines(q: str, route: MatterRoute, passages: list[
         lines.append(
             f"If your neighbour beat you during a land-encroachment dispute and police refuse to record the FIR, keep two tracks separate: the assault/FIR track goes to the Superintendent of Police or Magistrate route, while the boundary/title track can stay civil/revenue [{cite}]."
         )
-    if _has_any(q, ("acid", "eyes burning")):
+    if acid_police_need:
         cite = bns_hurt or procedure or primary
         lines.append(
             f"For suspected acid/chemical injury, prioritize hospital/MLC and emergency safety first, then give a written police complaint with medical papers, photos, witnesses, and the suspected substance/vehicle/person details [{cite}]."
@@ -3463,7 +3964,8 @@ def _traffic_police_challan_bribe_lines(q: str, route: MatterRoute, passages: li
     if route.category not in {"business_license_compliance", "police_fir", "criminal_general"} or not _is_traffic_police_challan_bribe(q):
         return []
     mv = _find(passages, title_terms=("motor vehicles", "themotorvehiclesact"), anchor_terms=("/sec-3", "/sec-4", "/sec-206", "/sec-182"))
-    pca = _find(passages, title_terms=("prevention of corruption",), anchor_terms=("/sec-7", "/sec-8", "/sec-13"))
+    pca = _find(passages, title_terms=("prevention of corruption",), anchor_terms=("/sec-7", "/sec-13"))
+    pca_sec8 = _find(passages, title_terms=("prevention of corruption",), anchor_terms=("/sec-8",))
     bnss = _find(passages, title_terms=("bharatiya nagarik suraksha",), anchor_terms=("/sec-173", "/sec-175"))
     primary = pca or mv or bnss
     if primary is None:
@@ -3471,15 +3973,24 @@ def _traffic_police_challan_bribe_lines(q: str, route: MatterRoute, passages: li
 
     lines = ["**Short answer**"]
     place = "Bangalore/traffic-police" if _has_any(q, ("bangalore", "bengaluru")) else "traffic-police"
-    licence_phrase = "Tamil Nadu licence" if _has_any(q, ("tamil license", "tamil licence", "tamil nadu license", "tamil nadu licence")) else "licence"
+    licence_phrase = (
+        "the Tamil Nadu driving licence issue"
+        if _has_any(q, ("tamil license", "tamil licence", "tamil nadu license", "tamil nadu licence"))
+        else "the driving licence issue"
+    )
     payment_phrase = "Rs.500 or weekly cash" if _has_any(q, ("taking 500", "rs 500", "500 every week")) else "cash or money"
     if mv is not None:
         lines.append(
-            f"For a {place} claim that your {licence_phrase} is invalid, first verify the Motor Vehicles Act licence/challan basis and ask for a written challan or notice instead of accepting oral cash demands [{mv}]."
+            f"For a {place} claim, treat {licence_phrase} as a Motor Vehicles Act licence/challan question; first verify the licence/challan basis and ask for a written challan or notice instead of accepting oral cash demands [{mv}]."
         )
     if pca is not None:
         lines.append(
-            f"If a police officer is taking {payment_phrase} without a challan/receipt, keep a separate Prevention of Corruption Act complaint track with date, place, officer details, vehicle number, and proof [{pca}]."
+            f"If you report traffic police taking money without a challan/receipt ({payment_phrase}), keep a separate Prevention of Corruption Act complaint track with date, place, officer details, vehicle number, and proof [{pca}]."
+        )
+    if pca_sec8 is not None:
+        lines.append(
+            "If you were compelled to give an undue advantage, report it to law "
+            f"enforcement or an investigating agency within seven days [{pca_sec8}]."
         )
     if bnss is not None:
         lines.append(
@@ -3491,6 +4002,102 @@ def _traffic_police_challan_bribe_lines(q: str, route: MatterRoute, passages: li
         f"- Keep licence copy, vehicle/permit/RC/insurance papers, challan history, officer name/badge/location/date, any audio/video/message proof, payment proof if safe, and complaint acknowledgement; approach the traffic DCP/RTO/anti-corruption channel or DLSA with the written packet [{action_cite}].",
     ])
     return lines
+
+
+def _lok_adalat_traffic_settlement_lines(
+    q: str,
+    route: MatterRoute,
+    passages: list[dict],
+) -> list[str]:
+    """Render the traffic-settlement path only with the complete LSA pack.
+
+    Section 19 explains organisation, Section 20 referral/cognizance, and
+    Section 21 the award. A partial trio is not enough to give a procedural
+    answer, so the contract deliberately returns no lines and lets the source
+    gap handoff own that case.
+    """
+    if route.category != "legal_aid" or not _is_lok_adalat_traffic_settlement(q):
+        return []
+    required_source_pack = "legal_services_authorities_1987_lok_adalat"
+    lsa19 = _find(
+        passages,
+        title_terms=("legal services authorities",),
+        anchor_terms=("/sec-19",),
+        required_source_pack=required_source_pack,
+        require_source_pack_metadata=True,
+    )
+    lsa20 = _find(
+        passages,
+        title_terms=("legal services authorities",),
+        anchor_terms=("/sec-20",),
+        required_source_pack=required_source_pack,
+        require_source_pack_metadata=True,
+    )
+    lsa21 = _find(
+        passages,
+        title_terms=("legal services authorities",),
+        anchor_terms=("/sec-21",),
+        required_source_pack=required_source_pack,
+        require_source_pack_metadata=True,
+    )
+    mva = _find(
+        passages,
+        title_terms=("motor vehicles",),
+        anchor_terms=("/sec-3", "/sec-130", "/sec-200"),
+    )
+    lsa_by_key = {
+        "lsa_organisation": (lsa19, "authority_4311cfc807f876973217"),
+        "lsa_cognizance": (lsa20, "authority_73374f30d45eec49c931"),
+        "lsa_award": (lsa21, "authority_71a26d0ccbf7b61f6d84"),
+    }
+    if mva is None or any(
+        index is None
+        or not _canonical_lsa_passage(
+            next((item for item in passages if item.get("index") == index), {}),
+            authority_id,
+        )
+        for index, authority_id in lsa_by_key.values()
+    ):
+        return []
+    return [
+        "**Short answer**",
+        f"A pending traffic challan may be considered through a Lok Adalat organised under the Legal Services Authorities Act, but the exact challan, offence, and eligibility must be confirmed before treating this as a settlement route [{lsa19}].",
+        f"For referral or cognizance, take the challan/e-challan record to the referring traffic court or the relevant DLSA/Lok Adalat desk and confirm whether the exact offence is legally compoundable and eligible [{lsa20}].",
+        f"Check the exact vehicle offence and state/e-challan rule before assuming eligibility; the Motor Vehicles Act source is only a starting point for that verification [{mva}].",
+        f"Before accepting a settlement, read the award terms carefully: a Lok Adalat award has the statutory effect and finality described in the cited source [{lsa21}].",
+        "**What you can do next**",
+        "- Keep the challan number, vehicle number, state/city, court or e-challan status, and identity proof; ask the DLSA or traffic court for the next available Lok Adalat date.",
+    ]
+
+
+def _lok_adalat_award_challenge_lines(
+    q: str,
+    route: MatterRoute,
+    passages: list[dict],
+) -> list[str]:
+    """Keep award/finality questions separate from settlement intake."""
+    if route.category != "lok_adalat_award_challenge" or not _is_lok_adalat_challenge(q):
+        return []
+    award = _find(
+        passages,
+        title_terms=("legal services authorities",),
+        anchor_terms=("/sec-21",),
+        required_source_pack="legal_services_authorities_1987_lok_adalat",
+        require_source_pack_metadata=True,
+    )
+    passage = next((item for item in passages if item.get("index") == award), None)
+    if award is None or passage is None or not _canonical_lsa_passage(
+        passage,
+        "authority_71a26d0ccbf7b61f6d84",
+    ):
+        return []
+    return [
+        "**Short answer**",
+        f"A Lok Adalat award is treated as final and binding in the cited statutory source, so an ordinary appeal should not be assumed [{award}].",
+        f"A challenge needs the exact award, settlement/referral papers, and facts such as no consent, fraud, coercion, mistaken authority, or jurisdiction; the answer cannot be decided from the word 'final' alone [{award}].",
+        "**What you can do next**",
+        f"- Preserve the award, settlement memo, referral order, signatures/authority proof, and evidence of any pressure or fraud; take them promptly to the referring court, DLSA, or a lawyer to assess the narrow review/writ route [{award}].",
+    ]
 
 
 def _relative_adoption_no_papers_lines(q: str, route: MatterRoute, passages: list[dict]) -> list[str]:
@@ -4001,14 +4608,14 @@ def _bank_account_freeze_lines(q: str, route: MatterRoute, passages: list[dict])
     if primary is None:
         return []
     legal_hold = _has_any(q, (
-        "police", "cyber", "fir", "court", "ed", "legal hold", "lien",
+        "police", "cyber", "fir", "court", "legal hold", "lien",
         "fraud complaint against my upi",
     ))
     account = "salary account" if "salary account" in q else "savings account" if "savings account" in q else "UPI account" if "upi account" in q else "bank account"
     lines = ["**Short answer**"]
     if rbi is not None:
         account_detail = (
-            "salary account blocked"
+            "salary account"
             if account == "salary account"
             else "ICICI/savings account lien after a cyber cell email with no FIR number shared"
             if "cyber cell" in q and "fir" in q and "lien" in q
@@ -4016,8 +4623,13 @@ def _bank_account_freeze_lines(q: str, route: MatterRoute, passages: list[dict])
             if account == "UPI account"
             else account
         )
+        account_status = (
+            f"{account_detail} or lien-marked"
+            if account == "UPI account"
+            else f"frozen, blocked, or lien-marked {account_detail}"
+        )
         lines.append(
-            f"For a frozen/blocked/lien-marked {account_detail}, start with a written bank-grievance record and the RBI Ombudsman/CMS route if the bank does not give a proper written reason or resolution [{rbi}]."
+            f"For a {account_status}, start by asking for the written freeze/lien reason and keep a written bank-grievance record; use the RBI Ombudsman/CMS route if the bank does not give a proper written reason or resolution [{rbi}]."
         )
     if banking is not None:
         lines.append(
@@ -4026,22 +4638,39 @@ def _bank_account_freeze_lines(q: str, route: MatterRoute, passages: list[dict])
     if legal_hold and bnss is not None:
         notice_phrase = " with no notice" if "no notice" in q or "without notice" in q else ""
         lines.append(
-            f"If the bank says cyber police, police request{notice_phrase}, FIR, court order, or other legal hold caused the freeze, use the BNSS seizure/legal-hold track with legal aid instead of treating it as only a bank-service complaint [{bnss}]."
+            f"If the bank says a cyber/police complaint, cyber police, police request{notice_phrase}, FIR, court order, or other legal hold caused the freeze, use the police/court route and BNSS seizure/legal-hold track with legal aid instead of treating it as only a bank-service complaint [{bnss}]."
+        )
+    if legal_hold:
+        lines.append(
+            "A bank freeze or police/cyber request does not by itself prove that you are an accused; ask for the complaint/reference, affected transaction trail, and whether the hold treats you as victim, witness, beneficiary, or accused."
         )
     if legal_hold and it_act is not None:
-        lines.append(
-            f"Because the hold is linked to a cyber complaint or electronic transaction, keep the IT Act cyber/electronic-record source with the bank freeze papers instead of treating it as only a KYC dispute [{it_act}]."
-        )
+        if _has_any(q, ("identity theft", "identity misuse", "phishing", "otp", "hacked")):
+            lines.append(
+                f"Keep the IT Act source only for a separate electronic-fraud or identity-misuse allegation; it is not the authority for the bank freeze itself [{it_act}]."
+            )
+        else:
+            lines.append(
+                f"Because the hold is linked to a cyber complaint or electronic transaction, keep the IT Act cyber/electronic-record source with the bank freeze papers instead of treating it as only a KYC dispute [{it_act}]."
+            )
     elif consumer is not None:
         lines.append(
             f"If there is no legal hold and the bank simply refuses service or reversal, the consumer service-deficiency route is a backup after the bank grievance and RBI record exist [{consumer}]."
         )
     lines.extend([
         "**What you can do next**",
-        f"- Bank branch/grievance officer first, then RBI Ombudsman/CMS for bank-service failure; if a cyber cell email, FIR, police request, or court hold is named, take the written freeze/lien reason and police or court reference to DLSA, cyber police, or the concerned court/Magistrate [{rbi or bnss or primary}].",
-        f"- Account statement, freeze/lien/KYC reason or SMS/email, KYC proof, complaint number, branch reply/no-reply proof, transaction IDs, FIR number if available, and any police or court reference / cyber request reference [{primary}].",
+        f"- Bank branch/grievance officer first, then RBI Ombudsman/CMS for bank-service failure; if a cyber cell email, FIR, police request, or court hold is named, take the written freeze/lien reason, originating request/reference and order copy if available, or at least the request/reference or order copy, and police or court reference to DLSA, cyber police, or the concerned court/Magistrate [{rbi or bnss or primary}].",
+        f"- Account statement, freeze/lien/KYC reason or SMS/email, KYC proof, complaint number, branch reply/no-reply proof, transaction IDs, exact freeze date, FIR number if available, and any police or court reference / cyber request reference [{primary}].",
     ])
     return lines
+
+
+def _is_bank_freeze_legal_hold_context(q: str) -> bool:
+    return _has_any(q, (
+        "police", "cyber", "fir", "court", "legal hold", "lien",
+        "fraud complaint", "not giving order copy", "order copy",
+        "police request", "cyber request", "court order",
+    ))
 
 
 def _bank_wrong_debit_lines(q: str, route: MatterRoute, passages: list[dict]) -> list[str]:
@@ -5263,7 +5892,11 @@ def _posh_pip_retaliation_lines(q: str, route: MatterRoute, passages: list[dict]
 
 
 def _workplace_sexual_harassment_first_action_lines(q: str, route: MatterRoute, passages: list[dict]) -> list[str]:
-    if route.category not in {"workplace_sexual_harassment", "employment_wages"} or not _is_workplace_sexual_harassment_general(q):
+    if (
+        route.category not in {"workplace_sexual_harassment", "employment_wages"}
+        or _is_workplace_harassment_respondent(q)
+        or not _is_workplace_sexual_harassment_general(q)
+    ):
         return []
     posh = _find(
         passages,
@@ -5312,6 +5945,36 @@ def _workplace_sexual_harassment_first_action_lines(q: str, route: MatterRoute, 
         lines.append(
             f"- Ask HR/IC/LC for access restriction or workplace-safety steps for the vendor/third party while the written complaint is considered {action_cites}."
         )
+    return lines
+
+
+def _workplace_sexual_harassment_respondent_lines(
+    q: str,
+    route: MatterRoute,
+    passages: list[dict],
+) -> list[str]:
+    if route.category != "workplace_sexual_harassment" or not _is_workplace_harassment_respondent(q):
+        return []
+    # Do not let the POSH-only respondent answer suppress an explicit
+    # assault/stalking/threat/police track. Until that secondary contract is
+    # source-gated, return no answer so the critical-route handoff is shown.
+    if _is_workplace_harassment_respondent_criminal_context(q):
+        return []
+    posh = _find(
+        passages,
+        title_terms=("sexual harassment of women at workplace",),
+        anchor_terms=("/sec-9",),
+        required_source_pack="posh_2013",
+    )
+    if posh is None:
+        return []
+    lines = [
+        "**Short answer**",
+        f"An ICC/Local Committee notice or workplace sexual-harassment complaint should be treated as a formal process, not ignored or answered through informal pressure; preserve the notice, allegations, dates, and response deadline [{posh}].",
+        "**What you can do next**",
+        "- Preserve the written notice, complaint or allegations, dates, reply date, messages, calendars, access/CCTV records, witness details, and relevant employment papers; take the file to a qualified employment lawyer or DLSA for help with the formal response.",
+        "- Preserve communications and records unchanged; do not contact, threaten, or pressure the complainant or witnesses while the inquiry is pending.",
+    ]
     return lines
 
 
@@ -5715,9 +6378,13 @@ def _consumer_defective_goods_lines(q: str, route: MatterRoute, passages: list[d
 def _msme_delayed_payment_lines(q: str, route: MatterRoute, passages: list[dict]) -> list[str]:
     if route.category != "business_contract_partnership" or not _is_msme_delayed_payment(q):
         return []
-    msmed15 = _find(passages, title_terms=("micro, small and medium enterprises",), anchor_terms=("/sec-15", "/sec-16"))
+    # Keep the three statutory obligations independent.  A single chunk can
+    # be useful as context, but it cannot prove all three distinct provisions
+    # to the citation contract.
+    msmed15 = _find(passages, title_terms=("micro, small and medium enterprises",), anchor_terms=("/sec-15",))
+    msmed16 = _find(passages, title_terms=("micro, small and medium enterprises",), anchor_terms=("/sec-16",))
     msmed18 = _find(passages, title_terms=("micro, small and medium enterprises",), anchor_terms=("/sec-18",))
-    msmed = msmed15 or msmed18
+    msmed = msmed15 or msmed16 or msmed18
     contract37 = _find(passages, title_terms=("indian contract",), anchor_terms=("/sec-37",))
     contract73 = _find(passages, title_terms=("indian contract",), anchor_terms=("/sec-73",))
     sale_goods = _find(passages, title_terms=("sale of goods",), anchor_terms=("/sec-55", "/sec-59", "/sec-41", "/sec-42"))
@@ -5732,9 +6399,13 @@ def _msme_delayed_payment_lines(q: str, route: MatterRoute, passages: list[dict]
     quality_dispute = _has_any(q, ("quality", "defect", "defective", "rejection", "rejected", "deducting", "deduction"))
     samadhaan = _has_any(q, ("samadhaan", "samadhan", "facilitation council", "msefc"))
     lines = ["**Short answer**"]
-    if msmed is not None:
+    if msmed15 is not None:
         lines.append(
-            f"If you are Udyam/MSME registered and the {buyer} has delayed payment for {amount}, keep this as an MSMED delayed-payment matter first: verify invoice date, delivery/acceptance date, written payment terms, and whether the 45-day/default payment trigger is crossed [{msmed}]."
+            f"If you are Udyam/MSME registered and the {buyer} has delayed payment for {amount}, keep this as an MSMED delayed-payment matter first: verify invoice date, delivery/acceptance date, written payment terms, and whether the 45-day/default payment trigger is crossed [{msmed15}]."
+        )
+    if msmed16 is not None:
+        lines.append(
+            f"If payment under that trigger is overdue, separately verify the MSMED interest provision and its statutory rate rather than treating interest as an ordinary contractual add-on [{msmed16}]."
         )
     if msmed18 is not None:
         lines.append(
@@ -5761,7 +6432,7 @@ def _msme_delayed_payment_lines(q: str, route: MatterRoute, passages: list[dict]
         lines.append(
             f"If you are comparing MSME Samadhaan with filing directly in Commercial Court, keep Commercial Courts Act Section 12A/pre-institution mediation as a separate forum-gate check before treating court filing as automatic [{commercial}]."
         )
-    action_cites = _cite_many(msmed, msmed18, commercial, sale_goods, contract37, contract73, income_tax, tax_transition)
+    action_cites = _cite_many(msmed15, msmed16, msmed18, commercial, sale_goods, contract37, contract73, income_tax, tax_transition)
     next_step = "continue/track the MSME Samadhaan or Facilitation Council matter" if samadhaan else "send a dated payment demand and consider MSME Samadhaan / Facilitation Council if eligible"
     lines.extend([
         "**What you can do next**",
@@ -5839,7 +6510,10 @@ def _supplier_payment_lines(q: str, route: MatterRoute, passages: list[dict]) ->
         return []
     contract37 = _find(passages, title_terms=("indian contract",), anchor_terms=("/sec-37",))
     contract73 = _find(passages, title_terms=("indian contract",), anchor_terms=("/sec-73",))
-    msmed = _find(passages, title_terms=("micro, small and medium enterprises",), anchor_terms=("/sec-15", "/sec-16", "/sec-18"))
+    msmed15 = _find(passages, title_terms=("micro, small and medium enterprises",), anchor_terms=("/sec-15",))
+    msmed16 = _find(passages, title_terms=("micro, small and medium enterprises",), anchor_terms=("/sec-16",))
+    msmed18 = _find(passages, title_terms=("micro, small and medium enterprises",), anchor_terms=("/sec-18",))
+    msmed = msmed15 or msmed16 or msmed18
     rti = _find(passages, title_terms=("right to information",), anchor_terms=("/sec-6", "/sec-7", "/sec-19"))
     if _is_msme_delayed_payment(q) and msmed is None:
         return []
@@ -5867,13 +6541,13 @@ def _supplier_payment_lines(q: str, route: MatterRoute, passages: list[dict]) ->
         )
     if msmed is not None:
         lines.append(
-            f"If the supplier is Udyam/MSME registered, keep the MSMED delayed-payment route separate from an ordinary civil/commercial recovery route [{msmed}]."
+            f"If the supplier is Udyam/MSME registered, keep the MSMED delayed-payment route separate from an ordinary civil/commercial recovery route {_cite_many(msmed15, msmed16, msmed18)}."
         )
     if government_context and rti is not None:
         lines.append(
             f"Because a government or scheme department appears involved, use RTI/written-records to get bill status, sanction file, measurement or quality objection, payment queue, and officer reasons before choosing the recovery route [{rti}]."
         )
-    action_cite = rti if government_context and rti is not None else msmed if msmed is not None else contract_cite if contract_cite is not None else primary
+    action_cite = rti if government_context and rti is not None else _cite_many(msmed15, msmed16, msmed18) if msmed is not None else contract_cite if contract_cite is not None else primary
     docs_cite = contract_cite if contract_cite is not None else action_cite
     recovery_options = (
         "department grievance/RTI records, MSME Facilitation Council if eligible, or civil/commercial recovery"
@@ -6266,6 +6940,8 @@ def _find(
     *,
     title_terms: tuple[str, ...] = (),
     anchor_terms: tuple[str, ...] = (),
+    required_source_pack: str | None = None,
+    require_source_pack_metadata: bool = False,
 ) -> int | None:
     for passage in passages:
         title = str(passage.get("title") or "").lower()
@@ -6274,9 +6950,48 @@ def _find(
             continue
         if anchor_terms and not any(_anchor_matches(anchor, term) for term in anchor_terms):
             continue
+        if required_source_pack:
+            passage_pack = str(
+                passage.get("required_source_pack")
+                or passage.get("_required_source_pack")
+                or ""
+            ).strip().lower()
+            if require_source_pack_metadata and not passage_pack:
+                continue
+            # Test fixtures may omit pack metadata; production passages carry
+            # it, and any present foreign pack must never satisfy this lookup.
+            if passage_pack and passage_pack != required_source_pack.lower():
+                continue
         idx = passage.get("index")
         return int(idx) if isinstance(idx, int) else None
     return None
+
+
+def _strict_anchor_matches(anchor: str, term: str) -> bool:
+    """Match a section chunk with only valid split/date suffixes."""
+    needle = term.lower().rstrip("/")
+    canonical = anchor.lower().rstrip("/")
+    tail = (
+        r"(?:@[0-9]{4}-[0-9]{2}-[0-9]{2}(?:__[0-9]+(?:-[a-z])?)?"
+        r"|__[0-9]+(?:-[a-z])?(?:@[0-9]{4}-[0-9]{2}-[0-9]{2})?|)"
+    )
+    if needle.startswith("/"):
+        matched = re.search(rf"{re.escape(needle)}{tail}$", canonical) is not None
+    else:
+        matched = re.search(rf"(?:^|/){re.escape(needle)}{tail}$", canonical) is not None
+    if not matched:
+        return False
+    snapshots = re.findall(r"@([^/]+)", canonical)
+    if not snapshots:
+        return True
+    if canonical.count("@") != len(snapshots):
+        return False
+    for raw in snapshots:
+        try:
+            date.fromisoformat(raw.split("__", 1)[0])
+        except ValueError:
+            return False
+    return True
 
 
 def _find_passage_containing(passages: list[dict], terms: tuple[str, ...]) -> int | None:
@@ -6862,9 +7577,14 @@ def _is_police_seized_device(q: str) -> bool:
     seized = _has_any(q, (
         "seized by police", "has been seized", "police seized",
         "took my device", "took my laptop", "seizure memo",
-        "investigation against my colleague", "colleague",
+        "investigation against my colleague", "colleague", "seized",
+        "seizure", "release", "released", "return", "returned", "retained",
     ))
-    return device and seized
+    criminal_context = _has_any(q, (
+        "police", "fir", "case", "uapa", "investigation", "io",
+        "investigating officer", "court", "magistrate",
+    ))
+    return device and seized and criminal_context
 
 
 def _is_family_forced_sex_safety(q: str) -> bool:
@@ -7365,6 +8085,44 @@ def _is_traffic_police_challan_bribe(q: str) -> bool:
     return traffic_context and payment_demand and no_receipt_or_challan and explicit_licence_dispute
 
 
+def _is_lok_adalat_traffic_settlement(q: str) -> bool:
+    return (
+        _has_any(q, ("lok adalat", "lokadalat", "national lok adalat"))
+        and _has_any(q, ("challan", "e-challan", "traffic", "traffic ticket"))
+        and not _is_lok_adalat_challenge(q)
+    )
+
+
+def _canonical_lsa_passage(passage: dict, expected_authority_id: str) -> bool:
+    """Require the dated, canonical LSA projection at the owner boundary."""
+    if passage.get("provenance_verified") is not True:
+        return False
+    if str(passage.get("as_at") or "") != "1994-10-29":
+        return False
+    if str(passage.get("document_id") or "").strip().lower() != "legal-services-authorities-1987":
+        return False
+    if str(passage.get("source_type") or "").strip().lower() != "bare_act":
+        return False
+    if str(passage.get("required_source_pack") or "").strip().lower() != "legal_services_authorities_1987_lok_adalat":
+        return False
+    anchor = str(passage.get("anchor") or "").strip().lower()
+    if not re.search(r"legal-services-authorities-1987/sec-(?:19|20|21)@1994-10-29$", anchor):
+        return False
+    authority_ids = {str(value) for value in (passage.get("authority_ids") or [])}
+    by_pack = passage.get("required_source_pack_authority_ids") or {}
+    if not isinstance(by_pack, dict):
+        return False
+    pack_authority_ids = {
+        str(value)
+        for value in by_pack.get("legal_services_authorities_1987_lok_adalat", ())
+        if isinstance(value, str)
+    }
+    # The authority must be present both on the passage and under the exact
+    # source pack that activated this owner. A neighbouring pack must never be
+    # able to lend its registry identity to a different legal contract.
+    return expected_authority_id in authority_ids and expected_authority_id in pack_authority_ids
+
+
 def _is_relative_adoption_no_papers(q: str) -> bool:
     adoption = _has_any(q, ("adopted", "adoption", "adopt child", "adopted child"))
     relative = _has_any(q, ("sister", "brother", "cousin", "aunt", "uncle", "relative", "family"))
@@ -7434,7 +8192,16 @@ def _is_workplace_sexual_harassment_general(q: str) -> bool:
         "manager", "boss", "hr", "company", "employer", "office",
         "workplace", "supervisor", "reporting manager", "coworker",
         "co-worker", "colleague", "client", "vendor", "internship",
-    ))
+    )) or _has_any(q, ("posh", "internal committee", "local committee")) or (
+        _has_any(q, ("icc",))
+        and _has_any(
+            q,
+            (
+                "sexual", "harass", "complaint", "complained", "workplace",
+                "office", "hr", "manager", "employer", "colleague",
+            ),
+        )
+    )
     sexual_or_gendered = _has_any(q, (
         "sexual", "sexist", "gendered", "inappropriate", "touch",
         "touched", "grop", "hug", "kiss", "late night message",

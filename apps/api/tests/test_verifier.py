@@ -194,6 +194,14 @@ class TestVerifySentence:
         v = verify_sentence(s, self.idx_map, skip_nli=True)
         assert v.status == SentenceStatus.META
 
+    def test_uapa_statute_only_delay_limitation_is_meta(self) -> None:
+        s = (
+            "This statute-only Section 43D answer does not determine whether delay itself "
+            "supports bail; that requires separately verified current precedent."
+        )
+        v = verify_sentence(s, self.idx_map, skip_nli=True)
+        assert v.status == SentenceStatus.META
+
     def test_criminal_regime_caveat_with_extra_claim_is_not_meta(self) -> None:
         s = (
             "The incident date decides whether BNS/BNSS/BSA or IPC/CrPC/Evidence Act "

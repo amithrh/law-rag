@@ -2,16 +2,1467 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from apps.api.legal_issue_plan import build_matter_plan
 from apps.api.source_gap import (
     build_source_gap_event,
+    is_active_plan_authority_entry,
+    matter_plan_integrity_gap,
     missing_plan_authorities,
     missing_required_authorities,
     should_enforce_required_source,
+    _passage_satisfies_plan_entry,
+    _plan_anchor_matches,
+    _section_anchor_matches,
+    _source_pack_anchor_matches,
+    _source_pack_title_matches,
+    best_source_match,
 )
 from apps.api.common_workflow_contracts import WorkflowTemplateResult
 from apps.api.main import _critical_route_needs_reviewed_contract, _source_gap_event_for_retrieved
 from apps.api.matter_router import MatterRoute, route_matter
+
+
+def _acid_passage(title: str, anchor: str) -> dict:
+    lower_title = title.lower()
+    if "bharatiya nyaya" in lower_title:
+        source_pack = "bns_2023_acid_attack"
+    elif "bharatiya nagarik" in lower_title:
+        source_pack = "bnss_2023_fir_information_acid"
+    elif "indian penal" in lower_title:
+        source_pack = "ipc_1860_acid_attack"
+    elif "criminal procedure" in lower_title:
+        source_pack = "crpc_1973_fir_information_acid"
+    else:
+        source_pack = "pwdva_2005"
+    return {
+        "index": 1,
+        "title": title,
+        "anchor": anchor,
+        "source_type": "bare_act",
+        "document_id": anchor.split("/", 1)[0],
+        "required_source_pack": source_pack,
+        "text": f"Section {anchor.rsplit('sec-', 1)[-1]} authority heading.",
+    }
+
+
+def test_mgnrega_route_source_requires_verified_scheme_identity_and_reviewed_anchor():
+    required = "MGNREGA 2005 wage, job-card, grievance and social-audit provisions"
+    social_audit = {
+        "index": 1,
+        "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005",
+        "anchor": "mgnrega-2005/sec-19@2005-09-07",
+    }
+    unrelated = {
+        "index": 2,
+        "title": "Bharatiya Nyaya Sanhita 2023",
+        "anchor": "bns-2023/sec-340@2024-07-01",
+    }
+
+    assert best_source_match(required, [social_audit], query="fake muster roll social audit") == social_audit
+    assert best_source_match(required, [unrelated], query="fake muster roll social audit") is None
+
+
+def test_mgnrega_job_card_requirement_accepts_job_and_wage_sections():
+    required = "MGNREGA 2005 wage, job-card, grievance and social-audit provisions"
+    passage = {
+        "index": 1,
+        "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005",
+        "anchor": "mgnrega-2005/sec-7@2005-09-07",
+    }
+
+    assert best_source_match(required, [passage], query="job demand ignored no unemployment allowance") == passage
+
+
+def test_mgnrega_attendance_wage_query_does_not_require_social_audit_section():
+    required = "MGNREGA 2005 wage, job-card, grievance and social-audit provisions"
+    passage = {
+        "index": 1,
+        "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005",
+        "anchor": "mgnrega-2005/sec-7@2005-09-07",
+    }
+
+    assert best_source_match(required, [passage], query="attendance shown but wages not paid") == passage
+
+
+def test_mgnrega_composite_criminal_source_accepts_reviewed_bns_or_pca_only():
+    required = "BNS/Prevention of Corruption Act where forged muster, fake job cards, bribe, or misappropriation facts exist"
+    bns = {
+        "index": 1,
+        "title": "Bharatiya Nyaya Sanhita 2023",
+        "anchor": "bns-2023/sec-340@2024-07-01",
+    }
+    unrelated_bns = {
+        "index": 2,
+        "title": "Bharatiya Nyaya Sanhita 2023",
+        "anchor": "bns-2023/sec-351@2024-07-01",
+    }
+    pca = {
+        "index": 3,
+        "title": "Prevention of Corruption Act 1988",
+        "anchor": "prevention-of-corruption-1988/sec-13@2018-07-26",
+    }
+
+    assert best_source_match(required, [bns], query="fake muster entries") == bns
+    assert best_source_match(required, [pca], query="bribe for muster correction") == pca
+    assert best_source_match(required, [unrelated_bns], query="fake muster entries") is None
+
+
+def test_mgnrega_plan_accepts_pca_sibling_without_false_bns_gap():
+    query = "muster roll fake entries BDO putting my name without me working khunti how complain"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    passages = [
+        {
+            "index": 1,
+            "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005",
+            "anchor": "mgnrega-2005/sec-19@2005-09-07",
+            "document_id": "mgnrega-2005",
+            "source_type": "bare_act",
+            "required_source_pack": "mgnrega_2005",
+        },
+        {
+            "index": 4,
+            "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005",
+            "anchor": "mgnrega-2005/sec-17@2005-09-07",
+            "document_id": "mgnrega-2005",
+            "source_type": "bare_act",
+            "required_source_pack": "mgnrega_2005",
+        },
+        {
+            "index": 2,
+            "title": "Right to Information Act 2005",
+            "anchor": "rti-2005/sec-19@2005-06-15",
+            "document_id": "rti-2005",
+            "source_type": "bare_act",
+            "required_source_pack": "rti_2005",
+        },
+        {
+            "index": 3,
+            "title": "Prevention of Corruption Act 1988",
+            "anchor": "prevention-of-corruption-1988/sec-13@2018-07-26",
+            "document_id": "prevention-of-corruption-1988",
+            "source_type": "bare_act",
+            "required_source_pack": "prevention_corruption_1988_mgnrega_records",
+        },
+    ]
+
+    assert plan is not None
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        plan=plan,
+        legal_regime=route.legal_regime,
+    ) is None
+
+
+def test_mgnrega_plan_rejects_title_only_pca_for_composite_integrity_source():
+    query = "muster roll fake entries BDO putting my name without me working khunti how complain"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    passages = [
+        {
+            "index": 1,
+            "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005",
+            "anchor": "mgnrega-2005/sec-19@2005-09-07",
+            "document_id": "mgnrega-2005",
+            "source_type": "bare_act",
+            "required_source_pack": "mgnrega_2005",
+        },
+        {
+            "index": 2,
+            "title": "Prevention of Corruption Act 1988",
+            "anchor": "prevention-of-corruption-1988/sec-13@2018-07-26",
+            "document_id": "prevention-of-corruption-1988",
+            "source_type": "bare_act",
+        },
+    ]
+
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        plan=plan,
+        legal_regime=route.legal_regime,
+    )
+
+    assert event is not None
+    assert any(
+        "BNS/Prevention of Corruption" in item["required_source"]
+        for item in event["missing_required_sources"]
+    )
+
+
+def test_mgnrega_plan_rejects_case_law_for_composite_integrity_source():
+    query = "muster roll fake entries BDO putting my name without me working khunti how complain"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    passages = [
+        {
+            "index": 1,
+            "title": "Mahatma Gandhi National Rural Employment Guarantee Act 2005",
+            "anchor": "mgnrega-2005/sec-19@2005-09-07",
+            "document_id": "mgnrega-2005",
+            "source_type": "bare_act",
+            "required_source_pack": "mgnrega_2005",
+        },
+        {
+            "index": 2,
+            "title": "Prevention of Corruption Act 1988",
+            "anchor": "prevention-of-corruption-1988/sec-13@2018-07-26",
+            "document_id": "prevention-of-corruption-1988",
+            "source_type": "sc_judgment",
+            "required_source_pack": "prevention_corruption_1988_mgnrega_records",
+        },
+    ]
+
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        plan=plan,
+        legal_regime=route.legal_regime,
+    )
+
+    assert event is not None
+
+
+def test_acid_route_fails_closed_on_empty_or_partial_incident_authority():
+    query = "he poured acid on my face"
+    route = route_matter(query)
+
+    empty = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[],
+        legal_regime=route.legal_regime,
+    )
+    assert empty is not None
+    assert empty["reason"] == "acid_incident_authority_gap"
+
+    current_only = [
+        _acid_passage("Bharatiya Nyaya Sanhita 2023", "bns-2023/sec-124"),
+        _acid_passage("Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-173"),
+    ]
+    partial = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=current_only,
+        legal_regime=route.legal_regime,
+    )
+    assert partial is not None
+    assert partial["reason"] == "acid_incident_authority_gap"
+
+
+def test_acid_route_accepts_exact_current_and_legacy_pairs_when_date_unknown():
+    query = "he poured acid on my face"
+    route = route_matter(query)
+    passages = [
+        _acid_passage("Bharatiya Nyaya Sanhita 2023", "bns-2023/sec-124"),
+        _acid_passage("Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-173"),
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-326a"),
+        _acid_passage("Code of Criminal Procedure 1973", "crpc-1973/sec-154"),
+    ]
+
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        legal_regime=route.legal_regime,
+    ) is None
+
+
+def test_shared_juvenile_section_can_satisfy_its_custody_transfer_pack():
+    query = "16 yr boy detained adult jail 2 weeks already how to transfer observation home"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    passages = [
+        {
+            "index": 1,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-9-official",
+            "source_type": "bare_act",
+            "document_id": "jj-2015",
+            "required_source_pack": "jj_2015",
+            "required_source_packs": ["jj_2015", "jj_2015_age_claim_court"],
+            "authority_ids": [],
+        },
+        {
+            "index": 2,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-94-official",
+            "source_type": "bare_act",
+            "document_id": "jj-2015",
+            "required_source_pack": "jj_2015",
+            "required_source_packs": ["jj_2015", "jj_2015_age_documents"],
+            "authority_ids": [],
+        },
+        {
+            "index": 3,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-10-official",
+            "source_type": "bare_act",
+            "document_id": "jj-2015",
+            "required_source_pack": "jj_2015",
+            "required_source_packs": ["jj_2015", "jj_2015_custody_transfer"],
+            "authority_ids": [],
+        },
+    ]
+
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        plan=plan,
+        legal_regime=route.legal_regime,
+    ) is None
+
+
+def test_juvenile_transfer_gate_requires_section_94_for_age_evidence_guidance():
+    query = "16 yr boy detained adult jail 2 weeks already how to transfer observation home"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    passages = [
+        {
+            "index": 1,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-9-official",
+            "source_type": "bare_act",
+            "document_id": "jj-2015",
+            "required_source_pack": "jj_2015_age_claim_court",
+            "required_source_packs": ["jj_2015", "jj_2015_age_claim_court"],
+            "authority_ids": [],
+        },
+        {
+            "index": 2,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-10-official",
+            "source_type": "bare_act",
+            "document_id": "jj-2015",
+            "required_source_pack": "jj_2015_custody_transfer",
+            "required_source_packs": ["jj_2015", "jj_2015_custody_transfer"],
+            "authority_ids": [],
+        },
+    ]
+
+    gap = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        plan=plan,
+        legal_regime=route.legal_regime,
+    )
+
+    assert gap is not None
+    assert any(
+        item.get("source_pack_id") == "jj_2015_age_documents"
+        for item in gap["missing_required_sources"]
+    )
+
+
+@pytest.mark.parametrize("definition_anchor", ["/sec-2-t", "/sec-2-u", "/sec-4"])
+def test_juvenile_transfer_gate_rejects_definition_as_custody_authority(definition_anchor: str):
+    query = "16 yr boy detained adult jail 2 weeks already how to transfer observation home"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    passages = [
+        {
+            "index": 1,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-9-official",
+            "source_type": "bare_act",
+            "document_id": "jj-2015",
+            "required_source_pack": "jj_2015_age_claim_court",
+            "required_source_packs": ["jj_2015", "jj_2015_age_claim_court"],
+            "authority_ids": [],
+        },
+        {
+            "index": 2,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": "jj-2015/sec-94-official",
+            "source_type": "bare_act",
+            "document_id": "jj-2015",
+            "required_source_pack": "jj_2015_age_documents",
+            "required_source_packs": ["jj_2015", "jj_2015_age_documents"],
+            "authority_ids": [],
+        },
+        {
+            "index": 3,
+            "title": "Juvenile Justice (Care and Protection of Children) Act 2015",
+            "anchor": f"jj-2015{definition_anchor}-official",
+            "source_type": "bare_act",
+            "document_id": "jj-2015",
+            "required_source_pack": "jj_2015",
+            "required_source_packs": ["jj_2015", "jj_2015_custody_transfer"],
+            "authority_ids": [],
+        },
+    ]
+
+    gap = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        plan=plan,
+        legal_regime=route.legal_regime,
+    )
+
+    assert gap is not None
+    assert any(
+        item.get("source_pack_id") == "jj_2015_custody_transfer"
+        for item in gap["missing_required_sources"]
+    )
+
+
+def test_inlaw_acid_route_requires_pwdva_and_rejects_wrong_provenance():
+    query = "my mother in law threatened acid attack but acid was later thrown"
+    route = route_matter(query)
+    base = [
+        _acid_passage("Bharatiya Nyaya Sanhita 2023", "bns-2023/sec-124"),
+        _acid_passage("Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-173"),
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-326a"),
+        _acid_passage("Code of Criminal Procedure 1973", "crpc-1973/sec-154"),
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=base,
+        legal_regime=route.legal_regime,
+    ) is not None
+
+    complete = [
+        *base,
+        {
+            "index": 5,
+            "title": "Protection of Women from Domestic Violence Act 2005",
+            "anchor": "domestic-violence-2005-official/sec-3-official",
+            "source_type": "bare_act",
+            "document_id": "domestic-violence-2005-official",
+            "required_source_pack": "pwdva_2005",
+            "text": "Section 3. Definition of domestic violence.",
+        },
+        {
+            "index": 6,
+            "title": "Protection of Women from Domestic Violence Act 2005",
+            "anchor": "domestic-violence-2005-official/sec-18-official",
+            "source_type": "bare_act",
+            "document_id": "domestic-violence-2005-official",
+            "required_source_pack": "pwdva_2005",
+            "text": "Section 18. Protection orders.",
+        },
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=complete,
+        legal_regime=route.legal_regime,
+    ) is None
+
+def test_husband_acid_route_rejects_legacy_pwdva_chunks():
+    query = "my husband threatened acid attack on me"
+    route = route_matter(query)
+    base = [
+        _acid_passage("Bharatiya Nyaya Sanhita 2023", "bns-2023/sec-351"),
+        _acid_passage("Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-173"),
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-506"),
+        _acid_passage("Code of Criminal Procedure 1973", "crpc-1973/sec-154"),
+    ]
+    missing = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=base,
+        legal_regime=route.legal_regime,
+    )
+    assert missing is not None
+    assert any(
+        item["kind"] == "national_family_source_gap"
+        for item in missing["missing_required_sources"]
+    )
+
+    complete = [
+        *base,
+        _acid_passage("Protection of Women from Domestic Violence Act 2005", "domestic-violence-2005/sec-3"),
+        _acid_passage("Protection of Women from Domestic Violence Act 2005", "domestic-violence-2005/sec-18"),
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=complete,
+        legal_regime=route.legal_regime,
+    ) is not None
+
+    wrong_provenance = [
+        {
+            **passage,
+            "required_source_pack": "unrelated_judgment_pack",
+            "source_type": "sc_judgment",
+        }
+        for passage in complete
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=wrong_provenance,
+        legal_regime=route.legal_regime,
+    ) is not None
+
+
+def test_husband_acid_route_accepts_official_pwdva_supplement_chunks():
+    query = "my husband threatened acid attack on me"
+    route = route_matter(query)
+    base = [
+        _acid_passage("Bharatiya Nyaya Sanhita 2023", "bns-2023/sec-351"),
+        _acid_passage("Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-173"),
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-506"),
+        _acid_passage("Code of Criminal Procedure 1973", "crpc-1973/sec-154"),
+    ]
+    official = [
+        {
+            "index": 5,
+            "title": "Protection of Women from Domestic Violence Act 2005",
+            "anchor": "domestic-violence-2005-official/sec-3-official",
+            "source_type": "bare_act",
+            "document_id": "domestic-violence-2005-official",
+            "required_source_pack": "pwdva_2005",
+            "text": "Section 3. Definition of domestic violence.",
+        },
+        {
+            "index": 6,
+            "title": "Protection of Women from Domestic Violence Act 2005",
+            "anchor": "domestic-violence-2005-official/sec-18-official",
+            "source_type": "bare_act",
+            "document_id": "domestic-violence-2005-official",
+            "required_source_pack": "pwdva_2005",
+            "text": "Section 18. Protection orders.",
+        },
+    ]
+
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[*base, *official],
+        legal_regime=route.legal_regime,
+    ) is None
+
+
+def test_chemical_only_completed_route_has_a_canonical_source_gap_not_a_crash():
+    query = "my husband beat me and chemical was thrown on me"
+    route = route_matter(query)
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[],
+        legal_regime=route.legal_regime,
+    )
+    assert event is not None
+    assert event["reason"] == "acid_incident_authority_gap"
+    assert any("chemical-exposure/hurt authority" in item["required_source"] for item in event["missing_required_sources"])
+
+
+def test_acid_authority_gate_rejects_missing_or_foreign_identity_metadata():
+    query = "he poured acid on my face"
+    route = route_matter(query)
+    complete = [
+        _acid_passage("Bharatiya Nyaya Sanhita 2023", "bns-2023/sec-124"),
+        _acid_passage("Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-173"),
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-326a"),
+        _acid_passage("Code of Criminal Procedure 1973", "crpc-1973/sec-154"),
+    ]
+    missing_metadata = [
+        {key: value for key, value in passage.items()
+         if key not in {"document_id", "required_source_pack"}}
+        for passage in complete
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=missing_metadata,
+        legal_regime=route.legal_regime,
+    ) is not None
+
+    wrong_document = [
+        {**passage, "document_id": "999999"}
+        if passage["title"].startswith("Bharatiya Nyaya")
+        else passage
+        for passage in complete
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=wrong_document,
+        legal_regime=route.legal_regime,
+    ) is not None
+
+
+def test_attempted_acid_attack_requires_attempt_and_underlying_offence_authorities():
+    query = "he tried to throw acid at me but missed"
+    route = route_matter(query)
+    passages = [
+        _acid_passage("Bharatiya Nyaya Sanhita 2023", "bns-2023/sec-124"),
+        _acid_passage("Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-173"),
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-326a"),
+        _acid_passage("Code of Criminal Procedure 1973", "crpc-1973/sec-154"),
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        legal_regime=route.legal_regime,
+    ) is not None
+
+    complete = [
+        *passages,
+        _acid_passage("Bharatiya Nyaya Sanhita 2023", "bns-2023/sec-62"),
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-511"),
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=complete,
+        legal_regime=route.legal_regime,
+    ) is None
+
+
+def test_legacy_attempt_accepts_canonical_ipc_326b_with_ipc_511_and_crpc():
+    query = "he tried to throw acid at me but missed"
+    route = route_matter(query)
+    passages = [
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-511"),
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-326b"),
+        _acid_passage("Code of Criminal Procedure 1973", "crpc-1973/sec-154"),
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        legal_regime="legacy_ipc_crpc_evidence_for_pre_2024_incident",
+    ) is None
+
+
+def test_acid_dowry_word_alone_does_not_trigger_pwdva_authority_pair():
+    query = "someone threatened acid attack over dowry"
+    route = route_matter(query)
+    passages = [
+        _acid_passage("Bharatiya Nyaya Sanhita 2023", "bns-2023/sec-351"),
+        _acid_passage("Bharatiya Nagarik Suraksha Sanhita 2023", "bnss-2023/sec-173"),
+        _acid_passage("Indian Penal Code 1860", "ipc-1860/sec-506"),
+        _acid_passage("Code of Criminal Procedure 1973", "crpc-1973/sec-154"),
+    ]
+    gap = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        legal_regime=route.legal_regime,
+    )
+    assert gap is None or all(
+        "PWDVA" not in str(item.get("required_source", ""))
+        for item in gap.get("missing_required_sources", [])
+    )
+
+def test_matter_plan_integrity_rejects_empty_ledger():
+    query = "my landlord is refusing to return my deposit"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    broken = replace(plan, authority_ledger=[])
+    gap = matter_plan_integrity_gap(broken, query)
+
+    assert gap is not None
+    assert gap["gap_kinds"] == ["empty_authority_ledger"]
+
+
+def test_matter_plan_integrity_rejects_unbound_enforceable_entry():
+    query = "I registered my will with the sub registrar; do I need to update it every year?"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    entry = replace(plan.authority_ledger[0], source_pack_id=None)
+    broken = replace(plan, authority_ledger=[entry, *plan.authority_ledger[1:]])
+    gap = matter_plan_integrity_gap(broken, query)
+
+    assert gap is not None
+    assert "missing_source_pack_binding" in gap["gap_kinds"]
+
+
+def test_matter_plan_integrity_accepts_exact_will_source_bindings():
+    query = "I registered my will with the sub registrar; do I need to update it every year?"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    assert plan is not None
+    assert matter_plan_integrity_gap(plan, query) is None
+
+
+def test_matter_plan_integrity_ignores_procedural_and_document_guidance():
+    query = "my landlord is refusing to return my deposit"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    assert plan.authority_ledger
+
+    guidance_only = replace(
+        plan.authority_ledger[0],
+        source=(
+            "Court rules and practice directions for filing, plus the rent "
+            "agreement, receipts, and possession documents"
+        ),
+        authority_id="authority_guidance_only",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name=None,
+        act=None,
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=True,
+        conditional=False,
+    )
+    guidance_plan = replace(plan, authority_ledger=[guidance_only])
+
+    assert matter_plan_integrity_gap(guidance_plan, query) is None
+
+
+@pytest.mark.parametrize(
+    "guidance_source",
+    [
+        "Consumer Protection Rules / e-Daakhil procedure",
+        "court rules/practice directions for the court named in the summons",
+        "state maintenance tribunal rules",
+        "state pension/scholarship/ration scheme rules",
+        "municipal corporation / Town Vending Committee procedure",
+        "state disability certificate / UDID procedure",
+        "NALSA/SLSA/DLSA legal-aid procedure for application and assignment",
+    ],
+)
+def test_matter_plan_integrity_ignores_explicit_generic_route_procedures(
+    guidance_source: str,
+):
+    query = "my landlord is refusing to return my deposit"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    guidance_only = replace(
+        plan.authority_ledger[0],
+        source=guidance_source,
+        authority_id="generic_route_guidance",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name=None,
+        act=None,
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=True,
+        conditional=False,
+    )
+    guidance_plan = replace(plan, authority_ledger=[guidance_only])
+
+    assert matter_plan_integrity_gap(guidance_plan, query) is None
+
+
+def test_generic_local_pointer_is_active_when_it_is_the_only_legal_basis():
+    entry = {
+        "authority_id": "generic_only",
+        "source": "state education rules",
+        "must_cite": True,
+        "conditional": False,
+        "priority": "must_cite",
+    }
+    plan = {"authority_ledger": [entry]}
+
+    assert is_active_plan_authority_entry(entry, plan=plan, query="school admission denied") is True
+
+
+@pytest.mark.parametrize(
+    ("required_source", "query"),
+    [
+        ("state education rules", "school admission denied despite passing exam"),
+        ("state drug-control authority procedure", "drug inspector seized samples from my medical store"),
+        ("state motor vehicle rules / traffic police e-challan procedure", "traffic police issued a challan to my auto"),
+    ],
+)
+def test_legacy_route_only_state_procedure_is_fail_closed_when_material(
+    required_source: str,
+    query: str,
+):
+    missing = missing_required_authorities(
+        required_sources=[required_source],
+        passages=[],
+        query=query,
+    )
+
+    assert [item["required_source"] for item in missing] == [required_source]
+
+
+def test_state_context_terms_use_word_boundaries():
+    assert missing_required_authorities(
+        required_sources=["state motor vehicle rules / traffic police e-challan procedure"],
+        passages=[],
+        query="automatic transmission problem in my car",
+    ) == []
+    assert missing_required_authorities(
+        required_sources=["state education rules"],
+        passages=[],
+        query="my etc. notice has a typo",
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "concrete_source",
+    [
+        "Mediation Act 2023 / rules where notified procedure applies",
+        "Consumer Protection Act 2019 / Consumer Protection Rules / e-Daakhil procedure",
+        "Street Vendors Act 2014 / municipal corporation / Town Vending Committee procedure",
+        "Maintenance and Welfare of Parents and Senior Citizens Act 2007 / state maintenance tribunal rules",
+    ],
+)
+def test_matter_plan_integrity_keeps_concrete_procedural_authority_blocking(
+    concrete_source: str,
+):
+    query = "my landlord is refusing to return my deposit"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    concrete = replace(
+        plan.authority_ledger[0],
+        source=concrete_source,
+        authority_id="mediation_act_procedure",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name=None,
+        act=None,
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=True,
+        conditional=False,
+    )
+    concrete_plan = replace(plan, authority_ledger=[concrete])
+
+    gap = matter_plan_integrity_gap(concrete_plan, query)
+    assert gap is not None
+    assert "missing_source_pack_binding" in gap["gap_kinds"]
+
+
+@pytest.mark.parametrize(
+    "concrete_context_source",
+    [
+        "Hindu Marriage Act 1955 / personal law and local filing rules",
+        "Hindu Marriage Act / personal law and local filing rules",
+        "Hindu Marriage Act Section 13 / personal law and local filing rules",
+        "Hindu Marriage Act, 1955 / personal law and local filing rules",
+        "victim-compensation and DLSA procedure / SC-ST Act 1989",
+    ],
+)
+def test_matter_plan_integrity_does_not_hide_concrete_authority_in_context_label(
+    concrete_context_source: str,
+):
+    query = "my landlord is refusing to return my deposit"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    concrete_context = replace(
+        plan.authority_ledger[0],
+        source=concrete_context_source,
+        authority_id="composite_concrete_context",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name=None,
+        act=None,
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=True,
+        conditional=False,
+    )
+    concrete_plan = replace(plan, authority_ledger=[concrete_context])
+
+    gap = matter_plan_integrity_gap(concrete_plan, query)
+    assert gap is not None
+    assert "missing_source_pack_binding" in gap["gap_kinds"]
+
+
+def test_conditional_concrete_victim_compensation_authority_stays_blocking():
+    query = "acid attack survivor needs compensation and SC-ST Act remedy"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    concrete = replace(
+        plan.authority_ledger[0],
+        source="victim-compensation and DLSA procedure / SC-ST Act 1989",
+        authority_id="conditional_concrete_victim_compensation",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name=None,
+        act=None,
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=False,
+        conditional=True,
+    )
+    concrete_plan = replace(plan, authority_ledger=[concrete])
+
+    gap = matter_plan_integrity_gap(concrete_plan, query)
+    assert gap is not None
+    assert "missing_source_pack_binding" in gap["gap_kinds"]
+
+
+@pytest.mark.parametrize(
+    "concrete_context_source",
+    [
+        "Right to Education Act 2009 / state education rules",
+        "RTE / state education rules",
+        "BSA / state education rules",
+        "RERA / state education rules",
+        "IBC / state education rules",
+        "PESA / state education rules",
+        "BOCW / state education rules",
+        "RTI / state education rules",
+        "NDPS / state education rules",
+        "NFSA / state pension/scholarship/ration scheme rules",
+        "RFCTLARR / state pension/scholarship/ration scheme rules",
+        "MMDR / state pension/scholarship/ration scheme rules",
+        "DPDP / state pension/scholarship/ration scheme rules",
+        "JJ / state pension/scholarship/ration scheme rules",
+        "NI / state pension/scholarship/ration scheme rules",
+        "SC/ST / state caste-certificate issuance and appeal rules",
+        "SC/ST Act 1989 / state caste-certificate issuance and appeal rules",
+    ],
+)
+def test_conditional_concrete_education_or_caste_authority_stays_blocking(
+    concrete_context_source: str,
+):
+    query = "child school admission denied and caste certificate appeal is needed"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    concrete = replace(
+        plan.authority_ledger[0],
+        source=concrete_context_source,
+        authority_id="conditional_concrete_education_or_caste",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name=None,
+        act=None,
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=False,
+        conditional=True,
+    )
+    concrete_plan = replace(plan, authority_ledger=[concrete])
+
+    gap = matter_plan_integrity_gap(concrete_plan, query)
+    assert gap is not None
+    assert "missing_source_pack_binding" in gap["gap_kinds"]
+
+
+@pytest.mark.parametrize(
+    "fact_context_source",
+    [
+        "religion/personal-law and family-tree facts / Hindu Marriage Act 1955",
+        "records only after the route is identified / BOCW Act 1996",
+    ],
+)
+def test_fact_context_label_does_not_hide_concrete_authority(
+    fact_context_source: str,
+):
+    query = "my landlord is refusing to return my deposit"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    concrete = replace(
+        plan.authority_ledger[0],
+        source=fact_context_source,
+        authority_id="fact_context_with_concrete_authority",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name=None,
+        act=None,
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=True,
+        conditional=False,
+    )
+    concrete_plan = replace(plan, authority_ledger=[concrete])
+
+    gap = matter_plan_integrity_gap(concrete_plan, query)
+    assert gap is not None
+    assert "missing_source_pack_binding" in gap["gap_kinds"]
+
+
+@pytest.mark.parametrize(
+    "fact_context_source",
+    [
+        "NFSA / records only after the route is identified",
+        "RFCTLARR / records only to identify the claim",
+        "DPDP / religion/personal-law and family-tree facts",
+        "JJ / labour/DLSA grievance route",
+    ],
+)
+def test_alias_only_fact_context_label_does_not_hide_concrete_authority(
+    fact_context_source: str,
+):
+    query = "my landlord is refusing to return my deposit"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    concrete = replace(
+        plan.authority_ledger[0],
+        source=fact_context_source,
+        authority_id="alias_only_fact_context_with_concrete_authority",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name=None,
+        act=None,
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=True,
+        conditional=False,
+    )
+    concrete_plan = replace(plan, authority_ledger=[concrete])
+
+    gap = matter_plan_integrity_gap(concrete_plan, query)
+    assert gap is not None
+    assert "missing_source_pack_binding" in gap["gap_kinds"]
+
+
+@pytest.mark.parametrize(
+    "fact_context_source",
+    [
+        "NFSA / records only after the route is identified",
+        "DPDP / religion/personal-law and family-tree facts",
+    ],
+)
+def test_conditional_alias_composites_are_enforced_by_both_source_gates(
+    fact_context_source: str,
+):
+    """Plan integrity and post-retrieval checks must share one classifier."""
+    query = "my landlord is refusing to return my deposit"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    concrete = replace(
+        plan.authority_ledger[0],
+        source=fact_context_source,
+        authority_id="conditional_alias_composite",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name=None,
+        act=None,
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=True,
+        conditional=True,
+    )
+    concrete_plan = replace(plan, authority_ledger=[concrete])
+
+    integrity_gap = matter_plan_integrity_gap(concrete_plan, query)
+    assert integrity_gap is not None
+    assert "missing_source_pack_binding" in integrity_gap["gap_kinds"]
+
+    missing = missing_plan_authorities(
+        plan=concrete_plan,
+        passages=[],
+        query=query,
+    )
+    assert [item["required_source"] for item in missing] == [fact_context_source]
+
+
+def test_matter_plan_integrity_keeps_unknown_criminal_regime_as_intake_not_gap():
+    query = "police refused to register FIR for theft of my bike where do I go next"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    assert plan.incident_date_status in {
+        "needed_for_criminal_regime",
+        "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc",
+    }
+
+    assert matter_plan_integrity_gap(plan, query) is None
+
+
+def test_matter_plan_integrity_does_not_block_mixed_regime_family_context():
+    query = "in-laws not giving back my jewellery streedhan after husband died"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    mixed = next(
+        entry for entry in plan.authority_ledger
+        if entry.note == "date_dependent_regime_choose_by_incident_date"
+    )
+    assert mixed.source_pack_id is None
+    assert matter_plan_integrity_gap(plan, query) is None
+
+    deferred_plan = replace(plan, authority_ledger=[mixed])
+    assert missing_plan_authorities(
+        plan=deferred_plan,
+        passages=[],
+        query=query,
+    ) == []
+    assert build_source_gap_event(
+        query=query,
+        route_category=route_matter(query).category,
+        required_sources=[],
+        passages=[],
+        plan=deferred_plan,
+    ) is None
+
+
+def test_matter_plan_integrity_does_not_force_compound_constitution_into_one_pack():
+    query = "police took my brother yesterday no arrest memo given dk basu kya hai"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    assert any("Articles 21 and 22" in entry.source for entry in plan.authority_ledger)
+    assert matter_plan_integrity_gap(plan, query) is None
+
+
+def test_matter_plan_integrity_does_not_bypass_nonconstitutional_composite():
+    query = "my customer gave me a cheque and it bounced, what is the deadline to send notice"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    for number_pair in ("138 and 139", "21 and 22"):
+        composite = replace(
+            plan.authority_ledger[0],
+            source=f"Negotiable Instruments Act 1881 Articles {number_pair}",
+            authority_id="authority_nonconstitutional_composite",
+            registry_key=None,
+            identity_status="provisional",
+            canonical_name="negotiable instruments act 1881",
+            act="Negotiable Instruments Act 1881",
+            section=None,
+            source_pack_id=None,
+            required_anchor_patterns=[],
+            must_cite=True,
+            conditional=False,
+        )
+        broken = replace(plan, authority_ledger=[composite], retrieval_sources=[])
+
+        gap = matter_plan_integrity_gap(broken, query)
+        assert gap is not None
+        assert gap["gap_kinds"] == ["missing_source_pack_binding"]
+
+
+def test_matter_plan_integrity_requires_regime_packs_before_date_bypass():
+    query = "ndps bail rejected 6 times by session court husband 3 yrs in tihar option"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    date_entry = next(
+        entry for entry in plan.authority_ledger
+        if entry.note == "date_dependent_regime_choose_by_incident_date"
+    )
+    broken = replace(plan, authority_ledger=[date_entry], retrieval_sources=[])
+
+    gap = matter_plan_integrity_gap(broken, query)
+    assert gap is not None
+    assert gap["gap_kinds"] == ["missing_source_pack_binding"]
+
+    assert missing_plan_authorities(
+        plan=broken,
+        passages=[],
+        query=query,
+    )
+    source_gap = build_source_gap_event(
+        query=query,
+        route_category=route_matter(query).category,
+        required_sources=[],
+        passages=[],
+        plan=broken,
+    )
+    assert source_gap is not None
+    assert source_gap["outcome"] == "source_gap_handoff"
+
+
+@pytest.mark.parametrize(
+    "composite_source",
+    [
+        "Constitution Articles 21 and 22 arrest and custody safeguards",
+        "Constitution Articles 21 & 22 arrest and custody safeguards",
+        "Constitution Articles 21, 22 arrest and custody safeguards",
+        "Constitution Article 21 & 22 arrest and custody safeguards",
+        "Constitution Article 21/22 arrest and custody safeguards",
+    ],
+)
+def test_split_constitution_articles_satisfy_post_retrieval_and_final_gap_gates(
+    composite_source: str,
+):
+    query = "police took my brother yesterday no arrest memo given dk basu kya hai"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    entry = replace(
+        plan.authority_ledger[0],
+        source=composite_source,
+        authority_id="constitution_articles_21_22_composite",
+        registry_key=None,
+        identity_status="provisional",
+        canonical_name="constitution of india",
+        act="Constitution of India",
+        section=None,
+        source_pack_id=None,
+        required_anchor_patterns=[],
+        must_cite=True,
+        conditional=False,
+    )
+    composite_plan = replace(plan, authority_ledger=[entry])
+    passages = [
+        {
+            "index": 1,
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-21",
+            "source_type": "bare_act",
+            "required_source_pack": "constitution_article_21",
+            "text": "Constitution of India Article 21 protection of life and personal liberty.",
+        },
+        {
+            "index": 2,
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-22",
+            "source_type": "bare_act",
+            "required_source_pack": "constitution_article_22",
+            "text": "Constitution of India Article 22 safeguards against arrest and detention.",
+        },
+    ]
+
+    assert matter_plan_integrity_gap(composite_plan, query) is None
+    assert missing_plan_authorities(
+        plan=composite_plan,
+        passages=passages,
+        query=query,
+    ) == []
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[],
+        passages=passages,
+        plan=composite_plan,
+    ) is None
+
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[composite_source],
+        passages=passages,
+        plan=None,
+    ) is None
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[composite_source],
+        passages=passages[:1],
+        plan=None,
+    ) is not None
+
+    lawyer_access_entry = replace(
+        entry,
+        source="Constitution Articles 21 and 22 lawyer-access safeguards",
+    )
+    lawyer_access_plan = replace(composite_plan, authority_ledger=[lawyer_access_entry])
+    assert missing_plan_authorities(
+        plan=lawyer_access_plan,
+        passages=[passages[1]],
+        query=query,
+    )
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[],
+        passages=[passages[1]],
+        plan=lawyer_access_plan,
+    ) is not None
+
+    assert missing_plan_authorities(
+        plan=composite_plan,
+        passages=passages[:1],
+        query=query,
+    )
+    wrong_provenance = [
+        {
+            **passage,
+            "required_source_pack": "unrelated_constitution_pack",
+            "source_type": "sc_judgment",
+        }
+        for passage in passages
+    ]
+    assert missing_plan_authorities(
+        plan=composite_plan,
+        passages=wrong_provenance,
+        query=query,
+    )
+
+    swapped_pack = [
+        {**passages[0], "required_source_pack": "constitution_article_22"},
+        {**passages[1], "required_source_pack": "constitution_article_21"},
+    ]
+    assert missing_plan_authorities(
+        plan=composite_plan,
+        passages=swapped_pack,
+        query=query,
+    )
+
+    legacy_wrong_provenance = [
+        {
+            **passage,
+            "required_source_pack": "unrelated_pack",
+            "source_type": "sc_judgment",
+            "anchor": "unrelated-document/sec-21" if index == 0 else "unrelated-document/sec-22",
+        }
+        for index, passage in enumerate(passages)
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[composite_source],
+        passages=legacy_wrong_provenance,
+        plan=None,
+    ) is not None
+
+    legacy_swapped_pack = [
+        {**passages[0], "required_source_pack": "constitution_article_22"},
+        {**passages[1], "required_source_pack": "constitution_article_21"},
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[composite_source],
+        passages=legacy_swapped_pack,
+        plan=None,
+    ) is not None
+
+    generic_legal_aid_pack = [
+        {**passage, "required_source_pack": "constitution_legal_aid"}
+        for passage in passages
+    ]
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[composite_source],
+        passages=generic_legal_aid_pack,
+        plan=None,
+    ) is None
+
+
+def test_explicit_article_pack_anchor_is_not_rewritten_to_an_unstored_article_anchor():
+    query = "father in jail heart disease medicine stopped need interim medical bail"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    article_21 = next(
+        entry
+        for entry in plan.authority_ledger
+        if entry.source_pack_id == "constitution_article_21"
+    )
+    article_only_plan = replace(plan, authority_ledger=[article_21])
+    passage = {
+        "index": 1,
+        "title": "Constitution of India",
+        "anchor": "constitution-india/sec-21-official",
+        "document_id": "constitution-india",
+        "source_type": "bare_act",
+        "required_source_pack": "constitution_article_21",
+        "required_source_packs": ["constitution_article_21"],
+        "authority_ids": [article_21.authority_id],
+        "text": "Constitution of India, Article 21. Protection of life and personal liberty.",
+    }
+
+    assert missing_plan_authorities(
+        plan=article_only_plan,
+        passages=[passage],
+        query=query,
+    ) == []
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[],
+        passages=[passage],
+        plan=article_only_plan,
+    ) is None
+
+
+def test_legacy_oxford_comma_constitution_list_requires_all_articles():
+    query = "police took my brother yesterday no arrest memo given dk basu kya hai"
+    route = route_matter(query)
+    source = "Constitution Articles 21, 22, and 23 arrest and custody safeguards"
+    passages = [
+        {
+            "title": "Constitution of India",
+            "anchor": f"constitution-india/sec-{number}",
+            "source_type": "bare_act",
+        }
+        for number in (21, 22, 23)
+    ]
+
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[source],
+        passages=passages,
+        plan=None,
+    ) is None
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[source],
+        passages=passages[:2],
+        plan=None,
+    ) is not None
+
+
+def test_matter_plan_integrity_rejects_one_mixed_regime_pack_as_both_regimes():
+    query = "ndps bail rejected 6 times by session court husband 3 yrs in tihar option"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    date_entry = next(
+        entry for entry in plan.authority_ledger
+        if entry.note == "date_dependent_regime_choose_by_incident_date"
+    )
+    mixed_pack = replace(
+        plan.retrieval_sources[0],
+        source_pack_id="bnss_crpc_mixed_comparison",
+        title_patterns=["BNSS 2023 / CrPC 1973 comparison"],
+        doc_ids=["mixed-comparison"],
+        source_types=["bare_act"],
+    )
+    broken = replace(
+        plan,
+        authority_ledger=[date_entry],
+        retrieval_sources=[mixed_pack],
+    )
+
+    gap = matter_plan_integrity_gap(broken, query)
+    assert gap is not None
+    assert gap["gap_kinds"] == ["missing_source_pack_binding"]
 
 
 def test_source_gap_detects_missing_route_authority():
@@ -51,6 +1502,286 @@ def test_source_gap_does_not_fire_when_matching_source_present():
     )
 
     assert missing == []
+
+
+def test_environment_water_route_fails_closed_without_exact_water_act_passage():
+    query = "my borewell water has come bad neighbours factory throwing chemicals"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    unrelated = [{
+        "index": 1,
+        "title": "Registration Act 1908",
+        "anchor": "registration-1908/sec-17",
+        "source_type": "bare_act",
+        "text": "Section 17 concerns registration of documents.",
+    }]
+    missing = missing_plan_authorities(plan=plan, passages=unrelated, query=query)
+
+    assert any(
+        item["required_source"].startswith(
+            "Water (Prevention and Control of Pollution) Act 1974"
+        )
+        for item in missing
+    )
+    gap = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=unrelated,
+        plan=plan,
+    )
+    assert gap is not None
+    assert gap["outcome"] == "source_gap_handoff"
+
+
+def test_environment_water_route_accepts_exact_water_act_passage():
+    query = "my borewell water has come bad neighbours factory throwing chemicals"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    exact_water_act = {
+        "index": 1,
+        "title": "Water (Prevention and Control of Pollution) Act 1974",
+        "anchor": "water-pollution-1974/sec-25",
+        "source_type": "bare_act",
+        "required_source_pack": "water_pollution_1974",
+        "text": "Section 25 restrictions on new outlets and new discharges.",
+    }
+    missing = missing_plan_authorities(
+        plan=plan,
+        passages=[exact_water_act],
+        query=query,
+    )
+
+    assert not any(
+        item["required_source"].startswith(
+            "Water (Prevention and Control of Pollution) Act 1974"
+        )
+        for item in missing
+    )
+
+
+def test_housing_pet_route_does_not_use_generic_consumer_source_as_substitute():
+    query = "society management has put a fine of 25000 on me for keeping a pet without prior approval"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    gap = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[{
+            "index": 1,
+            "title": "Consumer Protection Act 2019",
+            "anchor": "consumer-protection-2019/sec-39",
+            "source_type": "bare_act",
+            "text": "Section 39 concerns relief in a consumer complaint.",
+        }],
+        plan=plan,
+    )
+
+    assert gap is not None
+    assert gap["reason"] == "housing_pet_source_gap"
+    assert gap["gap_kinds"] == ["state_or_local_authority_gap"]
+    assert gap["safe_handoff_only"] is True
+
+
+def test_housing_pet_route_does_not_treat_cooperative_judgment_as_controlling_authority():
+    query = "society management has put a fine of 25000 on me for keeping a pet without prior approval"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    gap = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[{
+            "index": 1,
+            "title": "CO-OPERATIVE HOUSING SOCIETY",
+            "anchor": "2022-insc-33#header",
+            "source_type": "sc_judgment",
+            "required_source_pack": "cooperative_housing_society_case_law",
+            "text": "The cooperative housing society dispute concerns the society's governing documents.",
+        }],
+        plan=plan,
+    )
+
+    assert gap is not None
+    assert gap["reason"] == "housing_pet_source_gap"
+    assert gap["safe_handoff_only"] is True
+
+
+def test_housing_pet_route_accepts_exact_reviewed_bmc_authority():
+    query = "society management has put a fine of 25000 on me for keeping a pet without prior approval in Mumbai"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    gap = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[{
+            "index": 1,
+            "title": "BMC Guidelines with respect to Pet & Street dogs, RWAs and AOAs",
+            "anchor": "bmc-pet-dog-guidelines#pet-dog-residents",
+            "source_type": "circular",
+            "document_id": "bmc-pet-dog-guidelines",
+            "required_source_pack": "bmc_pet_guidelines_ban",
+            "text": "BMC pet guidance for residents and housing societies.",
+        }],
+        plan=plan,
+    )
+
+    assert gap is None
+
+
+def test_housing_pet_route_rejects_bmc_authority_for_explicit_non_mumbai_query():
+    query = "society management has put a fine of 25000 on me for keeping a pet without prior approval in Delhi"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+
+    gap = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[{
+            "index": 1,
+            "title": "BMC Guidelines with respect to Pet & Street dogs, RWAs and AOAs",
+            "anchor": "bmc-pet-dog-guidelines#pet-dog-residents",
+            "source_type": "circular",
+            "document_id": "bmc-pet-dog-guidelines",
+            "required_source_pack": "bmc_pet_guidelines_ban",
+            "text": "BMC pet guidance for residents and housing societies.",
+        }],
+        plan=plan,
+    )
+
+    assert gap is not None
+    assert gap["reason"] == "housing_pet_source_gap"
+
+
+def test_constitution_rti_and_hma_split_neighbors_do_not_clear_exact_requirements():
+    cases = [
+        (
+            "Constitution of India Article 22",
+            "Constitution of India",
+            "constitution-india/sec-22-a",
+            "Constitution of India, Article 22A\n22A. Neighbouring provision.",
+            "constitutional_authority_gap",
+            "police detained me and I want to check Article 22",
+        ),
+        (
+            "Right to Information Act 2005 Section 6",
+            "Right to Information Act 2005",
+            "rti-2005/sec-6-a",
+            "Right to Information Act 2005, Section 6A\n6A. Neighbouring provision.",
+            "national_statute_retrieval_gap",
+            "the public office rejected my RTI application and I want Section 6",
+        ),
+        (
+            "Hindu Marriage Act 1955 Section 13A",
+            "Hindu Marriage Act 1955",
+            "hindu-marriage-1955/sec-13-a",
+            "Hindu Marriage Act 1955, Section 13\n13. Divorce.",
+            "national_statute_retrieval_gap",
+            "my wife wants divorce under Hindu Marriage Act Section 13A",
+        ),
+    ]
+    for required_source, title, anchor, text, kind, query in cases:
+        assert missing_required_authorities(
+            required_sources=[required_source],
+            passages=[{
+                "index": 1,
+                "title": title,
+                "anchor": anchor,
+                "text": text,
+                "source_type": "bare_act",
+            }],
+            query=query,
+        ) == [{"required_source": required_source, "kind": kind}]
+
+
+def test_constitution_article_22_does_not_accept_article_22a_split_fragment():
+    assert missing_required_authorities(
+        required_sources=["Constitution of India Article 22"],
+        passages=[{
+            "index": 1,
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-22-a",
+            "text": "Constitution of India, Article 22A\n22A. Neighbouring provision.",
+            "source_type": "bare_act",
+        }],
+        query="police detained me and I want to check Article 22",
+    ) == [{
+        "required_source": "Constitution of India Article 22",
+        "kind": "constitutional_authority_gap",
+    }]
+
+
+def test_rti_section_6_does_not_accept_section_6a_split_fragment():
+    assert missing_required_authorities(
+        required_sources=["Right to Information Act 2005 Section 6"],
+        passages=[{
+            "index": 1,
+            "title": "Right to Information Act 2005",
+            "anchor": "rti-2005/sec-6-a",
+            "text": "Right to Information Act 2005, Section 6A\n6A. Neighbouring provision.",
+            "source_type": "bare_act",
+        }],
+        query="the public office rejected my RTI application and I want Section 6",
+    ) == [{
+        "required_source": "Right to Information Act 2005 Section 6",
+        "kind": "national_statute_retrieval_gap",
+    }]
+
+
+def test_hma_section_13a_does_not_accept_section_13_fragment():
+    assert missing_required_authorities(
+        required_sources=["Hindu Marriage Act 1955 Section 13A"],
+        passages=[{
+            "index": 1,
+            "title": "Hindu Marriage Act 1955",
+            "anchor": "hindu-marriage-1955/sec-13-a",
+            "text": "Hindu Marriage Act 1955, Section 13\n13. Divorce.",
+            "source_type": "bare_act",
+        }],
+        query="my wife wants divorce under Hindu Marriage Act Section 13A",
+    ) == [{
+        "required_source": "Hindu Marriage Act 1955 Section 13A",
+        "kind": "national_statute_retrieval_gap",
+    }]
+
+
+def test_generic_platform_kyc_hold_does_not_require_financial_or_gaming_authority():
+    query = "Blue Trunks app froze my account showing KYC pending and 80k stuck"
+    route = route_matter(query)
+    passages = [
+        {
+            "index": 1,
+            "title": "Information Technology Act 2000",
+            "anchor": "it-2000/sec-79",
+            "source_type": "bare_act",
+        },
+        {
+            "index": 2,
+            "title": "Consumer Protection Act 2019",
+            "anchor": "consumer-protection-2019/sec-35",
+            "source_type": "bare_act",
+        },
+    ]
+
+    assert missing_required_authorities(
+        required_sources=route.required_sources,
+        passages=passages,
+        query=query,
+    ) == []
 
 
 def test_plan_source_gap_uses_authority_ids_as_primary_key():
@@ -102,7 +1833,34 @@ def test_plan_source_gap_uses_authority_ids_as_primary_key():
         query=query,
     )
     assert missing[0]["authority_id"] == controlling.authority_id
-    assert missing[0]["match_mode"] == "authority_id"
+    assert missing[0]["match_mode"] == "legacy_provisional"
+
+
+def test_plan_authority_uses_server_heading_for_alphanumeric_section_anchor():
+    query = "65 year old diabetic undertrial completed half sentence can review committee release under BNSS 479"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    crpc = next(
+        entry for entry in plan.authority_ledger
+        if entry.registry_key == "crpc_1973_section_436a"
+    )
+    plan = replace(plan, authority_ledger=[crpc])
+
+    assert missing_plan_authorities(
+        plan=plan,
+        passages=[{
+            "index": 4,
+            "title": "Code of Criminal Procedure 1973",
+            "anchor": "crpc-1973/sec-436-a",
+            "heading": "Code of Criminal Procedure 1973, Section 436A",
+            "source_type": "bare_act",
+            "document_id": "crpc-1973",
+            "required_source_pack": "crpc_1973",
+            "authority_ids": [crpc.authority_id],
+        }],
+        query=query,
+    ) == []
 
 
 def test_rbi_workflow_fails_closed_when_one_mandatory_clause_is_missing():
@@ -112,12 +1870,18 @@ def test_rbi_workflow_fails_closed_when_one_mandatory_clause_is_missing():
     assert plan is not None
 
     def passage(clause: str) -> dict:
+        from authority_registry import load_authority_registry
+
+        record = load_authority_registry().by_key(
+            f"rbi_integrated_ombudsman_2021_clause_{clause}"
+        )
         return {
             "index": int(clause),
             "title": "Reserve Bank - Integrated Ombudsman Scheme, 2021",
             "anchor": f"rbi-integrated-ombudsman-2021/sec-{clause}",
             "source_type": "bare_act",
             "required_source_pack": "rbi_integrated_ombudsman_2021",
+            "as_at": record.consolidation_as_at.isoformat() if record and record.consolidation_as_at else None,
         }
 
     incomplete = [passage(clause) for clause in ("1", "3", "6", "10")]
@@ -139,10 +1903,20 @@ def test_plan_source_gap_respects_plan_must_cite_policy_and_state_gap():
     missing = missing_plan_authorities(plan=plan, passages=[], query=query)
     missing_sources = {item["required_source"] for item in missing}
 
-    assert "Constitution Article 341 or 342 after the SC/ST category is confirmed" not in missing_sources
-    assert "state caste-certificate issuance and appeal rules" in missing_sources
+    assert "Constitution Article 341 or 342 after the SC/ST category is confirmed" in missing_sources
+    assert "Right to Information Act 2005 Section 6 for the application record and written reasons" in missing_sources
+    route_missing = missing_required_authorities(
+        required_sources=route_matter(query).required_sources,
+        passages=[],
+        query=query,
+    )
+    assert any(
+        item["required_source"] == "state caste-certificate issuance and appeal rules"
+        and item["kind"] == "state_or_local_authority_gap"
+        for item in route_missing
+    )
     state_gap = next(
-        item for item in missing
+        item for item in route_missing
         if item["required_source"] == "state caste-certificate issuance and appeal rules"
     )
     assert state_gap["kind"] == "state_or_local_authority_gap"
@@ -158,9 +1932,55 @@ def test_plan_source_gap_respects_plan_must_cite_policy_and_state_gap():
         }],
         query=query,
     )
+    weak_route_missing = missing_required_authorities(
+        required_sources=route_matter(query).required_sources,
+        passages=[{
+            "index": 1,
+            "title": "state caste-certificate issuance and appeal rules",
+            "anchor": "",
+            "source_type": "",
+            "text": "application record and rejection details",
+        }],
+        query=query,
+    )
     assert any(
         item["required_source"] == "state caste-certificate issuance and appeal rules"
-        for item in weak_metadata
+        for item in weak_route_missing
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "my SC certificate was rejected in Gujarat, which appeal forum and deadline applies",
+        "my ST certificate was refused in Maharashtra, where can I challenge it",
+    ),
+)
+def test_sc_st_certificate_aliases_require_state_rule_for_appeal_queries(query: str):
+    route = route_matter(query)
+    missing = missing_required_authorities(
+        required_sources=route.required_sources,
+        passages=[],
+        query=query,
+    )
+    assert any(
+        item["required_source"] == "state caste-certificate issuance and appeal rules"
+        and item["kind"] == "state_or_local_authority_gap"
+        for item in missing
+    )
+
+
+def test_st_certificate_pending_status_stays_intake_until_appeal_is_requested():
+    query = "my ST certificate has been pending at the tehsildar for months what can I do"
+    route = route_matter(query)
+    missing = missing_required_authorities(
+        required_sources=route.required_sources,
+        passages=[],
+        query=query,
+    )
+    assert not any(
+        item["required_source"] == "state caste-certificate issuance and appeal rules"
+        for item in missing
     )
 
 
@@ -230,10 +2050,18 @@ def test_plan_source_gap_requires_mixed_regime_authority_when_incident_date_is_u
     assert {entry.act for entry in regime_entries} == {
         "Bharatiya Nagarik Suraksha Sanhita 2023",
         "Code of Criminal Procedure 1973",
+        "Bharatiya Nyaya Sanhita 2023",
+        "Indian Penal Code 1860",
     }
     missing = missing_plan_authorities(plan=plan, passages=[], query=query)
-    assert {item["authority_id"] for item in missing} == {
-        entry.authority_id for entry in regime_entries
+    # The plan may contain duplicate provisional rows for the same regime
+    # pack. The serving gate reports one missing obligation per source pack.
+    assert {
+        (item["required_source"], item["source_pack_id"])
+        for item in missing
+    } == {
+        (entry.source, entry.source_pack_id)
+        for entry in regime_entries
     }
 
     assert missing_plan_authorities(
@@ -245,21 +2073,53 @@ def test_plan_source_gap_requires_mixed_regime_authority_when_incident_date_is_u
                     "anchor": "bnss-2023/sec-173-a",
                     "required_source_pack": "bnss_2023_vehicle_theft_fir",
                     "source_type": "bare_act",
+                    "authority_ids": ["authority_34af1906c7f20fae0947"],
+                    "as_at": "2024-07-01",
+                    "text": "Bharatiya Nagarik Suraksha Sanhita 2023, Section 173\n173. Information in cognizable cases.",
                 },
                 {
                     "index": 2,
                     "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
                     "anchor": "bnss-2023/sec-173-c",
-                    "required_source_pack": "bnss_2023_vehicle_theft_fir",
-                    "source_type": "bare_act",
+                        "required_source_pack": "bnss_2023_vehicle_theft_fir",
+                        "source_type": "bare_act",
+                        "authority_ids": ["authority_85fac6e1af26c07fb512"],
+                        "as_at": "2024-07-01",
+                        "text": "Bharatiya Nagarik Suraksha Sanhita 2023, Section 173(4)\n(4) Any person aggrieved by a refusal.",
                 },
                 {
                     "index": 3,
+                    "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+                    "anchor": "bnss-2023/sec-175",
+                    "required_source_pack": "bnss_2023_vehicle_theft_fir",
+                    "source_type": "bare_act",
+                    "authority_ids": ["authority_5b58f83601c4ab714da1"],
+                    "as_at": "2024-07-01",
+                    "text": "Bharatiya Nagarik Suraksha Sanhita 2023, Section 175\n175. Police officer power to investigate cognizable case.",
+                },
+                {
+                    "index": 4,
                     "title": "Code of Criminal Procedure 1973",
-                "anchor": "crpc-1973/sec-154",
-                "required_source_pack": "crpc_1973_vehicle_theft_fir",
-                "source_type": "bare_act",
-            },
+                    "anchor": "crpc-1973/sec-154",
+                    "required_source_pack": "crpc_1973_vehicle_theft_fir",
+                        "source_type": "bare_act",
+                        "authority_ids": ["authority_6358e656222ff6dcdae9"],
+                        "text": "Code of Criminal Procedure 1973, Section 154\n154. Information in cognizable cases.",
+                    },
+                    {
+                        "index": 5,
+                        "title": "Bharatiya Nyaya Sanhita 2023",
+                        "anchor": "bns-2023/sec-303",
+                        "required_source_pack": "bns_2023_vehicle_theft",
+                        "source_type": "bare_act",
+                    },
+                    {
+                        "index": 6,
+                        "title": "Indian Penal Code 1860",
+                        "anchor": "ipc-1860/sec-378",
+                        "required_source_pack": "ipc_1860_vehicle_theft",
+                        "source_type": "bare_act",
+                    },
         ],
         query=query,
     ) == []
@@ -283,9 +2143,10 @@ def test_plan_source_gap_requires_every_explicit_composite_criminal_section():
         plan=plan,
         passages=[{
             "index": 1,
-            "title": "Bharatiya Nyaya Sanhita 2023",
-            "anchor": "bns-2023/sec-63",
-            "source_type": "bare_act",
+                "title": "Bharatiya Nyaya Sanhita 2023",
+                "anchor": "bns-2023/sec-63",
+                "required_source_pack": bns_entries[0].source_pack_id,
+                "source_type": "bare_act",
         }],
         query=query,
     )
@@ -330,6 +2191,526 @@ def test_plan_source_gap_does_not_report_factual_intake_as_missing_law():
         "charge-sheet filing status, extension application/order, and first remand date"
         not in missing_sources
     )
+
+
+def test_provisional_reviewed_source_pack_satisfies_plan_without_registry_mapping():
+    query = "my customer gave me a cheque and it bounced, what is the deadline to send notice"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    passages = [
+        {
+            "index": 1,
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-138",
+            "source_type": "bare_act",
+            "required_source_pack": "ni_act_1881",
+            # The document is verified, but this legacy reviewed pack has not
+            # yet been projected into document_authorities.
+            "authority_ids": [],
+        },
+        {
+            "index": 2,
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-142",
+            "source_type": "bare_act",
+            "required_source_pack": "ni_act_1881",
+            "authority_ids": [],
+        },
+    ]
+
+    missing = missing_plan_authorities(plan=plan, passages=passages, query=query)
+    assert not any(
+        item["required_source"].startswith("Negotiable Instruments Act 1881")
+        for item in missing
+    )
+
+
+def test_provisional_source_pack_still_requires_exact_pack_and_anchor():
+    query = "my customer gave me a cheque and it bounced, what is the deadline to send notice"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+
+    wrong_pack = [{
+        "title": "Negotiable Instruments Act 1881",
+        "anchor": "negotiable-instruments-1881/sec-138",
+        "required_source_pack": "unrelated_pack",
+        "authority_ids": [],
+    }]
+    wrong_anchor = [{
+        "title": "Negotiable Instruments Act 1881",
+        "anchor": "negotiable-instruments-1881/sec-1",
+        "required_source_pack": "ni_act_1881",
+        "authority_ids": [],
+    }]
+    official_anchor = [
+        {
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-138-official",
+            "source_type": "bare_act",
+            "required_source_pack": "ni_act_1881",
+            "authority_ids": [],
+        },
+        {
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-142-official",
+            "source_type": "bare_act",
+            "required_source_pack": "ni_act_1881",
+            "authority_ids": [],
+        },
+    ]
+
+    assert missing_plan_authorities(plan=plan, passages=wrong_pack, query=query)
+    assert missing_plan_authorities(plan=plan, passages=wrong_anchor, query=query)
+    assert not any(
+        item["required_source"].startswith("Negotiable Instruments Act 1881")
+        for item in missing_plan_authorities(
+            plan=plan,
+            passages=official_anchor,
+            query=query,
+        )
+    )
+
+
+def test_provisional_source_pack_rejects_wrong_source_type_and_document():
+    query = "my customer gave me a cheque and it bounced, what is the deadline to send notice"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    entry = next(
+        item for item in plan.authority_ledger
+        if item.source_pack_id == "ni_act_1881"
+    )
+
+    wrong_type = {
+        "title": "Negotiable Instruments Act 1881",
+        "anchor": "negotiable-instruments-1881/sec-138",
+        "source_type": "sc_judgment",
+        "required_source_pack": "ni_act_1881",
+        "authority_ids": [],
+    }
+    wrong_document = {
+        "title": "Negotiable Instruments Act 1881",
+        "anchor": "other-act/sec-138",
+        "source_type": "bare_act",
+        "required_source_pack": "ni_act_1881",
+        "authority_ids": [],
+    }
+
+    assert not _passage_satisfies_plan_entry(plan, entry, wrong_type)
+    assert not _passage_satisfies_plan_entry(plan, entry, wrong_document)
+
+    spoofed_title = {
+        "title": "Negotiable Instruments Act 1881 fake",
+        "anchor": "negotiable-instruments-1881/sec-138",
+        "source_type": "bare_act",
+        "required_source_pack": "ni_act_1881",
+        "authority_ids": [],
+    }
+    assert not _passage_satisfies_plan_entry(plan, entry, spoofed_title)
+
+
+def test_provisional_source_pack_fails_closed_when_identity_metadata_is_missing():
+    query = "my customer gave me a cheque and it bounced, what is the deadline to send notice"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan is not None
+    entry = next(
+        item for item in plan.authority_ledger
+        if item.source_pack_id == "ni_act_1881"
+    )
+
+    missing_type = {
+        "title": "Negotiable Instruments Act 1881",
+        "anchor": "negotiable-instruments-1881/sec-138",
+        "required_source_pack": "ni_act_1881",
+        "authority_ids": [],
+    }
+    assert not _passage_satisfies_plan_entry(plan, entry, missing_type)
+
+    no_document_identity = replace(
+        plan,
+        retrieval_sources=[
+            replace(
+                source,
+                doc_ids=[],
+            )
+            if source.source_pack_id == "ni_act_1881"
+            else source
+            for source in plan.retrieval_sources
+        ],
+    )
+    complete_passage = {
+        "title": "Negotiable Instruments Act 1881",
+        "anchor": "negotiable-instruments-1881/sec-138",
+        "source_type": "bare_act",
+        "required_source_pack": "ni_act_1881",
+        "authority_ids": [],
+    }
+    assert not _passage_satisfies_plan_entry(no_document_identity, entry, complete_passage)
+
+
+def test_registry_owned_obligation_does_not_use_legacy_pack_fallback():
+    from types import SimpleNamespace
+
+    plan = SimpleNamespace(retrieval_sources=[SimpleNamespace(
+        source_pack_id="registry_pack",
+        title_patterns=("Verified Act",),
+        source_types=("bare_act",),
+        doc_ids=("verified-act",),
+    )])
+    entry = SimpleNamespace(
+        source_pack_id="registry_pack",
+        registry_key="registry_authority",
+        note="registry_workflow_authority",
+        required_anchor_patterns=["/sec-1"],
+        authority_id="authority_00000000000000000000",
+    )
+    passage = {
+        "title": "Verified Act",
+        "anchor": "verified-act/sec-1",
+        "source_type": "bare_act",
+        "required_source_pack": "registry_pack",
+        "authority_ids": [],
+    }
+
+    assert not _passage_satisfies_plan_entry(plan, entry, passage)
+
+
+def test_registry_owned_obligation_accepts_verified_official_anchor():
+    from types import SimpleNamespace
+
+    plan = SimpleNamespace(retrieval_sources=[SimpleNamespace(
+        source_pack_id="registry_pack",
+        title_patterns=("Verified Act",),
+        source_types=("bare_act",),
+        doc_ids=("verified-act",),
+    )])
+    entry = SimpleNamespace(
+        source_pack_id="registry_pack",
+        registry_key="registry_authority",
+        note="registry_workflow_authority",
+        required_anchor_patterns=["/sec-1"],
+        authority_id="authority_00000000000000000000",
+    )
+    passage = {
+        "title": "Verified Act",
+        "anchor": "verified-act/sec-1-official",
+        "source_type": "bare_act",
+        "required_source_pack": "registry_pack",
+        "authority_ids": ["authority_00000000000000000000"],
+    }
+
+    assert _passage_satisfies_plan_entry(plan, entry, passage)
+
+
+@pytest.mark.parametrize(
+    "field_mutation",
+    [
+        {"required_source_pack": "wrong_pack"},
+        {"source_type": "sc_judgment"},
+        {"anchor": "other-act/sec-1"},
+    ],
+)
+def test_registry_owned_obligation_rejects_wrong_provenance(
+    field_mutation: dict[str, str],
+):
+    from types import SimpleNamespace
+
+    plan = SimpleNamespace(retrieval_sources=[SimpleNamespace(
+        source_pack_id="registry_pack",
+        title_patterns=("Verified Act",),
+        source_types=("bare_act",),
+        doc_ids=("verified-act",),
+    )])
+    entry = SimpleNamespace(
+        source_pack_id="registry_pack",
+        registry_key="registry_authority",
+        note="registry_workflow_authority",
+        required_anchor_patterns=["/sec-1"],
+        authority_id="authority_00000000000000000000",
+    )
+    passage = {
+        "title": "Verified Act",
+        "anchor": "verified-act/sec-1-official",
+        "source_type": "bare_act",
+        "required_source_pack": "registry_pack",
+        "authority_ids": ["authority_00000000000000000000"],
+    }
+    passage.update(field_mutation)
+
+    assert not _passage_satisfies_plan_entry(plan, entry, passage)
+
+
+def test_structured_plan_anchor_matching_rejects_numeric_suffix_spoofs():
+    for kind in ("sec", "article", "clause", "order", "rule"):
+        pattern = f"/{kind}-21"
+        assert _plan_anchor_matches(f"doc{pattern}", pattern)
+        assert _plan_anchor_matches(f"doc{pattern}@2024-01-01", pattern)
+        assert not _plan_anchor_matches(f"doc{pattern}0", pattern)
+
+
+def test_official_anchor_suffix_is_allowed_only_once_across_plan_consumers():
+    assert _plan_anchor_matches("doc/sec-21-official", "/sec-21")
+    assert _plan_anchor_matches("doc/sec-21-official@2024-01-01", "/sec-21")
+    assert _plan_anchor_matches("doc/sec-21-official", "/sec-21-official")
+    assert not _plan_anchor_matches("doc/sec-21-official-official", "/sec-21")
+    assert not _plan_anchor_matches("doc/sec-21-official-official", "/sec-21-official")
+    assert not _plan_anchor_matches("doc/sec-210-official", "/sec-21")
+
+    assert _source_pack_anchor_matches("doc/sec-21-official", "/sec-21")
+    assert _source_pack_anchor_matches("doc/sec-21-official", "/sec-21-official")
+    assert _source_pack_anchor_matches("doc/sec-21-official", "/sec-21@")
+    assert _source_pack_anchor_matches("doc/sec-21-official@2024-01-01", "/sec-21@")
+    assert _source_pack_anchor_matches("doc/sec-21-a-official", "/sec-21")
+    assert not _source_pack_anchor_matches("doc/sec-21-official-official", "/sec-21")
+    assert not _source_pack_anchor_matches("doc/sec-21-official-official", "/sec-21-official")
+    assert not _source_pack_anchor_matches("doc/sec-21-22-official", "/sec-21")
+
+    assert _section_anchor_matches(
+        "constitution-india/sec-21-official",
+        "21",
+        passage_text="Constitution of India, Article 21\n21. Protection of life and personal liberty.",
+    )
+    assert not _section_anchor_matches(
+        "constitution-india/sec-21-official-official",
+        "21",
+        passage_text="Constitution of India, Article 21\n21. Protection of life and personal liberty.",
+    )
+    assert not _section_anchor_matches(
+        "constitution-india/sec-210-official",
+        "21",
+        passage_text="Constitution of India, Article 21\n21. Protection of life and personal liberty.",
+    )
+
+
+def test_reviewed_source_title_accepts_known_document_edition_suffix():
+    assert _source_pack_title_matches(
+        "Hindu Succession Act 1956 (with 2005 amendment)",
+        ("Hindu Succession Act 1956",),
+        allow_known_document_suffix=True,
+    )
+    assert not _source_pack_title_matches(
+        "Hindu Succession Act 1956 (with 2005 amendment)",
+        ("Hindu Succession Act 1956",),
+        allow_known_document_suffix=False,
+    )
+
+
+def test_constitutional_official_anchors_pass_final_source_gap_gate():
+    query = "police took my brother yesterday no arrest memo given dk basu kya hai"
+    route = route_matter(query)
+    source = "Constitution Articles 21 and 22 arrest and custody safeguards"
+    passages = [
+        {
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-21-official",
+            "source_type": "bare_act",
+            "required_source_pack": "constitution_article_21",
+            "text": "Constitution of India, Article 21\n21. Protection of life and personal liberty.",
+        },
+        {
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-22-official",
+            "source_type": "bare_act",
+            "required_source_pack": "constitution_article_22",
+            "text": "Constitution of India, Article 22\n22. Protection against arrest and detention.",
+        },
+    ]
+
+    assert build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=[source],
+        passages=passages,
+        plan=None,
+    ) is None
+
+
+def test_split_section_anchor_requires_matching_passage_heading():
+    assert _plan_anchor_matches(
+        "negotiable-instruments-1881/sec-142-a",
+        "/sec-142",
+        passage_text="Negotiable Instruments Act 1881, Section 142\n142. Cognizance of offences.",
+    )
+    assert not _plan_anchor_matches(
+        "negotiable-instruments-1881/sec-142-a",
+        "/sec-142",
+        passage_text="Negotiable Instruments Act 1881, Section 142A\n142A. Validation for transfer.",
+    )
+    assert not _plan_anchor_matches(
+        "negotiable-instruments-1881/sec-142-a",
+        "/sec-142",
+    )
+
+
+def test_canonical_section_gap_accepts_split_numeric_section_only_with_heading():
+    required = ["Negotiable Instruments Act 1881 Section 142 complaint limitation"]
+    matching = [{
+        "title": "Negotiable Instruments Act 1881",
+        "anchor": "negotiable-instruments-1881/sec-142-a",
+        "source_type": "bare_act",
+        "text": "Negotiable Instruments Act 1881, Section 142\n142. Cognizance of offences.",
+    }]
+    neighboring = [{
+        **matching[0],
+        "text": "Negotiable Instruments Act 1881, Section 142A\n142A. Validation for transfer.",
+    }]
+
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=matching,
+        query="cheque dishonour complaint deadline",
+    ) == []
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=neighboring,
+        query="cheque dishonour complaint deadline",
+    )
+
+
+def test_section_gap_does_not_fuzzy_fallback_to_wrong_section():
+    required = ["Code on Wages 2019 Section 15 wage payment rule"]
+    wrong_section = [{
+        "title": "Code on Wages 2019",
+        "anchor": "code-on-wages-2019/sec-15-a",
+        "source_type": "bare_act",
+        "text": "Code on Wages 2019, Section 15A\n15A. Different provision.",
+    }]
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=wrong_section,
+        query="employer has not paid my wages",
+    )
+
+    income_tax_wrong_section = [{
+        "title": "Income Tax Act 1961",
+        "anchor": "income-tax-1961/sec-143-a",
+        "source_type": "bare_act",
+        "text": "Income Tax Act 1961, Section 143A\n143A. Different provision.",
+    }]
+    assert missing_required_authorities(
+        required_sources=["Income-tax Act 1961 Section 143 assessment"],
+        passages=income_tax_wrong_section,
+        query="income tax assessment order",
+    )
+
+
+def test_parenthesized_bnss_subsection_cannot_match_neighboring_split_chunk():
+    required = [
+        "Bharatiya Nagarik Suraksha Sanhita 2023 Section 173(4) "
+        "written-post police refusal route"
+    ]
+    matching = [{
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "anchor": "bnss-2023/sec-173-c@2024-07-01",
+        "source_type": "bare_act",
+        "text": (
+            "Bharatiya Nagarik Suraksha Sanhita 2023, Section 173(4)\n"
+            "If the officer in charge refuses to record the information, "
+            "the substance may be sent in writing by post to the "
+            "Superintendent of Police."
+        ),
+    }]
+    wrong_neighbor = [{
+        **matching[0],
+        "anchor": "bnss-2023/sec-173-a@2024-07-01",
+    }]
+    wrong_heading = [{
+        **matching[0],
+        "text": (
+            "Bharatiya Nagarik Suraksha Sanhita 2023, Section 173(1)\n"
+            "Information relating to a cognizable offence may be given."
+        ),
+    }]
+    wrong_a_subsection = [{
+        **matching[0],
+        "anchor": "bnss-2023/sec-173-a@2024-07-01",
+        "text": (
+            "Bharatiya Nagarik Suraksha Sanhita 2023, Section 173(4)\n"
+            "The substance may be sent in writing by post to the Superintendent of Police."
+        ),
+    }]
+
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=matching,
+        query="police refused to file my theft FIR",
+    ) == []
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=wrong_neighbor,
+        query="police refused to file my theft FIR",
+    )
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=wrong_heading,
+        query="police refused to file my theft FIR",
+    )
+    assert not _plan_anchor_matches(
+        wrong_a_subsection[0]["anchor"],
+        "/sec-173-a",
+        passage_text=wrong_a_subsection[0]["text"],
+    )
+
+
+def test_explicit_split_anchor_requires_heading_and_does_not_assume_142a():
+    assert not _plan_anchor_matches(
+        "negotiable-instruments-1881/sec-142-a",
+        "/sec-142-a",
+    )
+    assert _plan_anchor_matches(
+        "negotiable-instruments-1881/sec-142-a",
+        "/sec-142-a",
+        passage_text="Negotiable Instruments Act 1881, Section 142A\n142A. Validation for transfer.",
+    )
+
+
+def test_canonical_explicit_alphanumeric_section_requires_heading():
+    required = ["Negotiable Instruments Act 1881 Section 142A validation"]
+    metadata_only = [{
+        "title": "Negotiable Instruments Act 1881",
+        "anchor": "negotiable-instruments-1881/sec-142-a",
+        "source_type": "bare_act",
+    }]
+    matching = [{
+        **metadata_only[0],
+        "text": "Negotiable Instruments Act 1881, Section 142A\n142A. Validation for transfer.",
+    }]
+
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=metadata_only,
+        query="cheque dishonour validation",
+    )
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=matching,
+        query="cheque dishonour validation",
+    ) == []
+
+
+def test_statute_specific_branch_cannot_bypass_explicit_section_heading():
+    required = ["Consumer Protection Act 2019 Section 35 complaint"]
+    wrong_neighbor = [{
+        "title": "Consumer Protection Act 2019",
+        "anchor": "consumer-protection-2019/sec-35-a",
+        "source_type": "bare_act",
+        "text": "Consumer Protection Act 2019, Section 35A\n35A. Different provision.",
+    }]
+    matching_split = [{
+        **wrong_neighbor[0],
+        "text": "Consumer Protection Act 2019, Section 35\n35. Jurisdiction.",
+    }]
+
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=wrong_neighbor,
+        query="consumer complaint",
+    )
+    assert missing_required_authorities(
+        required_sources=required,
+        passages=matching_split,
+        query="consumer complaint",
+    ) == []
 
 
 def test_customs_source_gap_matching_is_query_aware():
@@ -1167,6 +3548,271 @@ def test_source_gap_enforces_bank_service_deficiency_consumer_source():
     ) == []
 
 
+def test_source_gap_enforces_birth_registration_for_birth_cert_abbreviation():
+    required_source = "Registration of Births and Deaths Act 1969 or state civil-registration rules where locally available"
+    query = "panchayat secretary not giving me birth cert of my child born at home where to go"
+
+    assert should_enforce_required_source(required_source, query=query) is True
+
+    unrelated = [
+        {
+            "title": "Constitution of India",
+            "anchor": "constitution-india/sec-342",
+            "source_type": "bare_act",
+        },
+        {
+            "title": "Right to Information Act 2005",
+            "anchor": "rti-2005/sec-6",
+            "source_type": "bare_act",
+        },
+    ]
+    missing = missing_required_authorities(
+        required_sources=[required_source],
+        passages=unrelated,
+        query=query,
+    )
+    assert missing and missing[0]["kind"] == "state_or_local_authority_gap"
+
+    valid = [
+        {
+            "title": "Registration of Births and Deaths Act 1969",
+            "anchor": "registration-births-deaths-1969/sec-12",
+            "source_type": "bare_act",
+        }
+    ]
+    assert missing_required_authorities(
+        required_sources=[required_source],
+        passages=valid,
+        query=query,
+    ) == []
+
+
+def test_source_gap_accepts_rbi_ombudsman_family_as_one_reviewed_route():
+    required = (
+        "RBI Integrated Ombudsman Scheme / RBI recovery-agent and digital-lending "
+        "grievance route for regulated lenders"
+    )
+    query = "NBFC recovery agents shouted at me in front of my colleagues"
+    passages = [
+        {
+            "index": 1,
+            "title": "Reserve Bank Integrated Ombudsman Scheme 2021",
+            "anchor": "rbi-integrated-ombudsman-2021/sec-9",
+            "source_type": "bare_act",
+        },
+        {
+            "index": 2,
+            "title": "Outsourcing of Financial Services - Responsibilities of regulated entities employing Recovery Agents",
+            "anchor": "rbi-recovery-agents-2022/para-2",
+            "source_type": "circular",
+        },
+        {
+            "index": 3,
+            "title": "Reserve Bank of India (Digital Lending) Directions, 2025",
+            "anchor": "rbi-digital-lending-directions-2025/para-12",
+            "source_type": "guideline",
+        },
+    ]
+
+    matched = best_source_match(required, passages, query=query)
+
+    assert matched is not None
+    assert matched["source_type"] == "bare_act"
+    assert matched["anchor"] == "rbi-integrated-ombudsman-2021/sec-9"
+
+
+def test_source_gap_accepts_conditional_sale_of_goods_quality_authority():
+    required = "Sale of Goods Act 1930 where quality rejection, acceptance, or price deduction is disputed"
+    query = "buyer accepted my parts but is deducting payment saying quality issue"
+    sale = {
+        "index": 1,
+        "title": "Sale of Goods Act 1930",
+        "anchor": "sale-of-goods-1930/sec-55@1930-07-01",
+        "source_type": "bare_act",
+    }
+
+    assert best_source_match(required, [sale], query=query) == sale
+
+
+def test_source_gap_does_not_activate_conditional_sale_of_goods_for_plain_arrears():
+    required = "Sale of Goods Act 1930 where quality rejection, acceptance, or price deduction is disputed"
+    query = "buyer accepted delivery and has not paid the invoice for 60 days"
+    sale = {
+        "index": 1,
+        "title": "Sale of Goods Act 1930",
+        "anchor": "sale-of-goods-1930/sec-55@1930-07-01",
+        "source_type": "bare_act",
+    }
+
+    assert best_source_match(required, [sale], query=query) is None
+    assert should_enforce_required_source(required, query=query) is False
+    assert missing_required_authorities(
+        required_sources=[required],
+        passages=[sale],
+        query=query,
+    ) == []
+
+    legacy_fallback = {**sale, "anchor": "sale-of-goods-1930/sec-42@1930-07-01"}
+    assert best_source_match(required, [legacy_fallback], query=query) is None
+
+
+def test_source_gap_enforces_conditional_sale_of_goods_for_quality_dispute():
+    required = "Sale of Goods Act 1930 where quality rejection, acceptance, or price deduction is disputed"
+    query = "buyer accepted my parts but deducted payment saying there is a quality defect"
+
+    assert should_enforce_required_source(required, query=query) is True
+
+
+def test_source_gap_does_not_activate_sale_of_goods_for_unrelated_quality_language():
+    required = "Sale of Goods Act 1930 where quality rejection, acceptance, or price deduction is disputed"
+    passage = {
+        "index": 1,
+        "title": "Sale of Goods Act 1930",
+        "anchor": "sale-of-goods-1930/sec-55@1930-07-01",
+        "source_type": "bare_act",
+    }
+
+    for query in (
+        "buyer rejected my payment request and is not responding",
+        "the quality of customer service is poor and my invoice is unpaid",
+        "the quality of the delivery service was poor",
+        "the customer rejected the delivery date",
+        "my payment request was rejected and shipment is delayed",
+        "the stock quality report was rejected",
+        "my product manager rejected the quality report",
+        "the quality of our software product is poor",
+        "the quality of our service product is poor",
+        "the buyer rejected my proposal and product roadmap",
+        "the model specification document was rejected",
+        "I supplied documents to the department but they rejected them",
+        "my application was rejected after I supplied all the documents",
+        "the quality of the electricity supply is poor",
+        "the quality of the water supply is poor",
+        "the quality of our training material was rejected",
+    ):
+        assert should_enforce_required_source(required, query=query) is False
+        assert best_source_match(required, [passage], query=query) is None
+
+
+def test_source_gap_accepts_natural_quality_dispute_phrasing():
+    required = "Sale of Goods Act 1930 where quality rejection, acceptance, or price deduction is disputed"
+
+    for query in (
+        "buyer says the supplied goods are substandard",
+        "buyer rejected the non-conforming material shipment",
+        "buyer says the delivered batch was bad and deducted payment",
+        "the goods arrived damaged",
+        "the items are not as described",
+        "the material does not match the agreed specification",
+        "buyer received the wrong model",
+        "buyer will not accept the consignment",
+        "buyer refused to accept the goods because they were late",
+        "the component batch failed inspection",
+        "wrong quantity was delivered and buyer withheld payment",
+        "the shipment was short by 20 units",
+        "buyer refused these goods",
+        "buyer claimed the goods were nonconforming",
+        "the goods failed testing",
+        "short shipment of 20 units",
+        "only 80 of 100 pieces arrived",
+        "received the wrong colour",
+    ):
+        assert should_enforce_required_source(required, query=query) is True
+
+
+def test_source_gap_does_not_treat_tax_deduction_as_quality_rejection():
+    required = "Sale of Goods Act 1930 where quality rejection, acceptance, or price deduction is disputed"
+    query = "buyer deducted TDS from my goods invoice but there is no quality dispute"
+    sale = {
+        "index": 1,
+        "title": "Sale of Goods Act 1930",
+        "anchor": "sale-of-goods-1930/sec-55@1930-07-01",
+        "source_type": "bare_act",
+    }
+
+    assert best_source_match(required, [sale], query=query) is None
+
+
+def test_source_gap_does_not_treat_acceptance_record_as_quality_dispute():
+    required = "Sale of Goods Act 1930 where quality rejection, acceptance, or price deduction is disputed"
+    query = "acceptance was recorded and payment is overdue"
+    sale = {
+        "index": 1,
+        "title": "Sale of Goods Act 1930",
+        "anchor": "sale-of-goods-1930/sec-55@1930-07-01",
+        "source_type": "bare_act",
+    }
+
+    assert best_source_match(required, [sale], query=query) is None
+
+
+def test_source_gap_uses_the_actual_sale_of_goods_anchor_not_text_mentions():
+    required = "Sale of Goods Act 1930 where quality rejection, acceptance, or price deduction is disputed"
+    query = "buyer says quality issue and rejected the supplied goods"
+    wrong_anchor = {
+        "index": 1,
+        "title": "Sale of Goods Act 1930",
+        "anchor": "sale-of-goods-1930/sec-999@1930-07-01",
+        "text": "This passage mentions Sale of Goods Act 1930 Section 55, but is anchored elsewhere.",
+        "source_type": "bare_act",
+    }
+
+    assert best_source_match(required, [wrong_anchor], query=query) is None
+
+
+def test_source_gap_rejects_malformed_sale_of_goods_split_anchor():
+    required = "Sale of Goods Act 1930 where quality rejection, acceptance, or price deduction is disputed"
+    query = "buyer says quality issue and rejected the supplied goods"
+    malformed = {
+        "index": 1,
+        "title": "Sale of Goods Act 1930",
+        "anchor": "sale-of-goods-1930/sec-55__bad@1930-07-01",
+        "source_type": "bare_act",
+    }
+
+    assert best_source_match(required, [malformed], query=query) is None
+
+
+def test_source_gap_accepts_legacy_436a_split_anchor_from_numbered_heading():
+    required = "CrPC 1973 section 436A for legacy / transitional comparison"
+    passage = {
+        "index": 1,
+        "title": "Code of Criminal Procedure 1973",
+        "anchor": "crpc-1973/sec-436-a",
+        "source_type": "bare_act",
+        "heading": "436A. Maximum period for which an undertrial prisoner can be detained.",
+    }
+
+    assert best_source_match(
+        required,
+        [passage],
+        query="65 year old undertrial in a case pending since 2023",
+    ) == passage
+
+
+def test_source_gap_does_not_cross_satisfy_explicit_bnss_and_crpc_arrest_sources():
+    query = "brother was arrested and family was not told where he is"
+    bnss_required = "BNSS 2023 arrest and 24-hour production safeguards"
+    crpc_required = "CrPC 1973 arrest and 24-hour production safeguards"
+    bnss_passage = {
+        "index": 1,
+        "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+        "anchor": "bnss-2023/sec-57",
+        "source_type": "bare_act",
+    }
+    crpc_passage = {
+        "index": 2,
+        "title": "Code of Criminal Procedure 1973",
+        "anchor": "crpc-1973/sec-57",
+        "source_type": "bare_act",
+    }
+
+    assert best_source_match(bnss_required, [crpc_passage], query=query) is None
+    assert best_source_match(crpc_required, [bnss_passage], query=query) is None
+    assert best_source_match(bnss_required, [bnss_passage], query=query) == bnss_passage
+    assert best_source_match(crpc_required, [crpc_passage], query=query) == crpc_passage
+
+
 def test_source_gap_does_not_enforce_bank_service_deficiency_source_for_non_bank_consumer_query():
     required_source = "Consumer Protection Act 2019 where bank service deficiency is alleged"
 
@@ -1308,6 +3954,7 @@ def test_source_gap_recognizes_copyright_composite_and_hyphenated_section_anchor
                 "title": "Code of Criminal Procedure 1973",
                 "anchor": "crpc-1973/sec-436-a",
                 "source_type": "bare_act",
+                "text": "Code of Criminal Procedure 1973, Section 436A\n436A. Maximum period for detention.",
             }
         ],
         query="undertrial 70 years old crpc 436a",
@@ -1775,9 +4422,257 @@ def test_source_gap_event_has_user_handoff_policy_for_state_gap():
 
     assert event is not None
     assert event["has_gap"] is True
+    assert event["outcome"] == "source_gap_handoff"
+    assert event["safe_handoff_only"] is True
     assert event["policy"] == "do_not_substitute_neighboring_authority"
-    assert event["handoff"]
+    assert event["handoff"] == "DLSA/legal aid or a qualified lawyer"
+    assert set(event) == {
+        "has_gap", "route_category", "gap_kinds", "missing_required_sources",
+        "message", "handoff", "policy", "outcome", "reason", "safe_handoff_only",
+    }
     assert event["gap_kinds"] == ["state_or_local_authority_gap"]
+
+
+def test_material_local_route_gap_is_canonical_handoff_with_a_matter_plan():
+    query = "auto permit expired in Chennai how to renew Tamil Nadu"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[],
+        plan=plan,
+    )
+
+    assert event is not None
+    assert event["outcome"] == "source_gap_handoff"
+    assert event["safe_handoff_only"] is True
+    assert any(
+        item["kind"] == "state_or_local_authority_gap"
+        and "motor vehicle rules" in item["required_source"]
+        for item in event["missing_required_sources"]
+    )
+
+
+def test_material_municipal_sealing_gap_cannot_bypass_source_gate():
+    query = "my shop is in Gujarat and municipality sealed it"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[],
+        plan=plan,
+    )
+
+    assert route.category == "business_license_compliance"
+    assert event is not None
+    assert event["outcome"] == "source_gap_handoff"
+    assert event["safe_handoff_only"] is True
+    assert any(
+        item["kind"] == "state_or_local_authority_gap"
+        and "municipal corporation" in item["required_source"]
+        for item in event["missing_required_sources"]
+    )
+
+
+def _exact_food_authority_passages():
+    return [
+        {
+            "index": 1,
+            "title": "Food Safety and Standards Act 2006",
+            "anchor": "food-safety-standards-2006/sec-26",
+            "source_type": "bare_act",
+            "document_id": "food-safety-and-standards-2006",
+            "required_source_pack": "food_safety_2006",
+        },
+        {
+            "index": 2,
+            "title": "Food Safety and Standards (Licensing and Registration of Food Businesses) Regulations 2011",
+            "anchor": "fssai-licensing-2011/reg-2-1",
+            "source_type": "regulation",
+            "document_id": "fssai-licensing-2011",
+            "required_source_pack": "fssai_licensing_2011",
+        },
+    ]
+
+
+def test_mixed_food_authority_passages_still_handoff_for_municipal_source():
+    query = "BMC sealed my restaurant after FSSAI inspection"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=_exact_food_authority_passages(),
+        plan=plan,
+    )
+
+    assert route.label == "Municipal sealing / shop closure notice"
+    assert event is not None
+    assert event["outcome"] == "source_gap_handoff"
+    assert event["safe_handoff_only"] is True
+    assert "state_or_local_authority_gap" in event["gap_kinds"]
+    assert any(
+        item["kind"] == "state_or_local_authority_gap"
+        and "municipal corporation" in item["required_source"]
+        for item in event["missing_required_sources"]
+    )
+
+
+def test_local_health_department_gap_cannot_be_satisfied_by_food_passages():
+    query = "local health department closed my hotel"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=_exact_food_authority_passages(),
+        plan=plan,
+    )
+
+    assert route.label == "Municipal sealing / shop closure notice"
+    assert event is not None
+    assert event["outcome"] == "source_gap_handoff"
+    assert event["safe_handoff_only"] is True
+    assert any(
+        item["kind"] == "state_or_local_authority_gap"
+        and "municipal corporation" in item["required_source"]
+        for item in event["missing_required_sources"]
+    )
+
+
+def test_local_health_inspector_and_officer_gap_requires_local_authority_source():
+    for query in (
+        "local health inspector closed my hotel after hygiene inspection",
+        "local health officer closed my hotel after inspection",
+    ):
+        route = route_matter(query)
+        plan = build_matter_plan(query, route)
+        event = build_source_gap_event(
+            query=query,
+            route_category=route.category,
+            required_sources=route.required_sources,
+            passages=[],
+            plan=plan,
+        )
+        assert route.label == "Municipal sealing / shop closure notice", query
+        assert event is not None, query
+        assert event["outcome"] == "source_gap_handoff", query
+        assert "state_or_local_authority_gap" in event["gap_kinds"], query
+
+
+def test_private_city_corporation_does_not_create_municipal_source_gap():
+    query = "private Vadodara corporation closed my hotel"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[],
+        plan=plan,
+    )
+
+    assert route.label != "Municipal sealing / shop closure notice"
+    assert not event or "state_or_local_authority_gap" not in event["gap_kinds"]
+
+    private_city_query = "private city corporation sealed my shop"
+    private_city_route = route_matter(private_city_query)
+    private_city_plan = build_matter_plan(private_city_query, private_city_route)
+    private_city_event = build_source_gap_event(
+        query=private_city_query,
+        route_category=private_city_route.category,
+        required_sources=[
+            "state municipal corporation/municipality law and trade-licence by-laws for sealing or closure power",
+        ],
+        passages=[],
+        plan=private_city_plan,
+    )
+    assert not private_city_event or "state_or_local_authority_gap" not in private_city_event["gap_kinds"]
+
+    street_query = "private corporation removed my street cart"
+    street_route = route_matter(street_query)
+    street_plan = build_matter_plan(street_query, street_route)
+    street_event = build_source_gap_event(
+        query=street_query,
+        route_category=street_route.category,
+        required_sources=[
+            "municipal corporation / town vending committee procedure",
+        ],
+        passages=[],
+        plan=street_plan,
+    )
+    assert not street_event or "state_or_local_authority_gap" not in street_event["gap_kinds"]
+
+    separate_authority_query = "landlord removed my street cart and municipality refused to help"
+    separate_route = route_matter(separate_authority_query)
+    separate_plan = build_matter_plan(separate_authority_query, separate_route)
+    separate_event = build_source_gap_event(
+        query=separate_authority_query,
+        route_category=separate_route.category,
+        required_sources=[
+            "municipal corporation / town vending committee procedure",
+        ],
+        passages=[],
+        plan=separate_plan,
+    )
+    assert not separate_event or "state_or_local_authority_gap" not in separate_event["gap_kinds"]
+
+    security_query = "security guard seized my vendor goods and BMC said it is private"
+    security_route = route_matter(security_query)
+    security_plan = build_matter_plan(security_query, security_route)
+    security_event = build_source_gap_event(
+        query=security_query,
+        route_category=security_route.category,
+        required_sources=["municipal corporation / town vending committee procedure"],
+        passages=[],
+        plan=security_plan,
+    )
+    assert not security_event or "state_or_local_authority_gap" not in security_event["gap_kinds"]
+
+    for public_vendor_query in (
+        "hawker license pending but corporation removed my stall before hearing",
+        "vending certificate pending but corporation took my goods",
+        "hawker licence pending but corporation seized my stall",
+    ):
+        public_vendor_route = route_matter(public_vendor_query)
+        public_vendor_plan = build_matter_plan(public_vendor_query, public_vendor_route)
+        public_vendor_event = build_source_gap_event(
+            query=public_vendor_query,
+            route_category=public_vendor_route.category,
+            required_sources=public_vendor_route.required_sources,
+            passages=[],
+            plan=public_vendor_plan,
+        )
+        assert public_vendor_route.category == "street_vendor_municipal", public_vendor_query
+        assert public_vendor_event is not None, public_vendor_query
+        assert "state_or_local_authority_gap" in public_vendor_event["gap_kinds"], public_vendor_query
+
+
+def test_local_body_premises_closure_wording_also_requires_local_authority():
+    query = "local body locked my commercial premises for licence issue"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[],
+        plan=plan,
+    )
+
+    assert event is not None
+    assert event["outcome"] == "source_gap_handoff"
+    assert "state_or_local_authority_gap" in event["gap_kinds"]
 
 
 def test_jharkhand_witch_reference_marker_does_not_satisfy_state_gap():
@@ -2794,6 +5689,220 @@ def test_stage_e9b_assam_witch_hunting_full_source_satisfies_state_gap():
     assert missing == []
 
 
+def test_assam_witch_hunting_hc_judgment_does_not_substitute_for_state_act():
+    missing = missing_required_authorities(
+        required_sources=[
+            "state-specific witch-hunting statute must be verified for the user's state before state-law offence details are given"
+        ],
+        passages=[
+            {
+                "index": 1,
+                "title": "Gauhati High Court judgment on witch-hunting",
+                "anchor": "assam-witch-hunting-2015/sec-4@2020-01-01",
+                "source_type": "hc_judgment",
+            }
+        ],
+        query="can u tell my saas labelled daayan and beaten by village people assam barpeta what can i do",
+    )
+
+    assert missing and missing[0]["kind"] == "state_or_local_authority_gap"
+
+
+def test_cheque_procedure_is_not_cleared_by_ni_act_passage_alone():
+    query = "cheque bounced today insufficient funds"
+    route = route_matter(query)
+
+    missing = missing_required_authorities(
+        required_sources=route.required_sources,
+        passages=[
+            {
+                "index": 1,
+                "title": "Negotiable Instruments Act 1881",
+                "anchor": "negotiable-instruments-1881/sec-138",
+                "source_type": "bare_act",
+            }
+        ],
+        query=query,
+    )
+
+    assert any("BNSS 2023 / CrPC 1973" in item["required_source"] for item in missing)
+
+
+def test_unknown_date_cheque_does_not_pass_with_complete_ni_act_only():
+    query = "my customer gave me a cheque and it bounced, what is the deadline to send notice"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    assert matter_plan_integrity_gap(plan, query) is None
+    passages = [
+        {
+            "index": 1,
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-138",
+            "source_type": "bare_act",
+            "required_source_pack": "ni_act_1881",
+            "document_id": "negotiable-instruments-1881",
+            "authority_ids": ["authority_c328bcf9ab7294324780"],
+        },
+        {
+            "index": 2,
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-142",
+            "source_type": "bare_act",
+            "required_source_pack": "ni_act_1881",
+            "document_id": "negotiable-instruments-1881",
+            "authority_ids": ["authority_5bcd6df2cde8aab018df2"],
+        },
+    ]
+
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=passages,
+        plan=plan,
+        legal_regime=route.legal_regime,
+    )
+
+    assert event is not None
+    assert event["safe_handoff_only"] is True
+    assert any("complaint procedure" in item["required_source"].lower() for item in event["missing_required_sources"])
+
+
+def test_stage_state_witch_accused_route_fails_closed_without_named_state_authority():
+    query = "police filed a witch case against me in Jharkhand"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[],
+        legal_regime=route.legal_regime,
+        plan=plan,
+    )
+    assert event is not None
+    assert "state_or_local_authority_gap" in event["gap_kinds"]
+
+
+def test_stage_material_state_rera_and_wage_routes_do_not_hide_local_source_gaps():
+    assert should_enforce_required_source(
+        "state RERA rules and filing procedure once the state and project are identified",
+        query="builder delayed possession in Gujarat and I want to file RERA complaint",
+    )
+    assert not should_enforce_required_source(
+        "state RERA rules and filing procedure once the state and project are identified",
+        query="builder delayed possession and I have not told you the state yet",
+    )
+    assert should_enforce_required_source(
+        "state labour-department notification/appeal route for wage rates",
+        query="minimum wage notification for unskilled workers in Gujarat",
+    )
+
+
+def test_stage_national_passages_cannot_clear_named_state_rera_gap():
+    query = "builder delayed possession in Gujarat and I want to file RERA complaint"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    event = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[
+            {
+                "index": 1,
+                "title": "Real Estate (Regulation and Development) Act 2016",
+                "anchor": "rera-2016/sec-31",
+                "source_type": "bare_act",
+                "required_source_pack": "rera_2016",
+                "document_id": "rera-2016",
+                "text": "Section 31 complaint.",
+            },
+            {
+                "index": 2,
+                "title": "Consumer Protection Act 2019",
+                "anchor": "consumer-protection-2019/sec-35",
+                "source_type": "bare_act",
+                "required_source_pack": "consumer_protection_2019",
+                "document_id": "consumer-protection-2019",
+                "text": "Section 35 complaint.",
+            },
+        ],
+        legal_regime=route.legal_regime,
+        plan=plan,
+    )
+    assert event is not None
+    assert any(
+        item["required_source"].startswith("state RERA rules")
+        for item in event["missing_required_sources"]
+    )
+
+
+def test_common_kochi_location_activates_named_state_rera_gap():
+    query = "builder delayed possession in Kochi and I want to file RERA complaint"
+
+    assert should_enforce_required_source(
+        "state RERA rules and filing procedure once the state and project are identified",
+        query=query,
+    )
+
+
+def test_named_state_minimum_wage_claim_needs_state_rate_source():
+    query = "employer paying below minimum wage in Kerala"
+    route = route_matter(query)
+    assert any("state labour-department notification" in source for source in route.required_sources)
+
+    missing = missing_required_authorities(
+        required_sources=route.required_sources,
+        passages=[
+            {
+                "index": 1,
+                "title": "Code on Wages 2019",
+                "anchor": "code-on-wages-2019/sec-17@2019-01-01",
+                "source_type": "bare_act",
+            }
+        ],
+        query=query,
+    )
+
+    assert any("state labour-department notification" in item["required_source"] for item in missing)
+
+
+def test_stage_intake_precondition_is_not_a_citable_esi_authority():
+    query = "ESI inspector notice says short contribution for casual workers how to contest"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    entry = next(
+        entry for entry in plan.authority_ledger
+        if entry.source.startswith("labour authority / ESI Court procedure")
+    )
+    assert entry.note == "intake_precondition"
+    assert not is_active_plan_authority_entry(entry, plan=plan, query=query)
+
+
+def test_surrogacy_section_passage_clears_provisional_plan_identity_gate():
+    query = "clinic says my wife had hysterectomy but can we use surrogacy in Gujarat"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    entry = next(entry for entry in plan.authority_ledger if entry.source == "Surrogacy (Regulation) Act 2021")
+
+    passage = {
+        "index": 1,
+        "title": "Surrogacy (Regulation) Act 2021",
+        "anchor": "surrogacy-2021/sec-4@2021-01-01",
+        "source_type": "bare_act",
+        "required_source_pack": "surrogacy_2021",
+        "document_id": "surrogacy-2021",
+        "text": "Section 4 eligibility for an intending couple where the wife has no uterus.",
+    }
+
+    assert _passage_satisfies_plan_entry(plan, entry, passage)
+
+
 def test_stage_e9b_assam_witch_violence_accepts_bns_hurt_and_bnss_fir_pair():
     missing = missing_required_authorities(
         required_sources=["BNS/BNSS or IPC/CrPC based on incident date"],
@@ -2947,6 +6056,28 @@ def test_stage_e9e_source_gap_tightens_overbroad_conditional_triggers():
         passages=[],
         query="vendor agreed delivery in 30 days now 4 months over want to cancel and recover advance",
     ) == []
+
+
+def test_route_bound_labour_source_pack_cannot_fall_through_to_llm():
+    query = "maharashtra labour department raid kiya overtime register not maintained 11 workers"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+
+    gap = build_source_gap_event(
+        query=query,
+        route_category=route.category,
+        required_sources=route.required_sources,
+        passages=[],
+        plan=plan,
+        legal_regime=route.legal_regime,
+    )
+
+    assert gap is not None
+    assert gap["reason"] == "required_source_gap"
+    assert any(
+        item.get("source_pack_id") == "maharashtra_shops_establishments_2017"
+        for item in gap["missing_required_sources"]
+    )
 
 
 def test_stage_e9e_source_gap_accepts_bns_section_69_promise_to_marry_source():

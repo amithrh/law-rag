@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import date
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,6 +22,259 @@ from fastapi.testclient import TestClient
 # We rely on the FastAPI app's startup hook to set up the pool. The TestClient
 # triggers lifespan correctly.
 from apps.api.main import app
+
+
+def test_answer_request_rejects_unbounded_or_blank_inputs():
+    from apps.api.main import AnswerRequest
+    from pydantic import ValidationError
+
+    assert AnswerRequest(q="  bank froze my account  ").q == "bank froze my account"
+    with pytest.raises(ValidationError):
+        AnswerRequest(q="   ")
+    with pytest.raises(ValidationError):
+        AnswerRequest(q="x", top_k=21)
+    with pytest.raises(ValidationError):
+        AnswerRequest(q="x", sources=["bare_act"] * 21)
+    with pytest.raises(ValidationError):
+        AnswerRequest(q="x", subjects=["x" * 101])
+
+
+def test_registry_owner_prompt_filter_keeps_explicit_offence_track():
+    from apps.api.main import _filter_registry_owner_prompt_candidates
+    from apps.api.matter_router import route_matter
+    from apps.api.legal_issue_plan import build_matter_plan
+    from authority_registry import load_authority_registry
+
+    query = (
+        "My bike was stolen and police refused to file an FIR; "
+        "the incident was on 1 August 2024"
+    )
+    plan = build_matter_plan(query, route_matter(query))
+    bnss_authority = next(
+        entry.authority_id
+        for entry in plan.authority_ledger
+        if entry.note == "registry_workflow_authority"
+    )
+    bnss_record = next(
+        record
+        for record in load_authority_registry().records
+        if record.authority_id_expected == bnss_authority
+    )
+    candidates = [
+        SimpleNamespace(
+            title="Bharatiya Nagarik Suraksha Sanhita 2023",
+            anchor="bnss-2023/sec-173-a@2024-07-01",
+            text="Bharatiya Nagarik Suraksha Sanhita 2023, Section 173(1)\nInformation may be given to police.",
+            source_type="bare_act",
+            document_key="bnss-2023",
+            as_at=bnss_record.consolidation_as_at,
+            metadata={
+                "_required_source_pack": "bnss_2023_vehicle_theft_fir",
+                "_authority_ids": [bnss_authority],
+            },
+        ),
+        SimpleNamespace(
+            title="Bharatiya Nyaya Sanhita 2023",
+            anchor="bns-2023/sec-303-a@2024-07-01",
+            text="Bharatiya Nyaya Sanhita 2023, Section 303\nWhoever commits theft.",
+            source_type="bare_act",
+            document_key="bns-2023",
+            as_at=None,
+            metadata={"_required_source_pack": "bns_2023_vehicle_theft"},
+        ),
+        SimpleNamespace(
+            title="Unrelated judgment",
+            anchor="2024-insc-43#para-11",
+            text="Unrelated judgment paragraph.",
+            source_type="sc_judgment",
+            document_key="2024-insc-43",
+            as_at=None,
+            metadata={"_required_source_pack": None},
+        ),
+    ]
+
+    filtered = _filter_registry_owner_prompt_candidates(candidates, plan)
+
+    assert [candidate.anchor for candidate in filtered] == [
+        "bnss-2023/sec-173-a@2024-07-01",
+        "bns-2023/sec-303-a@2024-07-01",
+    ]
+
+    def valid_registry_candidate(**overrides):
+        fields = {
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "anchor": "bnss-2023/sec-173-a@2024-07-01",
+            "text": "Bharatiya Nagarik Suraksha Sanhita 2023, Section 173(1)\nInformation may be given to police.",
+            "source_type": "bare_act",
+            "document_key": "bnss-2023",
+            "as_at": bnss_record.consolidation_as_at,
+            "metadata": {
+                "_required_source_pack": "bnss_2023_vehicle_theft_fir",
+                "_authority_ids": [bnss_authority],
+            },
+        }
+        fields.update(overrides)
+        return SimpleNamespace(**fields)
+
+    for mutation in (
+        {"metadata": {"_required_source_pack": "wrong_pack", "_authority_ids": [bnss_authority]}},
+        {"document_key": "wrong-document"},
+        {"title": "Unrelated Act"},
+        {"anchor": "bnss-2023/sec-175@2024-07-01"},
+        {"as_at": date(2025, 1, 1)},
+    ):
+        assert _filter_registry_owner_prompt_candidates(
+            [valid_registry_candidate(**mutation)],
+            plan,
+        ) == []
+
+    # A numeric split suffix is a chunk of the planned section; arbitrary
+    # suffix text must not widen the exact planned-anchor contract.
+    assert _filter_registry_owner_prompt_candidates(
+        [valid_registry_candidate(anchor="bnss-2023/sec-173-a__2@2024-07-01")],
+        plan,
+    )
+    assert _filter_registry_owner_prompt_candidates(
+        [valid_registry_candidate(anchor="bnss-2023/sec-173-a__not-the-planned-section")],
+        plan,
+    ) == []
+    assert _filter_registry_owner_prompt_candidates(
+        [valid_registry_candidate(anchor="bnss-2023/sec-173-a@not-a-date")],
+        plan,
+    ) == []
+    assert _filter_registry_owner_prompt_candidates(
+        [valid_registry_candidate(anchor="bnss-2023/sec-173-a@2024-99-99")],
+        plan,
+    ) == []
+
+
+def test_registry_owner_prompt_filter_keeps_current_and_legacy_arrest_context():
+    from apps.api.main import _filter_registry_owner_prompt_candidates
+    from apps.api.matter_router import route_matter
+    from apps.api.legal_issue_plan import build_matter_plan
+
+    query = "pls tell brother arrested no fir copy given family police saying secret kya rule need lawyer or police"
+    plan = build_matter_plan(query, route_matter(query))
+    assert plan.primary_issue == "arrest_custody_safeguard"
+    assert plan.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+
+    candidates = [
+        SimpleNamespace(
+            title="Bharatiya Nagarik Suraksha Sanhita 2023",
+            anchor="bnss-2023/sec-57",
+            text="Bharatiya Nagarik Suraksha Sanhita 2023, Section 57. Person arrested to be taken before Magistrate.",
+            source_type="bare_act",
+            document_key="bnss-2023",
+            as_at=None,
+            metadata={"_required_source_pack": "bnss_2023"},
+        ),
+        SimpleNamespace(
+            title="Code of Criminal Procedure 1973",
+            anchor="crpc-1973/sec-57",
+            text="Code of Criminal Procedure 1973, Section 57. Person arrested not to be detained more than twenty-four hours.",
+            source_type="bare_act",
+            document_key="crpc-1973",
+            as_at=None,
+            metadata={"_required_source_pack": "crpc_1973"},
+        ),
+        SimpleNamespace(
+            title="Unrelated judgment",
+            anchor="2024-insc-43#para-11",
+            text="Unrelated judgment paragraph.",
+            source_type="sc_judgment",
+            document_key="2024-insc-43",
+            as_at=None,
+            metadata={"_required_source_pack": None},
+        ),
+    ]
+
+    filtered = _filter_registry_owner_prompt_candidates(candidates, plan)
+
+    assert [candidate.metadata["_required_source_pack"] for candidate in filtered] == [
+        "bnss_2023",
+        "crpc_1973",
+    ]
+
+
+def test_answer_contract_cites_article_21_context_for_unknown_date_arrest():
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+    from apps.api.legal_issue_plan import build_matter_plan
+
+    query = "pls tell brother arrested no fir copy given family police saying secret kya rule need lawyer or police"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    registry_ids = {
+        entry.source_pack_id: entry.authority_id
+        for entry in plan.authority_ledger
+        if entry.note == "registry_workflow_authority"
+    }
+    passages = [
+        {
+            "index": 1,
+            "title": "Constitution of India",
+            "statute_short": "Constitution of India",
+            "anchor": "constitution-india/sec-21-official",
+            "source_type": "bare_act",
+            "required_source_pack": "constitution_article_21",
+            "text": "No person shall be deprived of life or personal liberty except according to procedure established by law.",
+            "authority_ids": [],
+        },
+        {
+            "index": 2,
+            "title": "Constitution of India",
+            "statute_short": "Constitution of India",
+            "anchor": "constitution-india/sec-22@2025-11-11",
+            "source_type": "bare_act",
+            "required_source_pack": "constitution_article_22",
+            "text": "No person who is arrested shall be detained without being informed of the grounds for arrest.",
+            "authority_ids": [registry_ids["constitution_article_22"]],
+        },
+        {
+            "index": 3,
+            "title": "Constitution of India",
+            "statute_short": "Constitution of India",
+            "anchor": "constitution-india/sec-226@2025-11-11",
+            "source_type": "bare_act",
+            "required_source_pack": "constitution_article_226_habeas",
+            "text": "Every High Court shall have power to issue writs.",
+            "authority_ids": [registry_ids["constitution_article_226_habeas"]],
+        },
+        {
+            "index": 4,
+            "title": "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "statute_short": "BNSS 2023",
+            "anchor": "bnss-2023/sec-531",
+            "source_type": "bare_act",
+            "required_source_pack": "bnss_2023_custody_registry",
+            "text": "The Code of Criminal Procedure, 1973 is hereby repealed.",
+            "authority_ids": [registry_ids["bnss_2023_custody_registry"]],
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {2, 3, 4},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, plan, query=query)
+
+    assert any("Article 21 protects life and personal liberty" in line and "[1]" in line for line in lines)
+
+    source_floor_lines = _answer_contract_lines(
+        route,
+        passages,
+        state,
+        plan,
+        query=query,
+        source_floor_only=True,
+    )
+    assert any(
+        "Article 21 protects life and personal liberty" in line and "[1]" in line
+        for line in source_floor_lines
+    )
 
 
 def _rbi_ombudsman_sources(start_index: int = 1) -> list[dict[str, object]]:
@@ -77,6 +331,38 @@ def test_college_certificate_prompt_candidates_filter_rte_bleed():
         "All India Council for Technical Education Approval Process Handbook 2022-23",
         "Right to Information Act 2005",
     ]
+
+
+def test_registry_owned_passage_without_explicit_mapping_fails_closed():
+    from apps.api import main as api_main
+    from apps.api.legal_issue_plan import build_matter_plan
+    from apps.api.matter_router import route_matter
+    from apps.api.retrieval import RetrievedChunk
+
+    query = "Bank deducted money wrongly and customer care is not helping"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    passage = RetrievedChunk(
+        chunk_id=1,
+        document_id=1,
+        anchor="rbi-integrated-ombudsman-2021/sec-10",
+        text="RBI Integrated Ombudsman Scheme Clause 10",
+        source_type="bare_act",
+        subject_area="Banking",
+        as_at=date(2021, 11, 12),
+        paragraph_no=None,
+        title="Reserve Bank Integrated Ombudsman Scheme 2021",
+        citation=None,
+        court=None,
+        statute_short="RBI Integrated Ombudsman Scheme 2021",
+        document_key="rbi-integrated-ombudsman-2021",
+        metadata={"_required_source_pack": "rbi_integrated_ombudsman_2021"},
+    )
+
+    passages, _ = api_main._make_passages([passage], 1, plan=plan)
+    assert passages[0]["authority_ids"] == []
+    assert passages[0]["document_id"] == "rbi-integrated-ombudsman-2021"
 
 
 def test_caste_public_access_prompt_candidates_keep_article17_and_pcr():
@@ -157,6 +443,8 @@ def test_healthz_returns_ok_with_counts():
         assert body["status"] == "ok"
         assert isinstance(body["chunks"], int)
         assert isinstance(body["documents"], int)
+        assert isinstance(body["build_fingerprint"], str)
+        assert body["build_fingerprint"]
         # We've ingested at least the acts (>1000 chunks); a healthy slice
         # should have far more once SC is loaded.
         assert body["chunks"] > 0, "no chunks in DB — re-ingest"
@@ -283,22 +571,197 @@ def _enable_fast_mode(monkeypatch):
     monkeypatch.setattr(s, "answer_fast_enabled", True)
 
 
-def _patch_high_score_retrieve(monkeypatch):
+def _attach_plan_authority_ids_for_test(chunks, query):
+    """Attach only authority identity the fixture's exact section earns.
+
+    The helper deliberately does not copy every authority in a source pack.
+    That would let a correct-pack, wrong-section fixture satisfy a production
+    must-cite obligation which is precisely what the source-gap gate forbids.
+    """
+    from authority_registry import load_authority_registry
+    from apps.api.legal_issue_plan import authority_ids_for_passage, build_matter_plan
+    from apps.api.matter_router import route_matter
+
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    entries = tuple(plan.authority_ledger if plan is not None else ())
+    registry_by_key = {
+        record.canonical_key: record
+        for record in load_authority_registry().records
+    }
+    sources_by_pack = {
+        source.source_pack_id: source
+        for source in (plan.retrieval_sources if plan is not None else ())
+    }
+    entries_by_authority_id = {
+        entry.authority_id: entry
+        for entry in entries
+        if entry.authority_id
+    }
+    for hit in chunks:
+        pack_ids = tuple(dict.fromkeys(
+            str(value).strip()
+            for value in (
+                hit.metadata.get("_required_source_pack"),
+                *(hit.metadata.get("_required_source_packs") or ()),
+            )
+            if str(value or "").strip()
+        ))
+        authority_ids_by_pack = {
+            pack_id: authority_ids_for_passage(
+                plan,
+                title=hit.title,
+                anchor=hit.anchor,
+                text=hit.text,
+                source_pack_id=pack_id,
+                source_type=hit.source_type,
+            )
+            for pack_id in pack_ids
+        }
+        authority_ids_by_pack = {
+            pack_id: authority_ids
+            for pack_id, authority_ids in authority_ids_by_pack.items()
+            if authority_ids
+        }
+        authority_ids = list(dict.fromkeys(
+            authority_id
+            for values in authority_ids_by_pack.values()
+            for authority_id in values
+        ))
+        hit.metadata = {
+            **hit.metadata,
+            "_authority_ids": authority_ids,
+            "_required_source_pack_authority_ids": authority_ids_by_pack,
+        }
+        exact_entries = [
+            entries_by_authority_id[authority_id]
+            for authority_id in authority_ids
+            if authority_id in entries_by_authority_id
+        ]
+        if hit.document_key is None and exact_entries:
+            document_ids = {
+                document_id
+                for entry in exact_entries
+                for document_id in (
+                    sources_by_pack.get(entry.source_pack_id).doc_ids
+                    if sources_by_pack.get(entry.source_pack_id) is not None
+                    else ()
+                )
+                if document_id
+            }
+            if len(document_ids) == 1:
+                hit.document_key = document_ids.pop()
+        if hit.as_at is None:
+            snapshots = {
+                registry_by_key[entry.registry_key].consolidation_as_at
+                for entry in exact_entries
+                if entry.registry_key in registry_by_key
+                and registry_by_key[entry.registry_key].consolidation_as_at is not None
+            }
+            if len(snapshots) == 1:
+                hit.as_at = snapshots.pop()
+    return chunks
+
+
+def test_fixture_provenance_helper_does_not_promote_wrong_section():
+    from apps.api.retrieval import RetrievedChunk
+
+    wrong_section = RetrievedChunk(
+        chunk_id=1,
+        document_id=1,
+        anchor="consumer-protection-2019/sec-34",
+        text="Section 34 is unrelated to the complaint filing provision.",
+        title="Consumer Protection Act 2019",
+        source_type="bare_act",
+        subject_area="consumer",
+        as_at=None,
+        paragraph_no=None,
+        citation=None,
+        court=None,
+        statute_short="Consumer Protection Act 2019",
+        metadata={"_required_source_pack": "consumer_protection_2019"},
+    )
+
+    _attach_plan_authority_ids_for_test(
+        [wrong_section], "online order arrived broken what to do"
+    )
+
+    assert wrong_section.metadata["_authority_ids"] == []
+    assert wrong_section.metadata["_required_source_pack_authority_ids"] == {}
+    assert wrong_section.document_key is None
+
+
+def test_make_passages_keeps_canonical_anchor_and_audit_identity():
+    from apps.api.main import _make_passages
+    from apps.api.retrieval import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id=783882,
+        document_id=12,
+        anchor="jj-2015/sec-58-official",
+        text="Juvenile Justice (Care and Protection of Children) Act 2015, Section 58",
+        title="Juvenile Justice (Care and Protection of Children) Act 2015",
+        source_type="bare_act",
+        subject_area="family",
+        as_at=None,
+        paragraph_no=None,
+        citation=None,
+        court=None,
+        statute_short="Juvenile Justice Act 2015",
+        document_key="jj-2015",
+        metadata={"display_anchor": "jj-2015/sec-58"},
+    )
+
+    passages, _ = _make_passages([chunk], 1)
+
+    assert passages[0]["anchor"] == "jj-2015/sec-58-official"
+    assert passages[0]["canonical_anchor"] == "jj-2015/sec-58-official"
+    assert passages[0]["display_anchor"] == "jj-2015/sec-58"
+    assert passages[0]["document_id"] == "jj-2015"
+    assert passages[0]["chunk_id"] == 783882
+    assert passages[0]["provenance_verified"] is False
+
+
+def test_contract_floor_releases_route_metadata_before_first_visible_sentence():
+    from apps.api.main import _buffered_prefix_for_first_sentence
+
+    initial = [{"event": "matter_route"}, {"event": "matter_plan"}]
+    prefix = [{"event": "route_caveat"}]
+    contract = [{"event": "sentence"}, {"event": "sources"}]
+
+    prefix_to_emit, emitted = _buffered_prefix_for_first_sentence(
+        initial, prefix, contract, already_emitted=False
+    )
+
+    assert prefix_to_emit == [*initial, *prefix]
+    assert emitted is True
+
+
+def _patch_high_score_retrieve(
+    monkeypatch,
+    *,
+    rerank_score: float | None = 0.82,
+    dense_score: float = 0.85,
+    bm25_score: float = 0.6,
+):
     """Stub answer retrieval to return chunks that score ABOVE the coverage
     gate threshold (0.3). Without this, /answer tests refuse before
     reaching the LLM stream we're trying to exercise."""
     from apps.api import main as api_main
     from apps.api import retrieval
 
-    def chunks():
-        return [
+    default_query = "online order arrived broken what to do"
+
+    def chunks(query: str = default_query):
+        return _attach_plan_authority_ids_for_test([
             retrieval.RetrievedChunk(
                 chunk_id=1, document_id=1, anchor="consumer-protection-2019/sec-35",
                 text="Section 35 of the Consumer Protection Act provides for filing a consumer complaint.",
                 title="Consumer Protection Act 2019", source_type="bare_act",
                 subject_area="consumer", as_at=None, paragraph_no=None,
                 citation=None, court=None, statute_short="CPA-2019",
-                dense_score=0.85, bm25_score=0.6, rerank_score=0.82,
+                dense_score=dense_score, bm25_score=bm25_score, rerank_score=rerank_score,
+                metadata={"_required_source_pack": "consumer_protection_2019"},
             ),
             retrieval.RetrievedChunk(
                 chunk_id=2, document_id=1, anchor="consumer-protection-2019/sec-39",
@@ -306,15 +769,22 @@ def _patch_high_score_retrieve(monkeypatch):
                 title="Consumer Protection Act 2019", source_type="bare_act",
                 subject_area="consumer", as_at=None, paragraph_no=None,
                 citation=None, court=None, statute_short="CPA-2019",
-                dense_score=0.78, bm25_score=0.55, rerank_score=0.71,
+                dense_score=dense_score, bm25_score=bm25_score, rerank_score=rerank_score,
+                metadata={"_required_source_pack": "consumer_protection_2019"},
             ),
-        ]
+        ], query)
+
+    def query_from_args(args, kwargs) -> str:
+        return next(
+            (value for value in args if isinstance(value, str)),
+            kwargs.get("query") or default_query,
+        )
 
     async def fake_retrieve(*args, **kwargs):
-        return chunks()
+        return chunks(query_from_args(args, kwargs))
 
     async def fake_multi_query_retrieve(*args, **kwargs):
-        return chunks(), []
+        return chunks(query_from_args(args, kwargs)), []
 
     monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fake_multi_query_retrieve)
     monkeypatch.setattr(api_main, "hybrid_retrieve", fake_retrieve)
@@ -377,6 +847,7 @@ def test_answer_emits_coverage_passages_and_sentences(monkeypatch):
             assert controlling_authority_id
             passage_payload = next(d for ev, d in events if ev == "passages")
             assert passage_payload
+            assert all("required_source_pack" in passage for passage in passage_payload)
             assert all(
                 controlling_authority_id in passage["authority_ids"]
                 for passage in passage_payload
@@ -385,6 +856,13 @@ def test_answer_emits_coverage_passages_and_sentences(monkeypatch):
             assert event_names.count("sentence") >= 1
             source_payload = next(d for ev, d in events if ev == "sources")
             assert source_payload
+            assert all("required_source_pack" in source for source in source_payload)
+            assert all("heading" in source for source in source_payload)
+            assert all("required_source_packs" in source for source in source_payload)
+            assert all("provenance_verified" in source for source in source_payload)
+            assert all(
+                "required_source_pack_authority_ids" in source for source in source_payload
+            )
             cited_indices = {
                 citation
                 for ev, payload in events
@@ -662,6 +1140,121 @@ def test_actionable_source_intro_not_added_after_official_source_is_cited():
     assert _actionable_source_intro_line_for_sentence(route, passages, state, judgment_sentence) is None
 
 
+def test_pet_route_does_not_bridge_cooperative_judgment_to_consumer_act():
+    from apps.api.main import _actionable_source_intro_line_for_sentence
+    from apps.api.matter_router import route_matter
+    from apps.api.verifier import SentenceStatus, SentenceVerification
+
+    route = route_matter(
+        "society management has put a fine of 25000 on me for keeping a pet without prior approval"
+    )
+    passages = [
+        {
+            "index": 1,
+            "title": "CO-OPERATIVE HOUSING SOCIETY",
+            "anchor": "hc/coop-housing#para-12",
+            "source_type": "hc_judgment",
+            "text": "The cooperative housing society dispute concerns the society's governing documents.",
+        },
+        {
+            "index": 2,
+            "title": "Consumer Protection Act 2019",
+            "anchor": "consumer-protection-2019/sec-39-a",
+            "source_type": "bare_act",
+            "required_source_pack": "consumer_protection_2019",
+        },
+    ]
+    judgment_sentence = SentenceVerification(
+        "The cooperative housing judgment is only contextual for the society fine [1].",
+        SentenceStatus.OK,
+        citations=[1],
+    )
+
+    assert _actionable_source_intro_line_for_sentence(
+        route, passages, {}, judgment_sentence
+    ) is None
+
+
+def test_pet_route_uses_bmc_authority_for_judgment_bridge_when_retrieved():
+    from apps.api.main import _actionable_source_intro_line_for_sentence
+    from apps.api.matter_router import route_matter
+    from apps.api.verifier import SentenceStatus, SentenceVerification
+
+    route = route_matter(
+        "society management has put a fine of 25000 on me for keeping a pet without prior approval"
+    )
+    passages = [
+        {
+            "index": 1,
+            "title": "CO-OPERATIVE HOUSING SOCIETY",
+            "anchor": "hc/coop-housing#para-12",
+            "source_type": "hc_judgment",
+        },
+        {
+            "index": 2,
+            "title": "BMC Guidelines with respect to Pet & Street dogs, Community Animal Feeder/Care giver, RWAs and AOAs",
+            "anchor": "bmc-pet-dog-guidelines#pet-dog-residents",
+            "source_type": "circular",
+            "document_id": "bmc-pet-dog-guidelines",
+            "required_source_pack": "bmc_pet_guidelines_ban",
+        },
+        {
+            "index": 3,
+            "title": "Consumer Protection Act 2019",
+            "anchor": "consumer-protection-2019/sec-39-a",
+            "source_type": "bare_act",
+        },
+    ]
+    judgment_sentence = SentenceVerification(
+        "The cooperative housing judgment is only contextual for the society fine [1].",
+        SentenceStatus.OK,
+        citations=[1],
+    )
+
+    line = _actionable_source_intro_line_for_sentence(
+        route, passages, {}, judgment_sentence
+    )
+
+    assert line is not None
+    assert "BMC Guidelines" in line
+    assert "Consumer Protection Act" not in line
+
+
+def test_pet_route_rejects_bmc_looking_source_with_wrong_provenance():
+    from apps.api.main import _actionable_source_intro_line_for_sentence
+    from apps.api.matter_router import route_matter
+    from apps.api.verifier import SentenceStatus, SentenceVerification
+
+    route = route_matter(
+        "society management has put a fine of 25000 on me for keeping a pet without prior approval"
+    )
+    passages = [
+        {
+            "index": 1,
+            "title": "CO-OPERATIVE HOUSING SOCIETY",
+            "anchor": "hc/coop-housing#para-12",
+            "source_type": "hc_judgment",
+        },
+        {
+            "index": 2,
+            "title": "BMC Guidelines with respect to Pet & Street dogs",
+            "anchor": "bmc-pet-dog-guidelines#pet-dog-residents",
+            "source_type": "bare_act",
+            "document_id": "wrong-document",
+            "required_source_pack": "consumer_protection_2019",
+        },
+    ]
+    judgment_sentence = SentenceVerification(
+        "The cooperative housing judgment is only contextual for the society fine [1].",
+        SentenceStatus.OK,
+        citations=[1],
+    )
+
+    assert _actionable_source_intro_line_for_sentence(
+        route, passages, {}, judgment_sentence
+    ) is None
+
+
 def test_contract_floor_skips_crpc_bail_backup_for_household_safety_routes():
     from apps.api.main import _answer_contract_lines
     from apps.api.matter_router import route_matter
@@ -752,14 +1345,14 @@ def test_answer_emits_unknown_criminal_regime_caveat(monkeypatch):
             1,
             "Bharatiya Nagarik Suraksha Sanhita 2023",
             "bnss-2023/sec-173-a",
-            "Information about a cognizable offence may be given orally or electronically.",
+            "Section 173. Information about cognizable offences may be given orally or electronically.",
             "bnss_2023_vehicle_theft_fir",
         ),
         chunk(
             2,
             "Bharatiya Nagarik Suraksha Sanhita 2023",
             "bnss-2023/sec-173-c",
-            "On refusal, the information may be sent to the Superintendent of Police and then the Magistrate.",
+            "Section 173(4). On refusal, the information may be sent to the Superintendent of Police and then the Magistrate.",
             "bnss_2023_vehicle_theft_fir",
         ),
         chunk(
@@ -769,7 +1362,32 @@ def test_answer_emits_unknown_criminal_regime_caveat(monkeypatch):
             "Section 154 provides the cognizable-information and refusal route.",
             "crpc_1973_vehicle_theft_fir",
         ),
+        chunk(
+            4,
+            "Bharatiya Nyaya Sanhita 2023",
+            "bns-2023/sec-303",
+            "Section 303 addresses theft of movable property without consent.",
+            "bns_2023_vehicle_theft",
+        ),
+        chunk(
+            5,
+            "Indian Penal Code 1860",
+            "ipc-1860/sec-378",
+            "Section 378 defines theft of movable property without consent.",
+            "ipc_1860_vehicle_theft",
+        ),
+        chunk(
+            6,
+            "Bharatiya Nagarik Suraksha Sanhita 2023",
+            "bnss-2023/sec-175",
+            "Section 175 provides the Magistrate investigation route after police refusal.",
+            "bnss_2023_vehicle_theft_fir",
+        ),
     ]
+    chunks = _attach_plan_authority_ids_for_test(
+        chunks,
+        "my bike is stolen and police refuse FIR",
+    )
 
     async def fake_multi_query_retrieve(*args, **kwargs):
         return chunks, []
@@ -876,8 +1494,31 @@ def test_answer_security_cheque_prose_is_drawer_safe(monkeypatch, query):
             dense_score=0.9,
             bm25_score=0.8,
             rerank_score=0.88,
+            metadata={"_required_source_pack": "ni_act_138_security_cheque"},
+        ),
+        retrieval.RetrievedChunk(
+            chunk_id=142,
+            document_id=16226,
+            anchor="negotiable-instruments-1881/sec-142-b",
+            text=(
+                "Negotiable Instruments Act 1881, Section 142\n"
+                "Cognizance of offences under this Chapter."
+            ),
+            title="Negotiable Instruments Act 1881",
+            source_type="bare_act",
+            subject_area="finance",
+            as_at=None,
+            paragraph_no=None,
+            citation=None,
+            court=None,
+            statute_short=None,
+            dense_score=0.7,
+            bm25_score=0.6,
+            rerank_score=0.70,
+            metadata={"_required_source_pack": "ni_act_1881"},
         )
     ]
+    _attach_plan_authority_ids_for_test(chunks, query)
 
     async def fake_multi_query_retrieve(*args, **kwargs):
         return chunks, []
@@ -941,7 +1582,9 @@ def test_answer_off_topic_short_circuits_before_model_or_retrieval(monkeypatch, 
     assert refused_payload["reason"] == "off_topic"
     timing = next(d for ev, d in events if ev == "timing")
     assert "llm_preflight_ms" not in timing
-    assert "retrieval_ms" not in timing
+    assert timing["retrieval_ms"] == 0.0
+    assert timing["llm_stream_ms"] == 0.0
+    assert timing["verification_ms"] == 0.0
 
 
 @pytest.mark.needs_stack
@@ -1452,50 +2095,22 @@ def test_answer_refuses_when_rerank_scores_absent(monkeypatch):
     scores are None (reranker disabled / unavailable / predict failure).
     Otherwise out-of-slice queries slip through exactly during a degraded
     dependency state — which is the failure the gate is meant to prevent."""
-    from apps.api import main as api_main
-    from apps.api import retrieval
-
-    async def no_rerank_retrieve(*args, **kwargs):
-        return [
-            retrieval.RetrievedChunk(
-                chunk_id=1, document_id=1, anchor="x",
-                text="some passage",
-                title="Some case", source_type="sc_judgment",
-                subject_area="criminal", as_at=None, paragraph_no=None,
-                citation="[2020] 1 SCR 1", court="SC", statute_short=None,
-                dense_score=0.5, bm25_score=0.1, rerank_score=None,
-            ),
-        ]
-
-    async def no_rerank_multi_query_retrieve(*args, **kwargs):
-        return await no_rerank_retrieve(*args, **kwargs), []
-
-    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", no_rerank_multi_query_retrieve)
-    monkeypatch.setattr(api_main, "hybrid_retrieve", no_rerank_retrieve)
+    # The corpus fixture must already satisfy the active MatterPlan. Otherwise
+    # the provenance gate correctly returns first and this test never reaches
+    # the degraded-reranker branch it is meant to protect.
+    _patch_high_score_retrieve(monkeypatch, rerank_score=None)
+    _enable_fast_mode(monkeypatch)
 
     with TestClient(app) as c:
         with c.stream("POST", "/answer", json={
-            "q": "any query",
+            "q": "online order arrived broken what to do",
             "top_k": 4,
             "skip_nli": True,
         }) as r:
             assert r.status_code == 200
-            event_names = []
-            refused_data = None
-            current = None
-            for line in r.iter_lines():
-                if not line:
-                    current = None
-                    continue
-                if line.startswith("event:"):
-                    current = line.split(":", 1)[1].strip()
-                    event_names.append(current)
-                elif line.startswith("data:") and current == "refused":
-                    refused_data = json.loads(line.split(":", 1)[1].strip())
+            events = _collect_events(r)
 
-            assert "refused" in event_names, f"expected refused, got {event_names}"
-            assert refused_data is not None
-            assert refused_data.get("reason") == "rerank_unavailable"
+    _assert_source_gap_handoff_stream(events, expected_reason="rerank_unavailable")
 
 
 @pytest.mark.needs_stack
@@ -1549,6 +2164,14 @@ def test_answer_emits_server_authored_sources_event(monkeypatch):
             )
             assert sources_data is not None
             assert len(sources_data) == 2  # two passages from the fake retrieve
+            for source in sources_data:
+                assert source["canonical_anchor"] == source["anchor"]
+                assert source["display_anchor"]
+                assert source["chunk_id"] is not None
+                assert source["heading"]
+                assert "required_source_packs" in source
+                assert "required_source_pack_authority_ids" in source
+                assert "provenance_verified" in source
             # The fabricated source line MUST NOT have leaked through
             assert not any("INVENTED CASE" in t for t in sentence_texts), (
                 f"fabricated source line leaked: {sentence_texts}"
@@ -1598,6 +2221,9 @@ def test_answer_template_path_filters_weak_sentences_before_emit(monkeypatch):
 
     _enable_fast_mode(monkeypatch)
     _patch_relevance(monkeypatch, score=0.85)
+    # This test exercises weak-template filtering; keep the fixture out of
+    # the required-authority handoff path so it reaches that layer.
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: None)
 
     chunks = [
         retrieval.RetrievedChunk(
@@ -1651,7 +2277,29 @@ def test_answer_template_path_filters_weak_sentences_before_emit(monkeypatch):
             bm25_score=0.7,
             rerank_score=0.84,
         ),
+        retrieval.RetrievedChunk(
+            chunk_id=4,
+            document_id=21,
+            anchor="motor-vehicles-1988/sec-193",
+            text="The Motor Vehicles Act 1988 provides the licensing and regulatory framework for transport authorities and aggregator operations.",
+            title="Motor Vehicles Act 1988",
+            source_type="bare_act",
+            subject_area="transport",
+            as_at=None,
+            paragraph_no=None,
+            citation=None,
+            court=None,
+            statute_short="MVA-1988",
+            dense_score=0.84,
+            bm25_score=0.65,
+            rerank_score=0.82,
+            metadata={"_required_source_pack": "motor_vehicles_1988_aggregator"},
+        ),
     ]
+    _attach_plan_authority_ids_for_test(
+        chunks,
+        "uber driver deactivated after low ratings app not giving reason racist language comment",
+    )
 
     async def fake_multi_query_retrieve(*args, **kwargs):
         return chunks, []
@@ -1706,19 +2354,19 @@ def test_answer_drops_duplicate_bullets(monkeypatch):
     # Model emits the same bullet five times — classic small-model loop.
     fake = _FakeStream(
         "**Short answer**\n",
-        "You can recover unpaid wages by applying to the authority [1]. ",
+        "You can file a consumer complaint for a defective online order [1]. ",
         "**What you can do next**\n",
-        "- Apply to the State authority within twelve months [1]. ",
-        "- Apply to the State authority within twelve months [1]. ",
-        "- Apply to the State authority within twelve months [1]. ",
-        "- Apply to the State authority within twelve months [1]. ",
-        "- Apply to the State authority within twelve months [1].",
+        "- Keep your order and defect records for the consumer complaint [1]. ",
+        "- Keep your order and defect records for the consumer complaint [1]. ",
+        "- Keep your order and defect records for the consumer complaint [1]. ",
+        "- Keep your order and defect records for the consumer complaint [1]. ",
+        "- Keep your order and defect records for the consumer complaint [1].",
     )
     monkeypatch.setattr(api_main, "stream_chat", fake)
 
     with TestClient(app) as c:
         with c.stream("POST", "/answer", json={
-            "q": "wages recovery", "top_k": 4, "skip_nli": True,
+            "q": "online order arrived broken what to do", "top_k": 4, "skip_nli": True,
         }) as r:
             sentence_texts = []
             current = None
@@ -1732,11 +2380,11 @@ def test_answer_drops_duplicate_bullets(monkeypatch):
                     d = json.loads(line.split(":", 1)[1].strip())
                     sentence_texts.append(d.get("text", ""))
 
-            # The bullet should appear ONCE (first instance), not five times
-            bullet_count = sum(
-                1 for t in sentence_texts
-                if "Apply to the State authority within twelve months" in t
-            )
+                # The bullet should appear ONCE (first instance), not five times
+                bullet_count = sum(
+                    1 for t in sentence_texts
+                    if "Keep your order and defect records for the consumer complaint" in t
+                )
             assert bullet_count == 1, (
                 f"expected 1 emission of looped bullet, got {bullet_count}: {sentence_texts}"
             )
@@ -1835,6 +2483,30 @@ def test_answer_strips_variant_sources_headers(monkeypatch):
 
 
 @pytest.mark.needs_stack
+def test_answer_strips_inline_sources_header(monkeypatch):
+    """A same-line terminal header must not expose fabricated source prose."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    fake = _FakeStream(
+        "The District Forum has jurisdiction up to twenty lakh rupees [2], "
+        "Sources: [2] SC — FABRICATED INLINE CASE, 2099.\n",
+        "**Disclaimer**\nGeneral legal information.",
+    )
+    monkeypatch.setattr(api_main, "stream_chat", fake)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "consumer complaint forum", "top_k": 4, "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    sentence_texts = [data.get("text", "") for name, data in events if name == "sentence"]
+    assert not any("FABRICATED INLINE CASE" in text for text in sentence_texts)
+
+
+@pytest.mark.needs_stack
 def test_answer_skip_nli_ignored_when_fast_mode_disabled(monkeypatch):
     """Round-3 review (security #4): public callers passing
     {"skip_nli": true} must not be able to bypass NLI in production. Only
@@ -1882,117 +2554,69 @@ def test_answer_skip_nli_ignored_when_fast_mode_disabled(monkeypatch):
 def test_answer_refuses_when_rerank_disabled_and_dense_low(monkeypatch):
     """Round-3 review (security #5): when rerank_enabled=False (operator
     ablation), the rerank-gate can't fire. The combined-score fallback
-    must refuse low-coverage queries instead of letting them through to
+    must stop at a non-answer source-gap handoff instead of letting them through to
     the LLM."""
-    from apps.api import main as api_main
-    from apps.api import retrieval
     from apps.api import config as cfg
 
     s = cfg.get_settings()
     monkeypatch.setattr(s, "rerank_enabled", False)
-
-    async def low_combined_retrieve(*args, **kwargs):
-        return [
-            retrieval.RetrievedChunk(
-                chunk_id=1, document_id=1, anchor="x",
-                text="a tangentially related passage",
-                title="Some case", source_type="sc_judgment",
-                subject_area="criminal", as_at=None, paragraph_no=None,
-                citation=None, court="SC", statute_short=None,
-                # combined_score property = dense*0.5 + bm25*0.5 = 0.15
-                dense_score=0.2, bm25_score=0.1, rerank_score=None,
-            ),
-        ]
-
-    async def low_combined_multi_query_retrieve(*args, **kwargs):
-        return await low_combined_retrieve(*args, **kwargs), []
-
-    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", low_combined_multi_query_retrieve)
-    monkeypatch.setattr(api_main, "hybrid_retrieve", low_combined_retrieve)
+    _patch_high_score_retrieve(
+        monkeypatch,
+        rerank_score=None,
+        dense_score=0.05,
+        bm25_score=0.05,
+    )
 
     with TestClient(app) as c:
         with c.stream("POST", "/answer", json={
-            "q": "any tangent",
+            "q": "online order arrived broken what to do",
             "top_k": 4,
             "skip_nli": True,
         }) as r:
-            event_names = []
-            refused = None
-            current = None
-            for line in r.iter_lines():
-                if not line:
-                    current = None
-                    continue
-                if line.startswith("event:"):
-                    current = line.split(":", 1)[1].strip()
-                    event_names.append(current)
-                elif line.startswith("data:") and current == "refused":
-                    refused = json.loads(line.split(":", 1)[1].strip())
+            events = _collect_events(r)
 
-            assert "refused" in event_names
-            assert refused is not None
-            assert refused.get("reason") == "low_coverage_dense_fallback"
+    _assert_source_gap_handoff_stream(
+        events,
+        expected_reason="low_coverage_dense_fallback",
+    )
+
+
+@pytest.mark.needs_stack
+def test_answer_source_gap_handoff_when_rerank_scores_are_missing(monkeypatch):
+    """A degraded reranker must hand off before the plan can be rendered."""
+    _patch_high_score_retrieve(monkeypatch, rerank_score=None)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "my online order arrived broken what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="rerank_unavailable")
 
 
 @pytest.mark.needs_stack
 def test_answer_refuses_on_low_coverage(monkeypatch):
     """Coverage gate: when no retrieved passage exceeds refuse_below_rerank,
-    /answer must refuse honestly instead of asking the LLM to synthesise
+    /answer must stop at an explicit source-gap handoff instead of asking the LLM to synthesise
     from tangentially-related judgments. Saves ~30s of LLM time and gives
     the user an honest signal."""
-    from apps.api import main as api_main
-    from apps.api import retrieval
-
-    # All passages score below the 0.3 threshold (mimics out-of-slice
-    # query like "tenant not vacating" with our SC-judgment corpus).
-    async def low_score_retrieve(*args, **kwargs):
-        return [
-            retrieval.RetrievedChunk(
-                chunk_id=1, document_id=1, anchor="x",
-                text="customs refund procedure",
-                title="Customs case", source_type="sc_judgment",
-                subject_area="criminal", as_at=None, paragraph_no=None,
-                citation="[2020] 1 SCR 1", court="SC", statute_short=None,
-                dense_score=0.5, bm25_score=0.1, rerank_score=0.10,
-            ),
-        ]
-
-    async def low_score_multi_query_retrieve(*args, **kwargs):
-        return await low_score_retrieve(*args, **kwargs), []
-
-    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", low_score_multi_query_retrieve)
-    monkeypatch.setattr(api_main, "hybrid_retrieve", low_score_retrieve)
+    # All canonical passages score below the route threshold. This isolates
+    # the coverage gate from MatterPlan provenance failures.
+    _patch_high_score_retrieve(monkeypatch, rerank_score=0.10)
 
     with TestClient(app) as c:
         with c.stream("POST", "/answer", json={
-            "q": "my tenant is not vacating after notice period",
+            "q": "online order arrived broken what to do",
             "top_k": 4,
             "skip_nli": True,
         }) as r:
             assert r.status_code == 200
-            event_names = []
-            refused_data = None
-            current = None
-            for line in r.iter_lines():
-                if not line:
-                    current = None
-                    continue
-                if line.startswith("event:"):
-                    current = line.split(":", 1)[1].strip()
-                    event_names.append(current)
-                elif line.startswith("data:") and current == "refused":
-                    refused_data = json.loads(line.split(":", 1)[1].strip())
+            events = _collect_events(r)
 
-            assert "refused" in event_names, f"expected refused, got {event_names}"
-            assert refused_data is not None
-            # Per round-4 UX cleanup: top_rerank_score is logged server-side
-            # but kept OUT of the user-visible refused payload (engineering
-            # number, no value to a lay user). The `reason` tag is the
-            # public signal.
-            assert refused_data.get("reason") == "low_coverage"
-            assert "top_rerank_score" not in refused_data, (
-                f"top_rerank_score should not leak to UI: {refused_data}"
-            )
+    _assert_source_gap_handoff_stream(events, expected_reason="low_coverage")
 
 
 @pytest.mark.needs_stack
@@ -2031,8 +2655,8 @@ def test_answer_composer_drops_unsupported_draft_claims(monkeypatch):
 
 
 @pytest.mark.needs_stack
-def test_answer_refused_when_no_passages(monkeypatch):
-    """If retrieval returns nothing, /answer should emit a `refused` event."""
+def test_answer_source_gap_handoff_when_no_passages(monkeypatch):
+    """If retrieval returns nothing, /answer should emit a non-answer handoff."""
     from apps.api import main as api_main
     from apps.api import retrieval
 
@@ -2053,11 +2677,240 @@ def test_answer_refused_when_no_passages(monkeypatch):
             "skip_nli": True,
         }) as r:
             assert r.status_code == 200
-            event_names = []
-            for line in r.iter_lines():
-                if line.startswith("event:"):
-                    event_names.append(line.split(":", 1)[1].strip())
-            assert "refused" in event_names, f"expected refused event, got: {event_names}"
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="empty_retrieval")
+
+
+@pytest.mark.needs_stack
+def test_pet_answer_hands_off_when_only_cooperative_judgment_and_consumer_act(monkeypatch):
+    """A pet fine cannot become a consumer answer through neighboring sources."""
+    from apps.api import main as api_main
+    from apps.api import retrieval
+
+    query = "society management has put a fine of 25000 on me for keeping a pet without prior approval"
+
+    async def cooperative_and_consumer(*args, **kwargs):
+        return [
+            retrieval.RetrievedChunk(
+                chunk_id=1,
+                document_id="2022-insc-33",
+                anchor="2022-insc-33#para-12",
+                text="The cooperative housing society dispute concerns the society's governing documents.",
+                title="CO-OPERATIVE HOUSING SOCIETY",
+                source_type="sc_judgment",
+                subject_area="Property",
+                as_at=None,
+                paragraph_no=None,
+                citation="2022 INSC 33",
+                court="SC",
+                statute_short=None,
+                dense_score=0.92,
+                bm25_score=0.88,
+                rerank_score=0.91,
+                metadata={"_required_source_pack": "cooperative_housing_society_case_law"},
+            ),
+            retrieval.RetrievedChunk(
+                chunk_id=2,
+                document_id="consumer-protection-2019",
+                anchor="consumer-protection-2019/sec-39",
+                text="Section 39 concerns relief in a consumer complaint.",
+                title="Consumer Protection Act 2019",
+                source_type="bare_act",
+                subject_area="Consumer",
+                as_at=None,
+                paragraph_no=None,
+                citation=None,
+                court=None,
+                statute_short="Consumer Protection Act 2019",
+                dense_score=0.89,
+                bm25_score=0.84,
+                rerank_score=0.87,
+                metadata={"_required_source_pack": "consumer_protection_2019"},
+            ),
+        ], []
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", cooperative_and_consumer)
+    monkeypatch.setattr(api_main, "hybrid_retrieve", lambda *args, **kwargs: cooperative_and_consumer(*args, **kwargs))
+    _enable_fast_mode(monkeypatch)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": query,
+            "top_k": 8,
+            "skip_nli": True,
+        }) as r:
+            assert r.status_code == 200
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="housing_pet_source_gap")
+
+
+@pytest.mark.needs_stack
+def test_answer_critical_source_gap_handoff_is_safe_and_precedes_plan(monkeypatch):
+    """Critical routes must show only the neutral handoff before their plan."""
+    from apps.api import main as api_main
+    from apps.api import retrieval
+
+    async def low_score_retrieve(*args, **kwargs):
+        return [
+            retrieval.RetrievedChunk(
+                chunk_id=1, document_id=1, anchor="x",
+                text="a tangentially related passage",
+                title="Some case", source_type="sc_judgment",
+                subject_area="criminal", as_at=None, paragraph_no=None,
+                citation="[2020] 1 SCR 1", court="SC", statute_short=None,
+                dense_score=0.5, bm25_score=0.1, rerank_score=0.10,
+            ),
+        ]
+
+    async def low_score_multi_query_retrieve(*args, **kwargs):
+        return await low_score_retrieve(*args, **kwargs), []
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", low_score_multi_query_retrieve)
+    monkeypatch.setattr(api_main, "hybrid_retrieve", low_score_retrieve)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "police did not file my FIR what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events)
+
+
+@pytest.mark.needs_stack
+def test_answer_noncritical_source_gap_is_canonical_non_answer(monkeypatch):
+    """A normal route cannot continue to an operative answer after a source gap."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: {
+        "has_gap": True,
+        "route_category": "consumer",
+        "gap_kinds": ["missing_required_authority"],
+        "missing_required_sources": [{"required_source": "Consumer Protection Act 2019", "kind": "missing"}],
+        "message": "A required authority is missing.",
+        "handoff": "untrusted route text should be discarded",
+        "policy": "do_not_substitute_neighboring_authority",
+        "deadline": "never expose this field",
+    })
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what to do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    event_names = [name for name, _ in events]
+    source_gap = _assert_source_gap_handoff_stream(events, expected_reason="required_source_gap")
+    assert "deadline" not in source_gap
+
+
+@pytest.mark.needs_stack
+def test_answer_malformed_source_gap_payload_is_canonical_non_answer(monkeypatch):
+    """Malformed internal gap payloads fail closed before critical checks."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: ["malformed"])
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what to do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="invalid_source_gap_payload")
+
+
+@pytest.mark.needs_stack
+def test_answer_structurally_malformed_source_gap_dict_is_canonical_non_answer(monkeypatch):
+    """Schema-invalid dictionaries are not ordinary required-source gaps."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: {
+        "has_gap": "true",
+        "gap_kinds": ["missing_required_authority"],
+        "missing_required_sources": [],
+    })
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what to do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="invalid_source_gap_payload")
+
+
+@pytest.mark.needs_stack
+def test_answer_malformed_source_gap_anchor_pattern_is_canonical_non_answer(monkeypatch):
+    """Nested source-gap diagnostics must not silently discard bad values."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: {
+        "has_gap": True,
+        "missing_required_sources": [{
+            "required_source": "Consumer Protection Act 2019",
+            "required_anchor_patterns": ["/sec-35", 7],
+        }],
+    })
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what to do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="invalid_source_gap_payload")
+
+
+@pytest.mark.needs_stack
+def test_answer_mandatory_citation_gap_precedes_plan(monkeypatch):
+    """The answer-layer citation contract must fail closed before plan render."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    # ``None`` is the internal no-gap contract. A non-None payload with
+    # ``has_gap=False`` is deliberately treated as malformed by the API.
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "_grounded_template_lines", lambda *args, **kwargs: [
+        "The consumer can file a complaint [1].",
+    ])
+    monkeypatch.setattr(
+        api_main,
+        "_missing_registry_must_cite_authority_ids",
+        lambda *args, **kwargs: ("authority_test",),
+    )
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what to do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    event_names = [name for name, _ in events]
+    _assert_source_gap_handoff_stream(events, expected_reason="mandatory_authority_not_cited")
 
 
 # --- Task #10: answer-vs-query relevance event ------------------------------
@@ -2109,6 +2962,347 @@ def _collect_events(response) -> list[tuple[str, Any]]:
             except json.JSONDecodeError:
                 events.append((current, payload))
     return events
+
+
+def _assert_source_gap_handoff_stream(
+    events: list[tuple[str, Any]],
+    *,
+    expected_reason: str | None = None,
+) -> dict[str, Any]:
+    """Apply the same non-answer contract to every source-gap branch."""
+    names = [name for name, _ in events]
+    assert "matter_route" in names
+    assert "source_gap" in names
+    assert "refused" not in names
+    allowed_names = {"matter_route", "source_gap", "sentence", "timing", "disclaimer", "intake"}
+    if expected_reason == "post_verification_empty_answer":
+        # The model stream may have already exposed suppression markers before
+        # the server can prove that the final answer body is empty. They carry
+        # no legal claim and must remain distinct from the safe handoff.
+        allowed_names.add("suppressed")
+    assert set(names) <= allowed_names
+    assert not any(name in names for name in ("coverage", "passages", "workflow", "matter_plan", "sources", "relevance", "stop"))
+    gap_events = [data for name, data in events if name == "source_gap"]
+    assert len(gap_events) == 1
+    gap = gap_events[0]
+    assert gap.get("has_gap") is True
+    assert gap.get("outcome") == "source_gap_handoff"
+    assert gap.get("safe_handoff_only") is True
+    assert gap.get("handoff") == "DLSA/legal aid or a qualified lawyer"
+    route = next(data for name, data in events if name == "matter_route")
+    assert "route_trace" not in route
+    local_gap = "state_or_local_authority_gap" in gap.get("gap_kinds", [])
+    intake_events = [data for name, data in events if name == "intake"]
+    if local_gap:
+        assert len(intake_events) <= 1
+        if intake_events:
+            intake = intake_events[0]
+            assert intake.get("schema_version") == 1
+            assert intake.get("intake_kind") == "source_gap_facts"
+            assert intake.get("route_category") == gap.get("route_category")
+            assert all(
+                question.get("id") in {
+                    "jurisdiction", "incident_date", "document_status", "desired_outcome",
+                }
+                for question in intake.get("questions", [])
+            )
+    else:
+        assert not intake_events
+    if expected_reason is not None:
+        assert gap.get("reason") == expected_reason
+    gap_index = names.index("source_gap")
+    assert names.index("matter_route") < gap_index
+    assert "disclaimer" in names
+    for index, name in enumerate(names):
+        if name in {"sentence", "matter_plan", "coverage", "passages", "workflow", "intake", "sources", "relevance", "stop", "refused"}:
+            assert index > gap_index, f"{name} leaked before source_gap: {names}"
+    sentences = [data for name, data in events if name == "sentence"]
+    assert len(sentences) == 1
+    assert sentences[0].get("citations") == []
+    text = str(sentences[0].get("text") or "")
+    assert text.startswith("**What you can do next**")
+    assert "source-backed intake" in text
+    assert "not a conclusion" in text
+    return gap
+
+
+def _assert_intake_only_action_pack(route_payload: dict[str, Any], expected_id: str) -> None:
+    """A source-gap route must not serialize operational action text."""
+    action_pack = route_payload.get("action_pack")
+    assert isinstance(action_pack, dict)
+    assert action_pack.get("id") == expected_id
+    next_steps = action_pack.get("next_steps")
+    assert isinstance(next_steps, list)
+    assert next_steps == []
+    assert action_pack.get("portals") == []
+    assert action_pack.get("escalation") == []
+    assert action_pack.get("cautions") == []
+    assert action_pack.get("documents") == []
+
+
+@pytest.mark.needs_stack
+def test_answer_runtime_model_outage_is_safe_before_diagnostics(monkeypatch):
+    """A model can disappear after preflight; buffered diagnostics must not leak."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    # Force this case past source-pack/template preflight so it exercises the
+    # model disappearing after retrieval, rather than an earlier corpus gap.
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "_grounded_template_lines", lambda *args, **kwargs: [])
+
+    async def failing_stream(*args, **kwargs):
+        raise api_main.LLMModelUnavailable("model disappeared")
+        yield ""
+
+    monkeypatch.setattr(api_main, "stream_chat", failing_stream)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="llm_unavailable")
+
+
+@pytest.mark.needs_stack
+def test_answer_generic_stream_error_is_safe_and_sanitized(monkeypatch):
+    """Unexpected stream failures must not expose raw errors or stale metadata."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "_grounded_template_lines", lambda *args, **kwargs: [])
+
+    async def failing_stream(*args, **kwargs):
+        raise RuntimeError("secret database details")
+        yield ""
+
+    monkeypatch.setattr(api_main, "stream_chat", failing_stream)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="answer_stream_error")
+    assert "error" not in [name for name, _ in events]
+    assert "secret database details" not in str(events)
+
+
+@pytest.mark.needs_stack
+def test_answer_contract_floor_keeps_route_metadata_when_model_prose_is_suppressed(monkeypatch):
+    """Server-authored fallback sentences must not bypass the route prefix."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "_grounded_template_lines", lambda *args, **kwargs: [])
+
+    async def unsupported_stream(*args, **kwargs):
+        # No citation and no legal overlap: the model sentence is suppressed;
+        # the server contract floor remains as the first visible answer.
+        yield "Banana trains orbit purple umbrellas without legal support."
+
+    monkeypatch.setattr(api_main, "stream_chat", unsupported_stream)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    names = [name for name, _ in events]
+    assert names.count("matter_route") == 1
+    assert names.index("matter_route") < names.index("sentence")
+    assert names.index("matter_route") < names.index("sources")
+    sentence_texts = [str(data.get("text") or "") for name, data in events if name == "sentence"]
+    assert all("Banana trains" not in text for text in sentence_texts)
+
+
+@pytest.mark.needs_stack
+def test_answer_stop_without_visible_sentence_emits_safe_handoff(monkeypatch):
+    """An empty verified answer must become an explicit safe handoff."""
+    from apps.api import main as api_main
+    from apps.api.verifier import SentenceStatus, SentenceVerification
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "_grounded_template_lines", lambda *args, **kwargs: [])
+
+    def always_unsupported(sentence, idx_map, *, skip_nli=False):
+        return SentenceVerification(
+            text=sentence,
+            status=SentenceStatus.UNSUPPORTED,
+            reason="forced unsupported model prose",
+        )
+
+    monkeypatch.setattr(api_main, "verify_sentence", always_unsupported)
+    async def unsupported_stream(*args, **kwargs):
+        yield (
+            "Banana trains orbit purple umbrellas without legal support. "
+            "Tangerine clouds litigate silent bicycles without legal support."
+        )
+
+    monkeypatch.setattr(api_main, "stream_chat", unsupported_stream)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            assert r.status_code == 200
+            events = _collect_events(r)
+
+    names = [name for name, _ in events]
+    _assert_source_gap_handoff_stream(
+        events,
+        expected_reason="post_verification_empty_answer",
+    )
+    assert "stop" not in names
+    assert names.count("matter_route") == 1
+    assert "source_gap" in names
+    assert any(name == "sentence" for name in names)
+    assert set(names) <= {
+        "matter_route", "source_gap", "sentence", "timing", "disclaimer",
+        "intake", "suppressed",
+    }
+    assert not any(name in {"coverage", "passages", "workflow", "sources"} for name in names)
+    assert names.index("matter_route") < names.index("source_gap")
+
+
+@pytest.mark.needs_stack
+def test_answer_route_caveat_stop_keeps_terminal_events(monkeypatch):
+    """A caveat-triggered stop still emits the public stream terminators."""
+    from apps.api import config as cfg
+    from apps.api import main as api_main
+    from apps.api.verifier import SentenceStatus, SentenceVerification
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    settings = cfg.get_settings()
+    monkeypatch.setattr(settings, "min_unsupported_before_stop", 1)
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "_grounded_template_lines", lambda *args, **kwargs: [])
+    monkeypatch.setattr(api_main, "_route_regime_caveat", lambda *args, **kwargs: "Unsafe caveat.")
+    monkeypatch.setattr(
+        api_main,
+        "verify_sentence",
+        lambda sentence, idx_map, *, skip_nli=False: SentenceVerification(
+            text=sentence,
+            status=SentenceStatus.UNSUPPORTED,
+            reason="forced caveat-stop verification failure",
+        ),
+    )
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            assert r.status_code == 200
+            events = _collect_events(r)
+
+    names = [name for name, _ in events]
+    _assert_source_gap_handoff_stream(
+        events,
+        expected_reason="post_verification_empty_answer",
+    )
+    assert "stop" not in names
+    assert "timing" in names
+    assert "disclaimer" in names
+    assert not any(name in {"coverage", "passages", "workflow", "sources"} for name in names)
+    assert names.index("source_gap") < names.index("timing") < names.index("disclaimer")
+
+
+@pytest.mark.needs_stack
+def test_answer_verification_error_is_safe_before_metadata(monkeypatch):
+    """Verifier failures cannot leak the buffered route or passage events."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+    monkeypatch.setattr(api_main, "build_source_gap_event", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "_grounded_template_lines", lambda *args, **kwargs: [])
+
+    async def fake_stream(*args, **kwargs):
+        yield "A sentence that will fail verification [1]."
+
+    def failing_verify(*args, **kwargs):
+        raise RuntimeError("verifier unavailable")
+
+    monkeypatch.setattr(api_main, "stream_chat", fake_stream)
+    monkeypatch.setattr(api_main, "verify_sentence", failing_verify)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="answer_stream_error")
+
+
+@pytest.mark.needs_stack
+def test_answer_template_preflight_error_is_safe(monkeypatch):
+    """Template preflight failures must still return the canonical handoff."""
+    from apps.api import main as api_main
+
+    _patch_high_score_retrieve(monkeypatch)
+    _enable_fast_mode(monkeypatch)
+
+    def failing_verify(*args, **kwargs):
+        raise RuntimeError("template verifier unavailable")
+
+    monkeypatch.setattr(api_main, "verify_sentence", failing_verify)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="answer_stream_error")
+
+
+@pytest.mark.needs_stack
+def test_answer_retrieval_error_is_safe_and_sanitized(monkeypatch):
+    """Database/retrieval failures before SSE preparation get a handoff."""
+    from apps.api import main as api_main
+
+    async def failing_retrieve(*args, **kwargs):
+        raise RuntimeError("secret retrieval details")
+
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", failing_retrieve)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "online order arrived broken what can I do",
+            "top_k": 4,
+            "skip_nli": True,
+        }) as r:
+            events = _collect_events(r)
+
+    _assert_source_gap_handoff_stream(events, expected_reason="answer_retrieval_error")
+    assert "secret retrieval details" not in str(events)
 
 
 @pytest.mark.needs_stack
@@ -2179,6 +3373,10 @@ def test_primary_workflow_template_does_not_append_unrelated_contract_floor(monk
             required_source_pack="rte_2009",
         ),
     ]
+    _attach_plan_authority_ids_for_test(
+        chunks,
+        "college is holding my original certificates after I left the course",
+    )
 
     async def fake_multi_query_retrieve(*args, **kwargs):
         return chunks, []
@@ -2215,6 +3413,7 @@ def test_primary_registry_workflow_filters_neighboring_context_source(monkeypatc
     from apps.api import retrieval
     from apps.api.common_workflow_contracts import WorkflowTemplateResult
     from authority_registry.model import canonical_authority_id
+    from authority_registry import load_authority_registry
 
     def chunk(
         chunk_id: int,
@@ -2225,6 +3424,7 @@ def test_primary_registry_workflow_filters_neighboring_context_source(monkeypatc
         text: str,
     ) -> retrieval.RetrievedChunk:
         authority_ids = []
+        as_at = None
         if title == "Reserve Bank Integrated Ombudsman Scheme 2021":
             clause = anchor.rsplit("-", 1)[-1]
             authority_ids = [canonical_authority_id(
@@ -2232,6 +3432,10 @@ def test_primary_registry_workflow_filters_neighboring_context_source(monkeypatc
                 "clause",
                 clause,
             )]
+            record = load_authority_registry().by_key(
+                f"rbi_integrated_ombudsman_2021_clause_{clause}"
+            )
+            as_at = record.consolidation_as_at if record else None
         return retrieval.RetrievedChunk(
             chunk_id=chunk_id,
             document_id=chunk_id,
@@ -2239,7 +3443,7 @@ def test_primary_registry_workflow_filters_neighboring_context_source(monkeypatc
             text=text,
             source_type="bare_act",
             subject_area="banking",
-            as_at=None,
+            as_at=as_at,
             paragraph_no=None,
             title=title,
             citation=None,
@@ -2429,7 +3633,7 @@ def test_obc_certificate_template_does_not_use_sc_st_article_wording():
     assert "Article 342" not in joined
 
 
-def test_grounded_template_for_mgnrega_wage_delay_uses_mgnrega_sources():
+def test_grounded_template_for_mgnrega_wage_delay_stays_on_grievance_source():
     from apps.api.main import _grounded_template_lines
     from apps.api.matter_router import route_matter
 
@@ -2451,7 +3655,8 @@ def test_grounded_template_for_mgnrega_wage_delay_uses_mgnrega_sources():
 
     assert "28 days of NREGA work" in joined
     assert "grievance-redressal route [1]" in joined
-    assert "social-audit source" in joined and "[2]" in joined
+    assert "social-audit source" not in joined
+    assert "[2]" not in joined
 
 
 def test_mgnrega_template_only_uses_days_when_number_is_a_day_count():
@@ -3534,6 +4739,146 @@ def test_answer_contract_source_floor_only_adds_missing_route_authority():
     assert "**What you can do next**" not in joined
 
 
+def test_answer_contract_source_floor_only_adds_missing_plan_authority():
+    from apps.api.legal_issue_plan import build_matter_plan
+    from apps.api.main import _answer_contract_lines
+    from apps.api.matter_router import route_matter
+
+    query = "my boss touched me at work and I want to use POSH"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    posh_entry = next(
+        entry for entry in plan.authority_ledger if entry.source_pack_id == "posh_2013"
+    )
+    passages = [
+        {
+            "index": 1,
+            "title": "Sexual Harassment of Women at Workplace (Prevention, Prohibition and Redressal) Act 2013",
+            "statute_short": "POSH Act 2013",
+            "anchor": "posh-2013/sec-9",
+            "source_type": "bare_act",
+            "required_source_pack": "posh_2013",
+            "authority_ids": [],
+        },
+        {
+            "index": 6,
+            "title": "Sexual Harassment of Women at Workplace (Prevention, Prohibition and Redressal) Act 2013",
+            "statute_short": "POSH Act 2013",
+            "anchor": "posh-2013/sec-3",
+            "source_type": "bare_act",
+            "required_source_pack": "posh_2013",
+            "authority_ids": [posh_entry.authority_id],
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(
+        route,
+        passages,
+        state,
+        plan,
+        query=query,
+        source_floor_only=True,
+    )
+
+    assert any("Section 3" in line and "[6]" in line for line in lines)
+
+
+def test_answer_contract_legacy_floor_matches_cgst_plan_alias_and_cites_missing_section():
+    from apps.api.legal_issue_plan import build_matter_plan
+    from apps.api.main import _answer_contract_lines, _plan_authority_matches_passage
+    from apps.api.matter_router import route_matter
+
+    query = "hi, got gst show cause notice section 74 for 12 cr ITC mismatch ludhiana can i file case"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    section_16 = next(entry for entry in plan.authority_ledger if entry.section == "Section 16")
+    section_41 = next(entry for entry in plan.authority_ledger if entry.section == "Section 41")
+    section_73 = next(entry for entry in plan.authority_ledger if entry.section == "Section 73")
+    assert not _plan_authority_matches_passage(
+        "CGST Act 2017",
+        "Section 73",
+        {
+            "title": "Central Goods and Services Tax Rules 2017",
+            "statute_short": "CGST Rules 2017",
+            "anchor": "cgst-rules-2017/sec-73",
+            "required_source_pack": "cgst_2017",
+            "heading": "Central Goods and Services Tax Rules 2017, Section 73",
+        },
+    )
+    passages = [
+        {
+            "index": 1,
+            "title": "Central Goods and Services Tax Act 2017",
+            "statute_short": "Central Goods and Services Tax Act 2017",
+            "anchor": "cgst-2017/sec-16-b",
+            "heading": "Central Goods and Services Tax Act 2017, Section 16",
+            "source_type": "bare_act",
+            "required_source_pack": "cgst_2017",
+            "authority_ids": [section_16.authority_id],
+            "required_source_pack_authority_ids": {},
+            "text": "Central Goods and Services Tax Act 2017, Section 16",
+        },
+        {
+            "index": 2,
+            "title": "Central Goods and Services Tax Act 2017",
+            "statute_short": "Central Goods and Services Tax Act 2017",
+            "anchor": "cgst-2017/sec-41",
+            "heading": "Central Goods and Services Tax Act 2017, Section 41",
+            "source_type": "bare_act",
+            "required_source_pack": "cgst_2017",
+            "authority_ids": [section_41.authority_id],
+            "required_source_pack_authority_ids": {},
+            "text": "Central Goods and Services Tax Act 2017, Section 41",
+        },
+        {
+            "index": 3,
+            "title": "Central Goods and Services Tax Act 2017",
+            "statute_short": "Central Goods and Services Tax Act 2017",
+            "anchor": "cgst-2017/sec-73-a",
+            "heading": "Central Goods and Services Tax Act 2017, Section 73",
+            "source_type": "bare_act",
+            "required_source_pack": "cgst_2017",
+            "authority_ids": ["authority_wrong_cgst_section_73"],
+            "required_source_pack_authority_ids": {},
+            "text": "Central Goods and Services Tax Act 2017, Section 73",
+        },
+        {
+            "index": 5,
+            "title": "Central Goods and Services Tax Act 2017",
+            "statute_short": "Central Goods and Services Tax Act 2017",
+            "anchor": "cgst-2017/sec-73-a-reviewed",
+            "heading": "Central Goods and Services Tax Act 2017, Section 73",
+            "source_type": "bare_act",
+            "required_source_pack": "cgst_2017",
+            "authority_ids": [section_73.authority_id],
+            "required_source_pack_authority_ids": {},
+            "text": "Central Goods and Services Tax Act 2017, Section 73",
+        },
+    ]
+    state = {
+        "emitted_citation_indices": {1},
+        "seen_sentences": set(),
+        "saw_next_step_sentence": True,
+        "saw_next_step_header": True,
+        "server_template_used": True,
+        "emitted": 3,
+    }
+
+    lines = _answer_contract_lines(route, passages, state, plan, query=query)
+
+    assert any("Section 73" in line and "[5]" in line for line in lines)
+    assert not any("[3]" in line for line in lines)
+
+
 def test_registry_answer_coverage_gate_detects_only_visible_citation_omissions():
     from apps.api.legal_issue_plan import build_matter_plan
     from apps.api.main import _missing_registry_must_cite_authority_ids
@@ -4187,6 +5532,193 @@ def test_plan_authority_section_matching_is_exact_not_substring():
         "section 4(c)",
         {"title": "Panchayats (Extension to the Scheduled Areas) Act 1996", "anchor": "pesa-1996/sec-4-c"},
     )
+    assert _plan_authority_matches_passage(
+        "Negotiable Instruments Act 1881",
+        "section 142",
+        {
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-142-a",
+            "text": "Negotiable Instruments Act 1881, Section 142\n142. Cognizance of offences.",
+        },
+    )
+    assert not _plan_authority_matches_passage(
+        "Negotiable Instruments Act 1881",
+        "section 142",
+        {
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-142-a",
+            "text": "Negotiable Instruments Act 1881, Section 142A\n142A. Validation for transfer.",
+        },
+    )
+    assert _plan_authority_matches_passage(
+        "PESA Act 1996",
+        "section 4(c)",
+        {"title": "Panchayats (Extension to the Scheduled Areas) Act 1996", "anchor": "pesa-1996/sec-4"},
+    )
+
+
+def test_plan_authority_section_matching_uses_reviewed_heading_for_split_anchor():
+    from apps.api.main import _plan_authority_matches_passage
+
+    assert _plan_authority_matches_passage(
+        "Negotiable Instruments Act 1881",
+        "Section 142",
+        {
+            "title": "Negotiable Instruments Act 1881",
+            "heading": "Negotiable Instruments Act 1881, Section 142",
+            "anchor": "negotiable-instruments-1881/sec-142-b",
+        },
+    )
+    assert not _plan_authority_matches_passage(
+        "Negotiable Instruments Act 1881",
+        "Section 142",
+        {
+            "title": "Negotiable Instruments Act 1881",
+            "heading": "Negotiable Instruments Act 1881, Section 142A",
+            "anchor": "negotiable-instruments-1881/sec-142-a",
+        },
+    )
+
+
+def test_plan_must_cite_requires_exact_authority_metadata_when_available():
+    from apps.api.legal_issue_plan import build_matter_plan
+    from apps.api.main import _plan_must_cite_passages
+    from apps.api.matter_router import route_matter
+
+    query = "my cheque bounced and i want to file a case"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    section_142 = next(
+        entry for entry in plan.authority_ledger if entry.section == "Section 142"
+    )
+    passages = [
+        {
+            "index": 6,
+            "title": "Negotiable Instruments Act 1881",
+            "heading": "Negotiable Instruments Act 1881, Section 142",
+            "anchor": "negotiable-instruments-1881/sec-142-e",
+            "authority_ids": [],
+            "required_source_pack": "ni_act_1881",
+            "required_source_pack_authority_ids": {},
+            "source_type": "bare_act",
+        },
+        {
+            "index": 8,
+            "title": "Negotiable Instruments Act 1881",
+            "heading": "Negotiable Instruments Act 1881, Section 142",
+            "anchor": "negotiable-instruments-1881/sec-142-b",
+            "authority_ids": [section_142.authority_id],
+            "required_source_pack": "ni_act_1881",
+            "required_source_pack_authority_ids": {
+                "ni_act_1881": [section_142.authority_id],
+            },
+            "source_type": "bare_act",
+        },
+    ]
+
+    additions = _plan_must_cite_passages(route, plan, passages, cited={6}, query=query)
+
+    assert [passage["index"] for passage in additions] == [8]
+
+
+def test_plan_must_cite_fails_closed_for_invalid_or_missing_authority_metadata():
+    from apps.api.legal_issue_plan import build_matter_plan
+    from apps.api.main import _plan_must_cite_passages
+    from apps.api.matter_router import route_matter
+
+    query = "my cheque bounced and i want to file a case"
+    route = route_matter(query)
+    plan = build_matter_plan(query, route)
+    assert plan is not None
+    section_142 = next(
+        entry for entry in plan.authority_ledger if entry.section == "Section 142"
+    )
+    passages = [
+        {
+            "index": 6,
+            "title": "Negotiable Instruments Act 1881",
+            "heading": "Negotiable Instruments Act 1881, Section 142",
+            "anchor": "negotiable-instruments-1881/sec-142-e",
+            "authority_ids": None,
+            "required_source_pack": "ni_act_1881",
+            "required_source_pack_authority_ids": {
+                "ni_act_1881": [section_142.authority_id],
+            },
+        },
+        {
+            "index": 7,
+            "title": "Negotiable Instruments Act 1881",
+            "heading": "Negotiable Instruments Act 1881, Section 142",
+            "anchor": "negotiable-instruments-1881/sec-142-b",
+            "authority_ids": [],
+            "required_source_pack": "ni_act_1881",
+            "required_source_pack_authority_ids": {
+                "other_pack": [section_142.authority_id],
+            },
+        },
+        {
+            "index": 9,
+            "title": "Negotiable Instruments Act 1881",
+            "heading": "Negotiable Instruments Act 1881, Section 142",
+            "anchor": "negotiable-instruments-1881/sec-142-c",
+            "authority_ids": [section_142.authority_id],
+            "required_source_pack": "ni_act_1881",
+            "required_source_pack_authority_ids": {
+                "other_pack": ["authority_from_other_pack"],
+            },
+        },
+    ]
+
+    additions = _plan_must_cite_passages(route, plan, passages, cited={6}, query=query)
+
+    assert additions == []
+
+
+def test_plan_section_identity_ignores_body_mentions_and_numeric_parent_fallback():
+    from apps.api.main import _plan_authority_matches_passage
+
+    assert not _plan_authority_matches_passage(
+        "Negotiable Instruments Act 1881",
+        "Section 142",
+        {
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-142-a",
+            "text": "Background note\nThis chunk discusses Section 142 but is not its heading.",
+        },
+    )
+    assert not _plan_authority_matches_passage(
+        "Negotiable Instruments Act 1881",
+        "Section 142(1)",
+        {
+            "title": "Negotiable Instruments Act 1881",
+            "heading": "Negotiable Instruments Act 1881, Section 142",
+            "anchor": "negotiable-instruments-1881/sec-142",
+        },
+    )
+
+
+def test_plan_section_identity_supports_crpc_436a_split_anchor():
+    from apps.api.main import _plan_authority_matches_passage
+
+    assert _plan_authority_matches_passage(
+        "Code of Criminal Procedure 1973",
+        "Section 436A",
+        {
+            "title": "Code of Criminal Procedure 1973",
+            "heading": "Code of Criminal Procedure 1973, Section 436A",
+            "anchor": "crpc-1973/sec-436-a",
+        },
+    )
+    assert not _plan_authority_matches_passage(
+        "Code of Criminal Procedure 1973",
+        "Section 436A",
+        {
+            "title": "Code of Criminal Procedure 1973",
+            "heading": "Code of Criminal Procedure 1973, Section 436",
+            "anchor": "crpc-1973/sec-436",
+        },
+    )
 
 
 def test_cab_driver_template_does_not_invent_bias_facts():
@@ -4648,18 +6180,68 @@ def test_common_police_fir_and_pickup_templates_are_user_actionable():
 
     bike_q = "My bike is stolen, police is not filing FIR"
     bike_passages = [
-        {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
-        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a"},
-        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c"},
-        {"index": 4, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154"},
+        {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303", "required_source_pack": "bns_2023_vehicle_theft"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+        {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+        {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+        {"index": 5, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154", "required_source_pack": "crpc_1973_vehicle_theft_fir"},
+        {"index": 6, "title": "Indian Penal Code 1860", "anchor": "ipc-1860/sec-378", "required_source_pack": "ipc_1860_vehicle_theft"},
     ]
     bike_joined = " ".join(_grounded_template_lines(bike_q, route_matter(bike_q), bike_passages))
 
     assert "pre-1-July-2024 incident" in bike_joined
     assert "incident on or after 1 July 2024" in bike_joined
     assert "written-post route to the Superintendent of Police" in bike_joined
+    assert "If the incident was on or after 1 July 2024" in bike_joined
+    assert "After a refusal under the current procedure" not in bike_joined
     assert "written complaint, acknowledgement, and any refusal" in bike_joined
-    assert "[2]" in bike_joined and "[4]" in bike_joined
+    assert "[2]" in bike_joined and "[4]" in bike_joined and "[5]" in bike_joined
+
+
+@pytest.mark.parametrize(
+    ("query", "must_include", "must_not_include"),
+    [
+        (
+            "My bike is stolen and police are not filing FIR; incident was on 1 June 2023",
+            "For this pre-1-July-2024 incident, CrPC Section 154",
+            "BNSS Section 173 provides a written-post route",
+        ),
+        (
+            "My bike is stolen and police are not filing FIR; incident was on 1 August 2024",
+            "BNSS Section 173 provides the written-post route",
+            "For this pre-1-July-2024 incident, CrPC Section 154",
+        ),
+        (
+            "My bike is stolen and police are not filing FIR",
+            "If the incident was on or after 1 July 2024",
+            "After a refusal under the current procedure",
+        ),
+    ],
+)
+def test_vehicle_theft_renderer_keeps_criminal_regime_claims_date_bound(
+    query: str,
+    must_include: str,
+    must_not_include: str,
+):
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    lines = _grounded_template_lines(
+        query,
+        route_matter(query),
+        [
+                {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+                {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+                {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+                {"index": 4, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154", "required_source_pack": "crpc_1973_vehicle_theft_fir"},
+                {"index": 5, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303", "required_source_pack": "bns_2023_vehicle_theft"},
+                {"index": 6, "title": "Indian Penal Code 1860", "anchor": "ipc-1860/sec-378", "required_source_pack": "ipc_1860_vehicle_theft"},
+        ],
+    )
+    rendered = " ".join(lines)
+
+    assert must_include in rendered
+    assert must_not_include not in rendered
 
     pickup_q = "police has picked my son from my home in the night, i have not got FIR copy"
     pickup_passages = [
@@ -4677,6 +6259,30 @@ def test_common_police_fir_and_pickup_templates_are_user_actionable():
     assert "pickup time and place" in pickup_joined
     assert "station remains unknown" in pickup_joined
     assert "[1]" in pickup_joined and "[2]" in pickup_joined
+
+
+def test_vehicle_theft_legacy_answer_never_cites_current_bns_or_bnss_action_route():
+    from apps.api.main import _grounded_template_lines
+    from apps.api.matter_router import route_matter
+
+    query = "My bike is stolen and police are not filing FIR; incident was on 1 June 2023"
+    lines = _grounded_template_lines(
+        query,
+        route_matter(query),
+        [
+            {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+            {"index": 2, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154", "required_source_pack": "crpc_1973_vehicle_theft_fir"},
+            {"index": 3, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-156", "required_source_pack": "crpc_1973_vehicle_theft_fir"},
+            {"index": 4, "title": "Indian Penal Code 1860", "anchor": "ipc-1860/sec-378", "required_source_pack": "ipc_1860_vehicle_theft"},
+        ],
+    )
+    joined = " ".join(lines)
+
+    assert "IPC theft provision" in joined
+    assert "CrPC Section 154" in joined
+    assert "BNSS Section 175" not in joined
+    assert "BNS theft provision" not in joined
+    assert "route [3], [2], [4]" in joined
 
 
 def test_hut_burning_bridge_survives_tribal_route():
@@ -5438,6 +7044,12 @@ def test_grounded_template_for_senior_maintenance_cheque_cites_senior_and_ni():
             "anchor": "negotiable-instruments-1881/sec-138",
             "text": "Section 138 applies to a cheque drawn for discharge of a debt or other liability returned unpaid after demand notice.",
         },
+        {
+            "index": 3,
+            "title": "Negotiable Instruments Act 1881",
+            "anchor": "negotiable-instruments-1881/sec-142",
+            "text": "A complaint under Section 138 shall be made within one month of the date on which the cause of action arises.",
+        },
     ]
 
     lines = _grounded_template_lines(q, route_matter(q), passages)
@@ -5445,6 +7057,8 @@ def test_grounded_template_for_senior_maintenance_cheque_cites_senior_and_ni():
 
     assert "Senior Citizens Act source" in joined and "[1]" in joined
     assert "NI Act source" in joined and "[2]" in joined
+    assert "15-day payment window" in joined
+    assert "one-month filing window" in joined and "[3]" in joined
 
 
 def test_grounded_template_for_education_loan_cites_rbi_and_consumer():
@@ -6725,10 +8339,12 @@ def test_common_user_smoke_templates_answer_screenshot_failures():
         (
             "My bike is stolen, police is not filing FIR",
                 [
-                    {"index": 9, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
-                    {"index": 10, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a"},
-                    {"index": 11, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c"},
-                    {"index": 29, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154"},
+                    {"index": 9, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303", "required_source_pack": "bns_2023_vehicle_theft"},
+                    {"index": 10, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+                    {"index": 11, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+                    {"index": 12, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+                    {"index": 29, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154", "required_source_pack": "crpc_1973_vehicle_theft_fir"},
+                    {"index": 30, "title": "Indian Penal Code 1860", "anchor": "ipc-1860/sec-378", "required_source_pack": "ipc_1860_vehicle_theft"},
                 ],
                 ("pre-1-July-2024", "incident on or after 1 July 2024", "Superintendent of Police", "[10]", "[29]"),
         ),
@@ -8397,18 +10013,158 @@ def test_answer_errors_before_retrieval_when_llm_model_missing(monkeypatch):
             events = _collect_events(r)
 
     names = [e[0] for e in events]
-    assert names == ["matter_route", "matter_plan", "error", "timing"]
+    assert names == ["matter_route", "source_gap", "sentence", "timing", "disclaimer"]
     route_payload = next(d for ev, d in events if ev == "matter_route")
     assert route_payload["category"] == "police_fir"
-    plan_payload = next(d for ev, d in events if ev == "matter_plan")
-    assert plan_payload["primary_issue"] == "police_fir"
-    assert "incident_date_needed" in plan_payload["safety_flags"]
-    error_payload = next(d for ev, d in events if ev == "error")
-    assert error_payload["reason"] == "llm_model_unavailable"
-    timing_payload = next(d for ev, d in events if ev == "timing")
-    assert timing_payload["llm_model_available"] is False
-    assert "llm_preflight_ms" in timing_payload
-    assert retrieval_calls == []
+    _assert_intake_only_action_pack(route_payload, "police_fir")
+    assert route_payload["required_sources"] == []
+    assert route_payload["forums"] == []
+    _assert_source_gap_handoff_stream(events, expected_reason="llm_unavailable")
+
+
+@pytest.mark.needs_stack
+def test_plan_owned_pmla_answer_survives_llm_model_outage(monkeypatch):
+    from apps.api import main as api_main
+    from apps.api.retrieval import RetrievedChunk
+
+    async def missing_model(model: str | None = None):
+        return {
+            "ok": False,
+            "model": model or "missing-model",
+            "available_models": [],
+            "error": "model_not_found",
+            "message": "Configured Ollama model is not available.",
+        }
+
+    def chunk(index: int, section: int, text: str, pack: str) -> RetrievedChunk:
+        return RetrievedChunk(
+            chunk_id=9000 + index,
+            document_id=16237,
+                anchor=f"pmla-2002/sec-{section}@2024-08-30",
+            text=text,
+            title="Prevention of Money Laundering Act 2002",
+            source_type="bare_act",
+            subject_area="criminal",
+                as_at=date(2024, 8, 30),
+            paragraph_no=None,
+            citation=None,
+            court=None,
+            statute_short="Prevention of Money Laundering Act 2002",
+            dense_score=0.9,
+            bm25_score=0.9,
+            rerank_score=0.9,
+                metadata={
+                    "_required_source_pack": pack,
+                    "_authority_ids": {
+                        17: ["authority_992d6e46a6701e73ce6a"],
+                        8: ["authority_35fe197bfeb9198ac7b6"],
+                        26: ["authority_bad213d6876912e896cf"],
+                    }[section],
+                    "provenance_verified": True,
+                },
+        )
+
+    retrieved = [
+        chunk(1, 17, "Section 17 permits a freezing order when seizure is not practicable, requires service of a copy, forwarding of recorded reasons and material, and a continuation application within thirty days.", "pmla_2002_search_freeze"),
+        chunk(2, 8, "Section 8 provides at least thirty days notice and a hearing before the Adjudicating Authority decides whether property is involved in money-laundering.", "pmla_2002_asset_adjudication"),
+        chunk(3, 26, "Section 26 permits appeal to the Appellate Tribunal within forty-five days from receipt of the order, with a sufficient-cause proviso.", "pmla_2002_asset_appeal"),
+    ]
+
+    async def fake_multi_query_retrieve(*args, **kwargs):
+        return retrieved, []
+
+    monkeypatch.setattr(api_main, "check_model_available", missing_model)
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fake_multi_query_retrieve)
+    _enable_fast_mode(monkeypatch)
+
+    with TestClient(app) as c:
+        with c.stream("POST", "/answer", json={
+            "q": "Enforcement Directorate froze my bank account under PMLA",
+            "top_k": 8,
+            "skip_nli": True,
+        }) as response:
+            events = _collect_events(response)
+
+    names = [event for event, _data in events]
+    assert names == ["matter_route", "source_gap", "sentence", "timing", "disclaimer"]
+    route_payload = next(data for event, data in events if event == "matter_route")
+    _assert_intake_only_action_pack(route_payload, "pmla_ed")
+    assert route_payload["required_sources"] == []
+    assert route_payload["forums"] == []
+    _assert_source_gap_handoff_stream(events, expected_reason="llm_unavailable")
+
+
+@pytest.mark.needs_stack
+def test_plan_owned_uapa_bail_answer_survives_llm_model_outage(monkeypatch):
+    from apps.api import main as api_main
+    from apps.api.retrieval import RetrievedChunk
+
+    async def missing_model(model: str | None = None):
+        return {
+            "ok": False,
+            "model": model or "missing-model",
+            "available_models": [],
+            "error": "model_not_found",
+            "message": "Configured Ollama model is not available.",
+        }
+
+    retrieved = [
+        RetrievedChunk(
+            chunk_id=9101,
+            document_id=17201,
+            anchor="uapa-1967/sec-43d",
+            text=(
+                "Section 43D requires the Public Prosecutor to be heard and bars bail for "
+                "specified Chapter IV and VI accusations where the court finds reasonable "
+                "grounds for believing the accusation is prima facie true. It separately "
+                "permits extension beyond ninety days up to one hundred and eighty days only "
+                "on the specified Public Prosecutor report and court satisfaction."
+            ),
+            title="Unlawful Activities (Prevention) Act 1967",
+            source_type="bare_act",
+            subject_area="criminal",
+            as_at=None,
+            paragraph_no=None,
+            citation=None,
+            court=None,
+            statute_short="Unlawful Activities (Prevention) Act 1967",
+            dense_score=0.9,
+            bm25_score=0.9,
+            rerank_score=0.9,
+            metadata={
+                "_required_source_pack": "uapa_1967",
+                "_authority_ids": ["authority_4a9efaf22e5cf2d3d226"],
+                "provenance_verified": True,
+            },
+        )
+    ]
+
+    async def fake_multi_query_retrieve(*args, **kwargs):
+        return retrieved, []
+
+    monkeypatch.setattr(api_main, "check_model_available", missing_model)
+    monkeypatch.setattr(api_main, "multi_query_hybrid_retrieve", fake_multi_query_retrieve)
+    _enable_fast_mode(monkeypatch)
+
+    query = (
+        "urgent brother in jail 18 months UAPA bail when prima facie case "
+        "made out kya hota how to complain"
+    )
+    with TestClient(app) as c:
+        with c.stream(
+            "POST",
+            "/answer",
+            json={"q": query, "top_k": 8, "skip_nli": True},
+        ) as response:
+            events = _collect_events(response)
+
+    names = [event for event, _data in events]
+    assert names == ["matter_route", "source_gap", "sentence", "timing", "disclaimer"]
+    route_payload = next(data for event, data in events if event == "matter_route")
+    _assert_intake_only_action_pack(route_payload, "uapa_bail_43d")
+    assert route_payload["required_sources"] == []
+    assert route_payload["forums"] == []
+    _assert_source_gap_handoff_stream(events, expected_reason="llm_unavailable")
 
 
 @pytest.mark.needs_stack
@@ -8540,9 +10296,9 @@ def test_answer_no_relevance_event_when_refused(monkeypatch):
             events = _collect_events(r)
 
     names = [e[0] for e in events]
-    assert "refused" in names, f"expected refused, got {names}"
+    _assert_source_gap_handoff_stream(events, expected_reason="empty_retrieval")
     assert "relevance" not in names, (
-        f"refused answers must not emit relevance, got {names}"
+        f"source-gap answers must not emit relevance, got {names}"
     )
     # Defense in depth: compute_relevance was never even invoked.
     assert calls == [], (
@@ -8931,13 +10687,15 @@ def test_stage_500_offtopic_review_templates_are_user_specific():
 
     laptop_q = "my company laptop has been seized by police as part of investigation against my colleague, what are my rights"
     laptop_passages = [
-        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-105"},
-        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-497"},
-        {"index": 3, "title": "Information Technology Act 2000", "anchor": "it-act-2000/sec-2"},
+        {"index": 1, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-497"},
+        {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-503"},
+        {"index": 3, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-451"},
+        {"index": 4, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-457"},
+        {"index": 5, "title": "Information Technology Act 2000", "anchor": "it-act-2000/sec-2"},
     ]
     laptop_joined = " ".join(_grounded_template_lines(laptop_q, route_matter(laptop_q), laptop_passages))
     assert "search/seizure and property-custody problem" in laptop_joined
-    assert "interim custody, release, copying, or preservation" in laptop_joined
+    assert "return, interim custody, copying, or preservation directions" in laptop_joined
     assert "seizure memo, case/FIR number" in laptop_joined
 
     nclat_q = "tribunal order against me how to appeal NCLAT format and fees"
@@ -9047,6 +10805,14 @@ def test_stage5_common_labour_vendor_templates_handle_real_user_failures():
     assert "hear and determine claims under the Code" in minimum_wage
     assert "shortfall calculation" in minimum_wage
     assert "[1]" in minimum_wage and "[3]" in minimum_wage
+
+    gujarat_q = "code on wages applicable to me minimum wage notification gujarat for unskilled worker"
+    gujarat_wage = " ".join(_grounded_template_lines(gujarat_q, route_matter(gujarat_q), [
+        {"index": 1, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-6"},
+        {"index": 2, "title": "Code on Wages 2019", "anchor": "code-on-wages-2019/sec-45"},
+    ]))
+    assert "Gujarat notified rate" in gujarat_wage
+    assert "Karnataka or State" not in gujarat_wage
 
     waiter_q = "hotel waiter minimum wage paid below state rate what can I do"
     waiter_wage = " ".join(_grounded_template_lines(waiter_q, route_matter(waiter_q), [
@@ -9415,10 +11181,12 @@ def test_common_user_answer_templates_cover_ui_failure_prompts():
         "scooter stolen from parking station says give written complaint only",
         route_matter("scooter stolen from parking station says give written complaint only"),
         [
-            {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303"},
-            {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a"},
-            {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c"},
-            {"index": 4, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154"},
+            {"index": 1, "title": "Bharatiya Nyaya Sanhita 2023", "anchor": "bns-2023/sec-303", "required_source_pack": "bns_2023_vehicle_theft"},
+            {"index": 2, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-a", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+            {"index": 3, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-173-c", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+            {"index": 4, "title": "Bharatiya Nagarik Suraksha Sanhita 2023", "anchor": "bnss-2023/sec-175", "required_source_pack": "bnss_2023_vehicle_theft_fir"},
+            {"index": 5, "title": "Code of Criminal Procedure 1973", "anchor": "crpc-1973/sec-154", "required_source_pack": "crpc_1973_vehicle_theft_fir"},
+            {"index": 6, "title": "Indian Penal Code 1860", "anchor": "ipc-1860/sec-378", "required_source_pack": "ipc_1860_vehicle_theft"},
         ],
     ))
     assert "pre-1-July-2024" in theft
@@ -9502,6 +11270,7 @@ def test_common_user_near_miss_guards_do_not_overstate_facts():
     licence_info = "local body said my shop licence problem what documents needed"
     assert not _is_municipal_shop_sealing_query(licence_info)
     assert _is_municipal_shop_sealing_query("local body locked my commercial shop saying licence problem")
+    assert not _is_municipal_shop_sealing_query("private city corporation sealed my shop")
 
 
 def test_general_legal_template_stays_intake_not_fake_specific_route():

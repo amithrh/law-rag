@@ -9,13 +9,27 @@ from __future__ import annotations
 import json
 import logging
 import re
+import asyncio
+import secrets
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from authority_registry import load_authority_registry
+
 from apps.api import config as cfg
+from apps.api.admission import (
+    AdmissionController,
+    AdmissionUnavailable,
+    request_client_keys,
+)
 from apps.api import metrics
 from apps.api.authority_ledger import criminal_authority_ledger_template_lines
+from apps.api.authority_graph import authority_graph_contract_query_matches
+from apps.api.incident_facts import (
+    is_acid_threat_only_query as _is_acid_threat_only_query,
+    is_completed_acid_attack_query as _is_completed_acid_attack_query,
+)
 from apps.api.common_workflow_contracts import (
     WorkflowTemplateResult,
     common_workflow_contract_diagnostics,
@@ -33,6 +47,7 @@ from apps.api.customs_logic import (
     customs_svb_issue,
 )
 from apps.api.db import close_pool, get_pool
+from apps.api.intake import build_intake_event, build_source_gap_intake_event
 from apps.api.legal_issue_plan import (
     REVIEWED_CONTRACT_REQUIRED_CATEGORIES,
     MatterPlan,
@@ -50,21 +65,31 @@ from apps.api.matter_router import (
     MatterRoute,
     is_arbitral_account_restraint,
     is_civil_prejudgment_bank_attachment,
+    is_municipal_shop_sealing_issue,
     route_matter,
     route_matter_trace,
 )
 from apps.api.model_warmup import get_model_warmup_state, prewarm_models
+from apps.api.privacy import query_fingerprint
 from apps.api.relevance import RelevanceResult, RelevanceVerdict, compute_relevance
 from apps.api.retrieval import (
     RetrievedChunk,
+    _provenance_filter_sql,
     _preserve_required_source_packs,
     _required_authority_anchors,
+    _required_source_pack_ids,
     hybrid_retrieve,
     multi_query_hybrid_retrieve,
 )
+from apps.api.runtime_identity import runtime_identity
 from apps.api.source_gap import (
+    _passage_satisfies_plan_entry,
+    _valid_anchor_snapshot,
     best_source_match,
     build_source_gap_event,
+    canonical_source_gap_handoff,
+    has_housing_pet_authority,
+    matter_plan_integrity_gap,
     should_enforce_required_source,
 )
 from apps.api.verifier import (
@@ -73,11 +98,11 @@ from apps.api.verifier import (
     segment_sentences,
     verify_sentence,
 )
-from fastapi import FastAPI, Query, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware as _CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sse_starlette.sse import EventSourceResponse
 
 logger = logging.getLogger(__name__)
@@ -85,10 +110,27 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await get_pool()
-    await prewarm_models(cfg.get_settings())
-    yield
-    await close_pool()
+    settings = cfg.get_settings()
+    if settings.environment == "production" and not settings.answer_api_key:
+        raise RuntimeError("ANSWER_API_KEY is required when ENVIRONMENT=production")
+    if settings.environment == "production" and not getattr(
+        settings, "answer_distributed_admission", False
+    ):
+        raise RuntimeError(
+            "ANSWER_DISTRIBUTED_ADMISSION is required when ENVIRONMENT=production"
+        )
+    global _answer_admission_controller
+    _answer_admission_controller = AdmissionController(settings)
+    try:
+        await get_pool()
+        await _answer_admission_controller.start()
+        await prewarm_models(settings)
+        yield
+    finally:
+        if _answer_admission_controller is not None:
+            await _answer_admission_controller.close()
+            _answer_admission_controller = None
+        await close_pool()
 
 
 app = FastAPI(title="law-rag", lifespan=lifespan)
@@ -105,8 +147,105 @@ app.add_middleware(
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-Answer-Key", "X-Answer-Client"],
 )
+
+_answer_admission_controller: AdmissionController | None = None
+
+
+async def _get_answer_admission_controller() -> AdmissionController:
+    global _answer_admission_controller
+    if _answer_admission_controller is None:
+        controller = AdmissionController(cfg.get_settings())
+        await controller.start()
+        _answer_admission_controller = controller
+    return _answer_admission_controller
+
+
+@app.middleware("http")
+async def answer_admission_control(request: Request, call_next):
+    """Apply production admission controls before expensive answer work."""
+    protected_path = request.url.path in {"/answer", "/search"}
+    if not protected_path or (request.method != "POST" and request.url.path == "/answer"):
+        return await call_next(request)
+
+    settings = cfg.get_settings()
+    if settings.environment == "production" and not settings.answer_api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Answer service is not configured for production access."},
+        )
+    if settings.answer_api_key:
+        supplied = request.headers.get("x-answer-key", "")
+        if not secrets.compare_digest(supplied, settings.answer_api_key):
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
+    if request.method == "POST":
+        content_length = request.headers.get("content-length")
+        try:
+            declared_length = int(content_length) if content_length else None
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid request length"})
+        if declared_length is not None and declared_length > settings.answer_max_body_bytes:
+            return JSONResponse(status_code=413, content={"detail": "Request body is too large"})
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > settings.answer_max_body_bytes:
+                return JSONResponse(status_code=413, content={"detail": "Request body is too large"})
+        request._body = bytes(body)  # type: ignore[attr-defined]
+
+    try:
+        controller = await _get_answer_admission_controller()
+        decision = await controller.acquire(
+            request_client_keys(request, settings),
+            max_concurrent=settings.answer_max_concurrent,
+            max_waiters=settings.answer_max_waiters,
+            wait_ms=settings.answer_admission_wait_ms,
+            rate_limit_per_minute=settings.answer_rate_limit_per_minute,
+            network_rate_limit_per_minute=settings.answer_network_rate_limit_per_minute,
+            lease_seconds=settings.answer_admission_lease_sec,
+        )
+    except AdmissionUnavailable:
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "5"},
+            content={"detail": "Answer admission service is temporarily unavailable."},
+        )
+    if decision.lease is None:
+        if decision.reason == "rate_limit":
+            return JSONResponse(
+                status_code=429,
+                headers={"Retry-After": "60"},
+                content={"detail": "Too many answer requests. Please retry later."},
+            )
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": "1"},
+            content={"detail": "Answer service is busy. Please retry shortly."},
+        )
+    lease = decision.lease
+
+    try:
+        response = await call_next(request)
+    except BaseException:
+        await lease.release()
+        raise
+
+    body_iterator = getattr(response, "body_iterator", None)
+    if body_iterator is None:
+        await lease.release()
+        return response
+
+    async def guarded_body():
+        try:
+            async for chunk in body_iterator:
+                yield chunk
+        finally:
+            await lease.release()
+
+    response.body_iterator = guarded_body()
+    return response
 
 # Standard disclaimer rendered server-side on every answer (PLAN §4.4)
 DISCLAIMER_FOOTER = (
@@ -166,9 +305,9 @@ class SearchResponseItem(BaseModel):
 
 @app.get("/search")
 async def search(
-    q: str = Query(..., min_length=2),
-    sources: str | None = Query(None, description="comma-separated subset of {sc_judgment,hc_judgment,bare_act,circular}"),
-    subjects: str | None = Query(None, description="comma-separated subset of slice subject areas"),
+    q: str = Query(..., min_length=2, max_length=2000),
+    sources: str | None = Query(None, max_length=2000, description="comma-separated subset of {sc_judgment,hc_judgment,bare_act,circular}"),
+    subjects: str | None = Query(None, max_length=2000, description="comma-separated subset of slice subject areas"),
     top_k: int = Query(20, ge=1, le=100),
 ):
     pool = await get_pool()
@@ -206,10 +345,10 @@ async def search(
 # ----- /answer (SSE stream) --------------------------------------------------
 
 class AnswerRequest(BaseModel):
-    q: str
-    sources: list[str] | None = None
-    subjects: list[str] | None = None
-    top_k: int = 8           # passages handed to the LLM
+    q: str = Field(min_length=1, max_length=2000)
+    sources: list[str] | None = Field(default=None, max_length=20)
+    subjects: list[str] | None = Field(default=None, max_length=20)
+    top_k: int = Field(default=8, ge=1, le=20)  # passages handed to the LLM
     # `skip_nli` is a CLIENT HINT, not a directive. Per round-3 review
     # (security #4): exposing it as a free toggle let a caller `curl ...
     # -d '{"skip_nli":true}'` and bypass NLI for every cited sentence,
@@ -219,6 +358,42 @@ class AnswerRequest(BaseModel):
     # (answer_fast_enabled=False), the client hint is ignored and NLI
     # always runs.
     skip_nli: bool = False
+
+    @field_validator("q")
+    @classmethod
+    def normalize_query(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("q must contain non-whitespace text")
+        return value
+
+    @field_validator("sources", "subjects")
+    @classmethod
+    def normalize_filters(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized = [item.strip() for item in value]
+        if any(not item for item in normalized):
+            raise ValueError("filters must contain non-empty strings")
+        if any(len(item) > 100 for item in normalized):
+            raise ValueError("filter items are too long")
+        return normalized
+
+    @model_validator(mode="after")
+    def enforce_configured_limits(self) -> "AnswerRequest":
+        settings = cfg.get_settings()
+        if len(self.q) > settings.answer_max_query_chars:
+            raise ValueError("q exceeds the configured maximum length")
+        if self.top_k > settings.answer_max_top_k:
+            raise ValueError("top_k exceeds the configured maximum")
+        for values in (self.sources, self.subjects):
+            if values is None:
+                continue
+            if len(values) > settings.answer_max_filter_items:
+                raise ValueError("too many filter items")
+            if any(len(item) > settings.answer_max_filter_item_chars for item in values):
+                raise ValueError("filter item exceeds the configured maximum length")
+        return self
 
 
 def _make_passages(
@@ -237,19 +412,25 @@ def _make_passages(
     }
     for i, h in enumerate(retrieved[:n], start=1):
         required_source_pack = h.metadata.get("_required_source_pack")
+        required_source_packs = list(_required_source_pack_ids(h.metadata))
         explicit_authority_ids = list(h.metadata.get("_authority_ids") or [])
+        authority_ids_by_pack = h.metadata.get("_required_source_pack_authority_ids") or {}
         if registry_owned_ids:
             authority_ids = [
                 authority_id
                 for authority_id in explicit_authority_ids
                 if authority_id in registry_owned_ids
             ]
+            # Keep non-registry provenance in the pack-scoped map below. The
+            # answer layer can then cite the exact planned pack without
+            # exposing a neighbouring authority as registry-owned.
         else:
             authority_ids = explicit_authority_ids or (
                 authority_ids_for_passage(
                     plan,
                     title=h.title,
                     anchor=h.anchor,
+                    text=h.text,
                     source_pack_id=required_source_pack,
                     source_type=h.source_type,
                 ) if plan else []
@@ -257,20 +438,329 @@ def _make_passages(
         passages.append({
             "index": i,
             "text": h.text,
+            "heading": next(
+                (line.strip()[:240] for line in str(h.text or "").splitlines() if line.strip()),
+                "",
+            ),
+            # ``anchor`` is immutable corpus provenance. ``display_anchor``
+            # may be shorter after a focused extraction, but must never
+            # replace the anchor that identifies the verified DB chunk.
             "anchor": h.anchor,
+            "canonical_anchor": h.anchor,
+            "display_anchor": h.metadata.get("display_anchor") or h.anchor,
+            "chunk_id": h.chunk_id,
             "title": h.title,
             "source_type": h.source_type,
-            "document_id": h.document_id,
+            "provenance_verified": h.metadata.get("_provenance_verified") is True,
+            # The public passage contract carries the stable corpus document
+            # slug selected from the documents table, not the internal DB id.
+            # A missing key is intentionally visible to the source-gap gate.
+            "document_id": h.document_key,
             "as_at": h.as_at.isoformat() if h.as_at else None,
             "court": h.court,
             "citation": h.citation,
             "statute_short": h.statute_short,
             "required_source_pack": required_source_pack,
+            "required_source_packs": required_source_packs,
+            "required_source_pack_authority_ids": (
+                authority_ids_by_pack
+            ),
             "required_source_priority": h.metadata.get("_required_source_priority"),
             "authority_ids": authority_ids,
         })
         idx_map[i] = h.text
     return passages, idx_map
+
+
+def _filter_registry_owner_prompt_candidates(
+    candidates: list[RetrievedChunk],
+    plan: MatterPlan | None,
+) -> list[RetrievedChunk]:
+    """Keep registry authorities plus explicit non-registry contract tracks.
+
+    Some reviewed workflows are registry-owned for their procedure, while
+    their incident-date offence provision remains an explicit contract pack
+    until that statute is imported into the authority registry. Filtering by
+    registry IDs alone silently removes that second track and makes the
+    source-gap gate report a false miss. The same applies to the current and
+    legacy arrest-procedure packs when the incident date is still unknown:
+    those exact plan-selected Act passages are context, not registry-owned
+    workflow authorities, but they are necessary to explain both regimes.
+    """
+    registry_owned_ids = {
+        entry.authority_id
+        for entry in (plan.authority_ledger if plan is not None else [])
+        if entry.note == "registry_workflow_authority" and entry.authority_id
+    }
+    if not registry_owned_ids:
+        return candidates
+    registry_requirements = tuple(
+        entry
+        for entry in (plan.authority_ledger if plan is not None else [])
+        if entry.note == "registry_workflow_authority"
+        and entry.authority_id
+        and entry.source_pack_id
+    )
+    non_registry_requirements = tuple(
+        entry
+        for entry in (plan.authority_ledger if plan is not None else [])
+        if (
+            entry.must_cite
+            and entry.source_pack_id
+            and entry.registry_key is None
+            and entry.note != "registry_workflow_authority"
+        )
+    )
+    designated_arrest_context_packs = {
+        "constitution_article_21",
+        "bnss_2023",
+        "crpc_1973",
+    }
+    non_registry_required_packs = {
+        entry.source_pack_id for entry in non_registry_requirements
+    }
+    unknown_date_arrest_context_packs: set[str] = set()
+    if (
+        plan is not None
+        and plan.primary_issue == "arrest_custody_safeguard"
+        and plan.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    ):
+        unknown_date_arrest_context_packs = designated_arrest_context_packs.intersection(
+            {
+                source.source_pack_id for source in plan.retrieval_sources
+            }
+        )
+
+    def as_passage(hit: RetrievedChunk) -> dict:
+        return {
+            "title": hit.title,
+            "anchor": hit.anchor,
+            "text": hit.text,
+            "source_type": hit.source_type,
+            "document_id": hit.document_key,
+            "as_at": hit.as_at.isoformat() if hit.as_at else None,
+            "required_source_pack": hit.metadata.get("_required_source_pack"),
+            "required_source_packs": list(_required_source_pack_ids(hit.metadata)),
+            "required_source_pack_authority_ids": (
+                hit.metadata.get("_required_source_pack_authority_ids") or {}
+            ),
+            "authority_ids": list(hit.metadata.get("_authority_ids") or []),
+        }
+
+    def matches_entry(hit: RetrievedChunk, entry: object) -> bool:
+        return _passage_satisfies_plan_entry(plan, entry, as_passage(hit))
+
+    def matches_designated_arrest_context(hit: RetrievedChunk) -> bool:
+        """Retain only the two explicitly planned regime-context sources.
+
+        Pack metadata is necessary but not sufficient here: a stale or
+        mislabelled chunk must not become visible merely because it inherited
+        an arrest pack id. The title/anchor identity check mirrors the final
+        answer-floor guard below.
+        """
+        if not unknown_date_arrest_context_packs:
+            return False
+        return _matches_exact_planned_context(
+            plan,
+            {
+                "title": hit.title,
+                "anchor": hit.anchor,
+                "text": hit.text,
+                "source_type": hit.source_type,
+                "document_id": hit.document_key,
+                "required_source_pack": hit.metadata.get("_required_source_pack"),
+                "required_source_packs": list(_required_source_pack_ids(hit.metadata)),
+            },
+            allowed_pack_ids=unknown_date_arrest_context_packs,
+        )
+
+    retained: list[RetrievedChunk] = []
+    for hit in candidates:
+        explicit_ids = set(hit.metadata.get("_authority_ids") or [])
+        registry_match = any(
+            entry.authority_id in explicit_ids and matches_entry(hit, entry)
+            for entry in registry_requirements
+        )
+        non_registry_match = (
+            bool(set(_required_source_pack_ids(hit.metadata)) & non_registry_required_packs)
+            and any(matches_entry(hit, entry) for entry in non_registry_requirements)
+        )
+        explicit_unknown_date_context = matches_designated_arrest_context(hit)
+        if registry_match or non_registry_match or explicit_unknown_date_context:
+            retained.append(hit)
+    return retained
+
+
+def _matches_exact_planned_context(
+    plan: MatterPlan | None,
+    passage: dict,
+    *,
+    allowed_pack_ids: set[str],
+) -> bool:
+    """Match only the exact pack, document, title, and planned anchors.
+
+    Unknown-date arrest answers need both regime context and Article 21, but
+    those passages are not registry-owned workflow authorities. They still
+    must be selected from the exact MatterPlan source pack. A title containing
+    ``BNSS`` or a prefix such as ``/sec-21`` is insufficient because it can
+    admit an unplanned provision or a neighboring Act section.
+    """
+    if plan is None or not allowed_pack_ids:
+        return False
+    passage_pack_ids = {
+        str(value).strip()
+        for key in ("required_source_pack", "required_source_packs")
+        for value in (
+            passage.get(key)
+            if key == "required_source_pack"
+            else (passage.get(key) or [])
+        ,)
+        if str(value or "").strip()
+    }
+    for source in plan.retrieval_sources:
+        if source.source_pack_id not in allowed_pack_ids.intersection(passage_pack_ids):
+            continue
+        normalized_title = re.sub(
+            r"[^a-z0-9]+", " ", str(passage.get("title") or "").lower()
+        ).strip()
+        if not any(
+            normalized_title == re.sub(r"[^a-z0-9]+", " ", str(title).lower()).strip()
+            for title in source.title_patterns
+            if title
+        ):
+            continue
+        document_id = str(passage.get("document_id") or "").strip().lower()
+        if source.doc_ids and document_id not in {
+            str(doc_id).strip().lower() for doc_id in source.doc_ids if doc_id
+        }:
+            continue
+        source_type = str(passage.get("source_type") or "").strip()
+        if source.source_types and source_type not in set(source.source_types):
+            continue
+        anchor = str(passage.get("anchor") or "").lower()
+        if any(
+            re.search(
+                rf"{re.escape(str(pattern).lower())}(?:-official)?(?:@[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}(?:__[0-9]+(?:-[a-z])?)?|__[0-9]+(?:-[a-z])?(?:@[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}})?|)$",
+                anchor,
+            )
+            for pattern in source.anchor_patterns
+            if pattern
+        ) and _valid_anchor_snapshot(anchor):
+            return True
+    return False
+
+
+def _backfill_registry_required_authorities(
+    candidates: list[RetrievedChunk],
+    plan: MatterPlan | None,
+) -> list[RetrievedChunk]:
+    """Build synthetic canonical records for isolated unit tests only.
+
+    Production serving must never use this helper: its records are in-memory
+    fixtures, not provenance-verified corpus chunks. The answer flow fails
+    closed through the source-gap/contract gate when ordinary retrieval misses
+    a required authority.
+    """
+    if plan is None:
+        return candidates
+
+    registry_requirements = tuple(
+        entry
+        for entry in plan.authority_ledger
+        if (
+            entry.note == "registry_workflow_authority"
+            and entry.authority_id
+            and entry.source_pack_id
+        )
+    )
+    if not registry_requirements:
+        return candidates
+
+    present_authority_ids: set[str] = set()
+    for hit in candidates:
+        explicit = set(hit.metadata.get("_authority_ids") or [])
+        inferred = set(
+            authority_ids_for_passage(
+                plan,
+                title=hit.title,
+                anchor=hit.anchor,
+                text=hit.text,
+                source_pack_id=hit.metadata.get("_required_source_pack"),
+                source_type=hit.source_type,
+            )
+        )
+        present_authority_ids.update(explicit | inferred)
+
+    missing = [
+        requirement
+        for requirement in registry_requirements
+        if requirement.authority_id not in present_authority_ids
+    ]
+    if not missing:
+        return candidates
+
+    registry = load_authority_registry()
+    record_by_authority_id = {
+        record.authority_id_expected: record
+        for record in registry.records
+    }
+    # These candidates are in-memory unit fixtures. Real retrieval already
+    # carries explicit DB authority mappings; materialize the legacy
+    # title/anchor inference here only so fixture passages exercise the same
+    # explicit-ID source-gap gate as production passages.
+    backfilled = []
+    for hit in candidates:
+        explicit = list(hit.metadata.get("_authority_ids") or [])
+        if not explicit:
+            inferred = authority_ids_for_passage(
+                plan,
+                title=hit.title,
+                anchor=hit.anchor,
+                text=hit.text,
+                source_pack_id=hit.metadata.get("_required_source_pack"),
+                source_type=hit.source_type,
+            )
+            if inferred:
+                hit.metadata = {**hit.metadata, "_authority_ids": inferred}
+        backfilled.append(hit)
+    next_chunk_id = -900_000 - len(backfilled)
+    for requirement in missing:
+        record = record_by_authority_id.get(requirement.authority_id)
+        if record is None:
+            logging.getLogger(__name__).warning(
+                "required registry authority missing from registry: authority=%s pack=%s",
+                requirement.authority_id,
+                requirement.source_pack_id,
+            )
+            continue
+        backfilled.append(
+            RetrievedChunk(
+                chunk_id=next_chunk_id,
+                document_id=next_chunk_id,
+                anchor=f"{record.doc_id}{record.provision.canonical_anchor}",
+                text=record.text,
+                source_type=record.source_type,
+                subject_area=record.subject_area,
+                as_at=record.consolidation_as_at or record.effective_from,
+                paragraph_no=None,
+                title=record.title,
+                citation=None,
+                court=None,
+                statute_short=record.statute,
+                dense_score=0.0,
+                bm25_score=0.0,
+                sparse_score=0.0,
+                rerank_score=1_000_000.0,
+                rrf_score=1_000_000.0,
+                metadata={
+                    "_authority_ids": [record.authority_id_expected],
+                    "_registry_authority_backfill": True,
+                    "_required_source_pack": record.retrieval.source_pack_id,
+                },
+            )
+        )
+        next_chunk_id -= 1
+    return backfilled
 
 
 _STATE_SPECIFIC_SOURCE_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
@@ -394,10 +884,10 @@ def _filter_state_specific_source_mismatches(
         if "christian" in q and "indian-succession-1925/sec-50" in haystack:
             mismatch = True
             logger.info(
-                "filtered personal-law source mismatch: title=%r anchor=%r query=%r",
+                "filtered personal-law source mismatch: title=%r anchor=%r query_hash=%s",
                 hit.title,
                 hit.anchor,
-                query[:120],
+                query_fingerprint(query),
             )
         for source_terms, jurisdiction_terms in _STATE_SPECIFIC_SOURCE_RULES:
             if mismatch:
@@ -413,10 +903,10 @@ def _filter_state_specific_source_mismatches(
             ):
                 mismatch = True
                 logger.info(
-                    "filtered state-specific source mismatch: title=%r anchor=%r query=%r",
+                    "filtered state-specific source mismatch: title=%r anchor=%r query_hash=%s",
                     hit.title,
                     hit.anchor,
-                    query[:120],
+                    query_fingerprint(query),
                 )
                 break
         if not mismatch:
@@ -448,6 +938,11 @@ def _timing_event(
     expansion_variant_count: int = 0,
     state: dict | None = None,
 ) -> dict:
+    # Keep the public timing schema stable for early exits and source-gap
+    # handoffs. A zero means the stage was intentionally skipped, not that
+    # its measurement was lost.
+    for stage in ("retrieval", "llm_stream", "verification"):
+        timings.setdefault(stage, 0.0)
     payload: dict[str, object] = {
         "total_ms": round((time.perf_counter() - request_started) * 1000, 1),
         "llm_model": llm_model,
@@ -770,11 +1265,156 @@ def _reviewed_workflow_relevance_result(
     )
 
 
-def _initial_route_events(route: MatterRoute, plan: MatterPlan | None, query: str | None = None) -> list[dict]:
-    events = [_matter_route_event(route, query)]
+def _initial_route_events(
+    route: MatterRoute,
+    plan: MatterPlan | None,
+    query: str | None = None,
+    *,
+    source_gap_event: dict | None = None,
+    intake_only: bool = False,
+) -> list[dict]:
+    if source_gap_event is not None:
+        # This is the last backend boundary before SSE serialization. Treat
+        # every caller, including early-return branches and tests, as
+        # untrusted input and reduce it to the canonical non-answer schema.
+        raw_reason = (
+            str(source_gap_event.get("reason") or "source_gap")
+            if isinstance(source_gap_event, dict)
+            else "invalid_source_gap_payload"
+        )
+        source_gap_event = _source_gap_handoff_payload(
+            route,
+            plan,
+            source_gap_event,
+            reason=raw_reason,
+        )
+    source_gap_present = isinstance(source_gap_event, dict)
+    gap_kinds = source_gap_event.get("gap_kinds") if source_gap_present else None
+    safe_handoff = bool(
+        source_gap_present
+        and source_gap_event.get("has_gap") is True
+        and source_gap_event.get("outcome") == "source_gap_handoff"
+        and source_gap_event.get("safe_handoff_only") is True
+        and isinstance(gap_kinds, list)
+        and gap_kinds
+        and all(isinstance(kind, str) and kind.strip() for kind in gap_kinds)
+    )
+    if source_gap_present:
+        # A source-gap contract is a non-answer. Never serialize a legal plan
+        # alongside it. A jurisdictional gap may still receive a bounded
+        # intake event so the user can supply facts for a later retry.
+        plan = None
+        intake_only = True
+    if intake_only:
+        # A source gap withholds the legal answer. Preserve only the triage
+        # label, urgent flags, and a record checklist; all action text remains
+        # client-authored and authority-dependent steps remain hidden because
+        # the route itself is not source-verified.
+        route_event = route.to_event()
+        action_pack = route_event.get("action_pack")
+        if isinstance(action_pack, dict):
+            route_event["action_pack"] = {
+                "id": action_pack.get("id"),
+                "title": action_pack.get("title"),
+                "next_steps": [],
+                "documents": [],
+                "portals": [],
+                "escalation": [],
+                "cautions": [],
+            }
+        route_event.update({
+            "required_sources": [],
+            "forums": [],
+            "legal_regime": None,
+            "intake_only": True,
+        })
+        events = [{"event": "matter_route", "data": json.dumps(route_event)}]
+    else:
+        events = [_matter_route_event(route, query)]
+    if source_gap_event is not None:
+        events.append({"event": "source_gap", "data": json.dumps(source_gap_event)})
+        if safe_handoff and query:
+            intake = build_source_gap_intake_event(query, route, source_gap_event)
+            if intake is not None:
+                events.append({"event": "intake", "data": json.dumps(intake)})
     if plan is not None:
         events.append(_matter_plan_event(plan))
+        if query:
+            intake = build_intake_event(query, route, plan)
+            if intake is not None:
+                events.append({"event": "intake", "data": json.dumps(intake)})
     return events
+
+
+def _source_gap_handoff_payload(
+    route: MatterRoute,
+    plan: MatterPlan | None,
+    source_gap_event: dict | None,
+    *,
+    reason: str,
+) -> dict:
+    # Every explicit source-gap handoff is a non-answer. Keep construction in
+    # source_gap.py so direct callers cannot accidentally emit the raw schema.
+    return canonical_source_gap_handoff(
+        source_gap_event,
+        route_category=route.category,
+        reason=reason,
+    )
+
+
+def _source_gap_handoff_event(
+    route: MatterRoute,
+    plan: MatterPlan | None,
+    source_gap_event: dict | None = None,
+    *,
+    reason: str = "source_gap",
+) -> dict:
+    """Return safe, non-legal-claim guidance when coverage is too low.
+
+    A corpus gap should not become a blank screen. The route/action pack already
+    contains the intake facts and immediate operational steps; this sentence
+    only tells the user how to use them and explicitly withholds conclusions,
+    deadlines, and forum-specific legal advice until the missing authority is
+    verified.
+    """
+    payload = _source_gap_handoff_payload(route, plan, source_gap_event, reason=reason)
+    facts = list(plan.required_facts if plan is not None else route.missing_facts)
+    fact_text = ", ".join(facts[:4]) if facts else "the relevant dates and documents"
+    missing_authority = bool(payload.get("missing_required_sources"))
+    if payload.get("safe_handoff_only"):
+        lead = (
+            "Keep the key records, including "
+            f"{fact_text}, and take them to DLSA/legal aid or a qualified lawyer "
+            "for source-backed intake before acting."
+        )
+    elif missing_authority:
+        lead = (
+            "Keep the key records, including "
+            f"{fact_text}, and take them through the forum or legal-aid route shown "
+            "above to verify the missing authority before acting."
+        )
+    else:
+        lead = (
+            "Keep the key records, including "
+            f"{fact_text}, and take them to DLSA/legal aid or a qualified lawyer for "
+            "source-backed intake before acting."
+        )
+    return {
+        "event": "sentence",
+        "data": json.dumps({
+            "text": (
+                "**What you can do next** "
+                f"{lead} "
+                "This is an intake handoff, not a conclusion about your rights or deadline."
+            ),
+            "status": SentenceStatus.GUIDANCE.value,
+            "citations": [],
+            "entailment_score": None,
+            "reason": "source-gap intake handoff; no unsupported legal conclusion",
+            "auto_cited": False,
+        }),
+        "source_gap": payload,
+    }
 
 
 def _critical_route_needs_reviewed_contract(
@@ -816,7 +1456,7 @@ def _critical_route_contract_gap_message(route: MatterRoute, source_gap: dict | 
         return (
             "This is a high-risk legal route and I do not have the reviewed source-backed "
             "answer contract needed to answer it safely. I have shown the missing-source "
-            "warning above; treat this as intake first and contact DLSA/legal aid, a "
+            "handoff above; treat this as intake first and contact DLSA/legal aid, a "
             "qualified lawyer, or the relevant court/forum before acting."
         )
     label = route.label or "this legal issue"
@@ -851,13 +1491,11 @@ def _source_gap_event_for_retrieved(
     plan: MatterPlan | None = None,
 ) -> dict | None:
     filtered = _filter_state_specific_source_mismatches(query, retrieved) if retrieved else []
-    pack_ids = list(
-        dict.fromkeys(
-            str(chunk.metadata.get("_required_source_pack"))
-            for chunk in filtered
-            if chunk.metadata.get("_required_source_pack")
-        )
-    )
+    pack_ids = list(dict.fromkeys(
+        pack_id
+        for chunk in filtered
+        for pack_id in _required_source_pack_ids(chunk.metadata)
+    ))
     preserved = _preserve_required_source_packs(
         filtered,
         pack_ids,
@@ -871,6 +1509,7 @@ def _source_gap_event_for_retrieved(
         required_sources=route.required_sources or [],
         passages=passages,
         plan=plan,
+        legal_regime=route.legal_regime,
     )
 
 
@@ -890,6 +1529,11 @@ def _legacy_template_preempts_workflow(
     """
     if workflow is None:
         return False
+    # Subscription/refund facts are narrower than the generic defective-goods
+    # workflow. Let the specialist render when its two concrete Consumer Act
+    # sections are present, otherwise retain the broad workflow or fallback.
+    if route.category == "consumer" and _is_subscription_refund_query(query):
+        return bool(_subscription_refund_template_lines(query, passages))
 
     q = query.lower()
     if workflow.id == "relative_adoption_no_papers":
@@ -1185,6 +1829,21 @@ def _grounded_template_lines(
             else []
         )
 
+    # A vehicle-theft query is source-gated as one complete procedure/offence
+    # contract. Do not let a legacy FIR template answer after strict contract
+    # resolution failed because a required regime/source-pack authority is
+    # missing or foreign.
+    if (
+        common_workflow is None
+        and route.category in {"police_fir", "criminal_general"}
+        and authority_graph_contract_query_matches(
+            query,
+            route,
+            "vehicle_theft_fir_refusal",
+        )
+    ):
+        return []
+
     if (
         route.category == "workplace_injury_compensation"
         and _has_any_term(q, ("mukadam", "beat", "beaten", "assault", "head injury", "stitches", "old wages"))
@@ -1201,6 +1860,17 @@ def _grounded_template_lines(
         injury_lines = _construction_injury_template_lines(q, passages)
         if injury_lines:
             return injury_lines
+
+    # Keep the specific, date-bound theft/FIR answer ahead of the generic
+    # police workflow contract when this endpoint is used without a MatterPlan.
+    if route.category in {"police_fir", "criminal_general"} and _is_theft_fir_refusal_query(q):
+        theft_fir_lines = _theft_fir_refusal_template_lines(
+            q,
+            passages,
+            legal_regime=route.legal_regime,
+        )
+        if theft_fir_lines:
+            return theft_fir_lines
 
     if workflow_contract_preempts_legacy(common_workflow) and not _legacy_template_preempts_workflow(
         query,
@@ -1548,7 +2218,7 @@ def _grounded_template_lines(
         if bocw_lines:
             return bocw_lines
 
-    if route.category == "labour_exploitation_discrimination" and _is_minimum_wage_query(q):
+    if route.category in {"labour_exploitation_discrimination", "labour_compliance"} and _is_minimum_wage_query(q):
         labour_wage_lines = _labour_wage_claim_template_lines(q, passages)
         if labour_wage_lines:
             return labour_wage_lines
@@ -3654,7 +4324,12 @@ def _digital_device_seizure_template_lines(query: str, passages: list[dict]) -> 
     return lines
 
 
-def _theft_fir_refusal_template_lines(query: str, passages: list[dict]) -> list[str]:
+def _theft_fir_refusal_template_lines(
+    query: str,
+    passages: list[dict],
+    *,
+    legal_regime: str | None = None,
+) -> list[str]:
     bnss173 = _find_passage_index(
         passages,
         title_terms=("bharatiya nagarik suraksha",),
@@ -3686,38 +4361,101 @@ def _theft_fir_refusal_template_lines(query: str, passages: list[dict]) -> list[
         anchor_terms=("/sec-317",),
     )
     bns_theft = bns303 if bns303 is not None else bns317
-    if bnss173 is None and crpc154 is None and bns_theft is None:
+    ipc378 = _find_passage_index(
+        passages,
+        title_terms=("indian penal",),
+        anchor_terms=("/sec-378",),
+    )
+    ipc379 = _find_passage_index(
+        passages,
+        title_terms=("indian penal",),
+        anchor_terms=("/sec-379",),
+    )
+    ipc_theft = ipc379 if ipc379 is not None else ipc378
+    if bnss173 is None and crpc154 is None and bns_theft is None and ipc_theft is None:
         return []
     stolen_item = "scooter" if "scooter" in query else "bike" if "bike" in query else "phone" if "phone" in query else "vehicle/property"
     lines = ["**Short answer**"]
-    if bns303 is not None:
+    regime = str(legal_regime or "")
+    if not regime:
+        regime = str(getattr(route_matter(query), "legal_regime", "") or "")
+    legacy_regime = regime == "legacy_ipc_crpc_evidence_for_pre_2024_incident"
+    current_regime = regime == "current_bns_bnss_bsa_for_post_2024_incident"
+    if legacy_regime:
+        if ipc_theft is not None:
+            lines.append(
+                f"For this pre-1-July-2024 incident, the IPC theft provision is the offence source to check against the FIR and police papers [{ipc_theft}]."
+            )
+        if crpc154 is not None:
+            lines.append(
+                f"For this pre-1-July-2024 incident, CrPC Section 154 is the FIR-information source for information given to the police station [{crpc154}]."
+            )
+        if crpc156 is not None:
+            lines.append(
+                f"For this pre-1-July-2024 incident, CrPC Section 156 is the Magistrate-investigation source to check if police inaction continues [{crpc156}]."
+            )
+    elif current_regime:
+        if bns303 is not None:
+            lines.append(
+                f"For this post-1-July-2024 incident, the current offence source to check first is the BNS theft provision in the retrieved material [{bns303}]."
+            )
+        elif bns317 is not None:
+            lines.append(
+                f"For this post-1-July-2024 incident, the BNS source defines property whose possession has been transferred by theft as stolen property; the exact FIR section still depends on the police papers [{bns317}]."
+            )
+        if bnss173 is not None:
+            lines.append(
+                f"BNSS Section 173 provides the written-post route to the Superintendent of Police when the station does not record the information for this post-1-July-2024 incident [{bnss173}]."
+            )
+        if bnss175 is not None:
+            lines.append(
+                f"If the station still refuses after a written theft complaint, BNSS Section 175 is the Magistrate-investigation source to check with legal aid or a lawyer [{bnss175}]."
+            )
+    else:
+        # Unknown dates must keep both regimes visible rather than silently
+        # choosing the newer procedure from the wording of the question.
         lines.append(
-            f"For a stolen {stolen_item}, the current offence source to check first is the BNS theft provision in the retrieved material [{bns303}]."
+            "The incident date decides whether the BNS/BNSS/BSA or IPC/CrPC/Evidence Act regime applies."
         )
-    elif bns317 is not None:
-        lines.append(
-            f"For a stolen {stolen_item}, the BNS source defines property whose possession has been transferred by theft as stolen property; the exact FIR section still depends on the incident date and police papers [{bns317}]."
-        )
-    if bnss173 is not None:
-        lines.append(
-            f"For police refusal to register the case, BNSS Section 173 is the current-procedure source for information given to the officer in charge of a police station [{bnss173}]."
-        )
-    elif crpc154 is not None:
-        lines.append(
-            f"For a pre-1 July 2024 or CrPC-framed incident, CrPC Section 154 is the FIR-information source for information given to the police station [{crpc154}]."
-        )
-    if bnss175 is not None:
-        lines.append(
-            f"If the station still refuses after a written theft complaint, BNSS Section 175 is the Magistrate-investigation source to check with legal aid or a lawyer [{bnss175}]."
-        )
-    elif crpc156 is not None:
-        lines.append(
-            f"For a CrPC-framed incident, CrPC Section 156 is the Magistrate-investigation source to check if police inaction continues [{crpc156}]."
-        )
+        if bns_theft is not None:
+            lines.append(
+                f"For an incident on or after 1 July 2024, check the BNS theft provision against the FIR and police papers [{bns_theft}]."
+            )
+        if ipc_theft is not None:
+            lines.append(
+                f"For a pre-1-July-2024 incident, check the IPC theft provision against the FIR and police papers [{ipc_theft}]."
+            )
+        if bnss173 is not None:
+            lines.append(
+                f"For an incident on or after 1 July 2024, BNSS Section 173 provides the written-post route to the Superintendent of Police. If the incident was on or after 1 July 2024, use this current-regime source rather than the legacy route [{bnss173}]."
+            )
+        if crpc154 is not None:
+            lines.append(
+                f"For a pre-1-July-2024 incident, CrPC Section 154 is the comparable FIR-information source [{crpc154}]."
+            )
+        if bnss175 is not None:
+            lines.append(
+                f"For the current regime, BNSS Section 175 is the Magistrate-investigation source to check if police inaction continues [{bnss175}]."
+            )
+        if crpc156 is not None:
+            lines.append(
+                f"For the legacy regime, CrPC Section 156 is the comparable Magistrate-investigation source [{crpc156}]."
+            )
     lines.append("**What you can do next**")
-    action_cite = bnss175 if bnss175 is not None else crpc156 if crpc156 is not None else bnss173 if bnss173 is not None else crpc154 if crpc154 is not None else bns_theft
+    if legacy_regime:
+        action_cites = [crpc156, crpc154, ipc_theft]
+    elif current_regime:
+        action_cites = [bnss175, bnss173, bns_theft]
+    else:
+        action_cites = [bnss175, crpc156, bnss173, crpc154, bns_theft, ipc_theft]
+    action_cite_values = [str(index) for index in action_cites if index is not None]
+    action_cite = (
+        "[" + "], [".join(action_cite_values) + "]"
+        if action_cite_values
+        else "the retrieved police-procedure source"
+    )
     lines.append(
-        f"- Give a written theft complaint with {stolen_item} details, date/place, CCTV or witness details, and keep acknowledgement; if the station says only to leave a written complaint or still refuses FIR registration, escalate with the written proof to the Superintendent of Police/senior police, DLSA, or the Magistrate route [{action_cite}]."
+        f"- Give a written theft complaint with {stolen_item} details, date/place, CCTV or witness details, and keep the written complaint, acknowledgement, and any refusal proof; if the station says only to leave a written complaint or still refuses FIR registration, escalate with the written proof to the Superintendent of Police/senior police, DLSA, or the Magistrate route {action_cite}."
     )
     return lines
 
@@ -6868,7 +7606,7 @@ def _labour_wage_claim_template_lines(query: str, passages: list[dict]) -> list[
             )
             if wage6 is not None:
                 lines.append(
-                    f"The Code on Wages minimum-wage source says the appropriate Government fixes the minimum rate of wages payable to employees, so compare the Karnataka or State notified rate with the amount actually paid [{wage6}]."
+                    f"The Code on Wages minimum-wage source says the appropriate Government fixes the minimum rate of wages payable to employees, so compare {state_phrase} notified rate with the amount actually paid [{wage6}]."
                 )
             if wage45 is not None:
                 lines.append(
@@ -11365,7 +12103,12 @@ def _senior_maintenance_cheque_template_lines(passages: list[dict]) -> list[str]
         title_terms=("negotiable instruments",),
         anchor_terms=("/sec-138",),
     )
-    if senior4 is None and senior5 is None and ni138 is None:
+    ni142 = _find_passage_index(
+        passages,
+        title_terms=("negotiable instruments",),
+        anchor_terms=("/sec-142",),
+    )
+    if senior4 is None and senior5 is None and ni138 is None and ni142 is None:
         return []
     lines = ["**Short answer**"]
     if senior4 is not None:
@@ -11380,6 +12123,13 @@ def _senior_maintenance_cheque_template_lines(passages: list[dict]) -> list[str]
         lines.append(
             f"For the bounced cheque part, the NI Act source applies where a cheque drawn for discharge of a debt or other liability is returned unpaid after the statutory demand process [{ni138}]."
         )
+        lines.append(
+            f"Check the bank return-memo date carefully: where Section 138 applies, the written demand is ordinarily sent within thirty days of receiving bank information of dishonour, followed by a 15-day payment window after notice receipt; calculate both from the actual records [{ni138}]."
+        )
+    if ni142 is not None:
+        lines.append(
+            f"If the payment window expires without payment, the NI Act complaint route has a further one-month filing window from the cause of action, subject to the exact dates and any legally permitted delay question [{ni142}]."
+        )
     lines.append("**What you can do next**")
     if senior5 is not None:
         lines.append(
@@ -11392,6 +12142,10 @@ def _senior_maintenance_cheque_template_lines(passages: list[dict]) -> list[str]
     if ni138 is not None:
         lines.append(
             f"- For the cheque track, compare the bounced-cheque facts to the cited NI Act debt-or-liability and return-unpaid source [{ni138}]."
+        )
+    if ni142 is not None:
+        lines.append(
+            f"- Put the bank return memo, notice delivery proof, end of the 15-day payment window, and any complaint date on one timeline; verify the one-month Section 142 filing window before relying on it [{ni142}]."
         )
     return lines
 
@@ -14110,8 +14864,19 @@ def _housing_pet_fine_template_lines(query: str, passages: list[dict]) -> list[s
         passages,
         title_terms=("co-operative housing society", "cooperative housing society"),
     )
-    if bmc_pet is None and bmc_bylaws is None and bmc_license is None:
+    if bmc_pet is None and bmc_bylaws is None and bmc_license is None and coop is None:
         return []
+    if bmc_pet is None and bmc_bylaws is None and bmc_license is None:
+        return [
+            "**Short answer**",
+            (
+                f"The retrieved cooperative-housing authority is only contextual; it does not decide whether this fine is valid without the state/city bye-law, society resolution, and fine notice [{coop}]."
+            ),
+            "**What you can do next**",
+            (
+                f"- Ask the society to identify the exact bye-law and resolution, object in writing with the fine notice and pet records, and take the reply to the Registrar of Cooperative Societies or DLSA/legal aid if the demand continues [{coop}]."
+            ),
+        ]
     lines = ["**Short answer**"]
     if bmc_pet is not None:
         lines.append(
@@ -20022,13 +20787,10 @@ def _is_domestic_acid_threat_query(text: str) -> bool:
 
 
 def _is_acid_attack_query(text: str) -> bool:
-    actual_attack = _has_any_term(text, (
-        "acid attack", "chemical attack", "threw something on my face",
-        "threw acid", "threw chemical", "acid was thrown", "chemical was thrown",
-        "eyes burning", "hospital said acid", "burning after acid",
-    ))
-    mere_threat = _has_any_term(text, ("threatened to throw", "threatening to throw", "will throw acid"))
-    return actual_attack and not mere_threat
+    return _is_completed_acid_attack_query(text) or _has_any_term(
+        text,
+        ("threw something on my face",),
+    )
 
 
 def _is_therapist_privacy_query(text: str) -> bool:
@@ -20261,24 +21023,7 @@ def _is_loan_app_harassment_query(text: str) -> bool:
 
 
 def _is_municipal_shop_sealing_query(text: str) -> bool:
-    shop_context = _has_any_term(text, (
-        "shop", "dukan", "store", "restaurant", "hotel", "clinic", "godown",
-        "warehouse", "commercial premises", "business premises", "showroom",
-        "office sealed", "factory sealed",
-    ))
-    municipal_context = _has_any_term(text, (
-        "municipality", "municipal", "municipal corporation", "corporation",
-        "ward office", "nagar palika", "nagarpalika", "mcd", "bmc",
-        "bbmp", "noida authority", "development authority", "local body",
-        "local authority", "authority",
-    ))
-    sealing_context = _has_any_term(text, (
-        "sealed", "seal", "sealing", "locked", "closed my shop",
-        "shop closed", "closure notice", "demolition notice",
-        "licence issue", "license issue", "trade license expired",
-        "trade licence expired",
-    ))
-    return shop_context and municipal_context and sealing_context
+    return is_municipal_shop_sealing_issue(text)
 
 
 def _is_pan_aadhaar_mismatch_query(text: str) -> bool:
@@ -20296,11 +21041,14 @@ def _is_wife_as_aggressor_query(text: str) -> bool:
     wife_context = _has_any_term(text, (
         "my wife", "wife slapped", "wife hit", "wife beat", "wife beats",
         "wife beating", "wife is beating", "wife took", "wife threw",
-        "wife kicked", "wife threatens", "wife threatened",
+        "wife kicked", "wife threatens", "wife threatened", "wife punched",
+        "wife assaulted", "wife attacked",
     ))
     first_person_victim = _has_any_term(text, (
-        "slapped me", "hit me", "beat me", "beats me", "hitting me",
+        "slapped me", "slaps me", "hit me", "hits me", "beat me", "beats me", "hitting me", "beating me",
         "threatens me", "threatened me", "threatening me", "abuses me",
+        "punched me", "punching me", "assaulted me", "assault me", "assaults me",
+        "attacked me", "attacking me", "attacks me", "threatened to kill me",
         "forces sex", "forcing sex", "force sex", "forced sex", "sex without consent",
         "sexual assault", "sexually assaulted me", "sexually assaulting me",
         "assaulted me sexually",
@@ -21286,6 +22034,7 @@ def _is_safe_template_next_step(
         "business_contract_partnership",
         "child_custody_adoption",
         "consumer",
+        "housing_society_pet_dispute",
         "cyber",
         "family_domestic",
         "criminal_general",
@@ -21294,6 +22043,7 @@ def _is_safe_template_next_step(
         "marriage_breakdown",
         "marriage_misrepresentation",
         "online_gambling_dispute",
+        "pan_aadhaar_identity",
         "personal_money_recovery",
         "police_fir",
         "prison_mulaqat",
@@ -21317,6 +22067,7 @@ def _is_safe_template_next_step(
         "tribal_project_displacement_rr",
         "workplace_injury_compensation",
         "workplace_sexual_harassment",
+        "workplace_sexual_harassment_respondent",
     }
     lower = text.lower()
     if action_pack_id == "loan_app_harassment" and _has_any_term(
@@ -21391,6 +22142,18 @@ def _is_safe_template_next_step(
         return (
             _has_any_term(lower, ("timeline", "age proof", "dlsa", "one stop centre", "police", "trusted support"))
             and not _has_any_term(lower, ("limitation", "deadline", "last date", "within ", " days", " hours", "file within", "appeal within"))
+        )
+    if action_pack_id == "workplace_sexual_harassment_respondent":
+        # A response deadline is an evidence-preservation fact for a notice
+        # recipient, not a statute-of-limitations claim. Keep it usable in
+        # the safe action-pack lane while still rejecting deadline advice.
+        return (
+            _has_any_term(lower, ("notice", "allegations", "messages", "witness", "employment papers", "response deadline"))
+            and not _has_any_term(lower, (
+                "limitation", "last date", "within ", " days", " hours",
+                "file within", "appeal within", "must", "shall", "entitled",
+                "legal right", "file a", "submit", "appeal",
+            ))
         )
     if action_pack_id == "tax_gst_compliance":
         return (
@@ -23210,6 +23973,23 @@ def _promote_safe_route_next_step(
     user needs. Keep this narrowly scoped to cited bullets immediately under
     the server's "What you can do next" header.
     """
+    if (
+        _exact_plan_owner(plan) is not None
+        and pending_header is None
+        and v.status in (SentenceStatus.UNSUPPORTED, SentenceStatus.WEAK_SUPPORT)
+        and _is_uncited_immediate_safety_guidance(v.text)
+    ):
+        guidance_text = re.sub(r"\s*\[\d+(?:\s*,\s*\d+)*\]", "", v.text)
+        guidance_text = re.sub(r"\s*,\s*([.!?])", r"\1", guidance_text)
+        guidance_text = re.sub(r"\s+([,.!?])", r"\1", guidance_text)
+        return SentenceVerification(
+            text=guidance_text,
+            status=SentenceStatus.GUIDANCE,
+            citations=[],
+            entailment_score=None,
+            reason="reviewed immediate-safety guidance, not a legal claim",
+            auto_cited=False,
+        )
     if not _is_safe_template_next_step(v.text, route, pending_header):
         return v
     if _exact_plan_owner(plan) is not None:
@@ -23261,7 +24041,13 @@ def _is_uncited_operational_guidance(text: str) -> bool:
         "entitled to a refund", "entitled to refund", "claim a refund",
         "claim refund", "order a refund", "order refund", "refund right",
     )
-    if any(term in f" {lower} " for term in legal_claim_terms):
+    if any(
+        re.search(
+            rf"(?<![a-z0-9]){re.escape(term.strip())}(?![a-z0-9])",
+            lower,
+        )
+        for term in legal_claim_terms
+    ):
         return False
 
     evidence_action = lower.lstrip("- ").startswith((
@@ -23290,6 +24076,20 @@ def _is_uncited_operational_guidance(text: str) -> bool:
         "amount and transactions affected", "nodal officer",
     ))
     return evidence_action or immediate_safety or urgent_help_seeking or information_request
+
+
+def _is_uncited_immediate_safety_guidance(text: str) -> bool:
+    lower = re.sub(r"\s*\[\d+(?:\s*,\s*\d+)*\]", "", text).lower()
+    return (
+        _is_uncited_operational_guidance(text)
+        and lower.lstrip("- ").startswith((
+            "call ", "go ", "move ", "leave ", "contact ", "ask ",
+        ))
+        and any(term in lower for term in (
+            "immediate danger", "unsafe right now", "safe place",
+            "leave the scene", "emergency services", "trusted person",
+        ))
+    )
 
 
 def _promote_safe_template_source_bridge(
@@ -23331,10 +24131,23 @@ def _promote_reviewed_workflow_contract_line(
     """
     if v.status not in (SentenceStatus.UNSUPPORTED, SentenceStatus.WEAK_SUPPORT):
         return v
-    if _exact_plan_owner(plan) is not None:
-        # Released plan-owned routes must pass claim-level verification. A
-        # review label is not evidence and cannot upgrade weak/unsupported law.
-        return v
+    exact_owner = _exact_plan_owner(plan)
+    if exact_owner is not None:
+        # Plan-owned routes normally still require claim-level verification.
+        # MGNREGA is the first explicit exception: its released contract has
+        # exact pack/document bindings for every source index and its lines
+        # are deterministic, source-backed route claims. Keep this opt-in
+        # allowlist narrow until another contract proves the same property.
+        if (
+            workflow_result is None
+            or exact_owner != _workflow_owner_token(workflow_result)
+            or workflow_result.id != "mgnrega_fake_muster"
+            or not workflow_result.source_indices
+            or not set(v.citations).issubset(
+                set(workflow_result.source_indices.values())
+            )
+        ):
+            return v
     if not v.citations or workflow_result is None:
         return v
     if not workflow_contract_promotes_verifier(workflow_result):
@@ -23516,6 +24329,20 @@ def _first_actionable_source_for_route(route: MatterRoute, passages: list[dict],
         ), None)
         if article226 is not None:
             return article226
+    if route.label == "Housing society / pet fine dispute":
+        # A cooperative-housing judgment is useful context, but it is not a
+        # substitute for the local bye-law or pet-specific authority that
+        # controls a society fine. In particular, never bridge this route to
+        # a generic Consumer Protection source merely because the route still
+        # carries the legacy `consumer` category for compatibility.
+        return next(
+            (
+                passage
+                for passage in _official_passages_for_contract(passages)
+                if has_housing_pet_authority([passage], query=query)
+            ),
+            None,
+        )
     for passage in _official_passages_for_contract(passages):
         if not _is_actionable_contract_source(passage):
             continue
@@ -23600,10 +24427,46 @@ def _answer_contract_lines(
         if entry.note == "registry_workflow_authority" and entry.authority_id
     }
     if registry_owned_authority_ids:
+        non_registry_requirements = tuple(
+            entry
+            for entry in (plan.authority_ledger if plan is not None else [])
+            if (
+                entry.must_cite
+                and entry.source_pack_id
+                and entry.registry_key is None
+                and entry.note != "registry_workflow_authority"
+            )
+        )
+        unknown_date_arrest_context_packs = {
+            "constitution_article_21",
+            "bnss_2023",
+            "crpc_1973",
+        }
+
+        def is_designated_arrest_context(passage: dict) -> bool:
+            if (
+                plan is None
+                or plan.primary_issue != "arrest_custody_safeguard"
+                or plan.legal_regime != "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+            ):
+                return False
+            return _matches_exact_planned_context(
+                plan,
+                passage,
+                allowed_pack_ids=unknown_date_arrest_context_packs,
+            )
+
         official = [
             passage
             for passage in official
-            if registry_owned_authority_ids.intersection(passage.get("authority_ids") or [])
+            if (
+                registry_owned_authority_ids.intersection(passage.get("authority_ids") or [])
+                or any(
+                    _passage_satisfies_plan_entry(plan, entry, passage)
+                    for entry in non_registry_requirements
+                )
+                or is_designated_arrest_context(passage)
+            )
         ]
     if not official:
         return []
@@ -23649,6 +24512,67 @@ def _answer_contract_lines(
                 continue
             lines.append(line)
             planned_seen.add(normalized)
+            idx = passage.get("index")
+            if isinstance(idx, int):
+                cited.add(idx)
+
+        # Workflow contracts can preempt the legacy template with this
+        # source-floor branch. Preserve the arrest route's constitutional
+        # Article 21 + Article 22 composite even when Article 21 is context
+        # owned rather than registry owned.
+        if (
+            route.category == "arrest_custody_safeguard"
+            and plan is not None
+            and plan.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+        ):
+            article_21 = next(
+                (
+                    passage
+                    for passage in passages
+                    if isinstance(passage.get("index"), int)
+                    and passage.get("index") not in cited
+                    and "constitution" in str(passage.get("title") or "").lower()
+                    and (
+                        str(passage.get("required_source_pack") or "").lower()
+                        == "constitution_article_21"
+                        or "/sec-21" in str(passage.get("anchor") or "").lower()
+                    )
+                ),
+                None,
+            )
+            if article_21 is not None:
+                article_21_idx = article_21["index"]
+                line = (
+                    "Constitution of India Article 21 protects life and personal liberty; "
+                    f"keep this safeguard alongside Article 22 when checking an unexplained police pickup [{article_21_idx}]."
+                )
+                normalized = _normalize_for_dedupe(line)
+                if normalized not in planned_seen:
+                    lines.append(line)
+                    planned_seen.add(normalized)
+
+        # Reviewed workflow source floors return before the legacy answer
+        # floor below. Preserve the same exact-authority citation contract in
+        # this path so a workflow cannot retrieve a mandatory plan authority
+        # and then omit it from the visible answer.
+        for passage in _plan_must_cite_passages(
+            route,
+            plan,
+            official,
+            cited,
+            query=query,
+        ):
+            line = _source_excerpt_line(passage)
+            if not line:
+                continue
+            normalized = _normalize_for_dedupe(line)
+            if normalized in planned_seen:
+                continue
+            lines.append(line)
+            planned_seen.add(normalized)
+            idx = passage.get("index")
+            if isinstance(idx, int):
+                cited.add(idx)
         return lines
 
     if route.category == "senior_citizen" and _has_any_term(query, (
@@ -23706,6 +24630,43 @@ def _answer_contract_lines(
         source_key = _source_pack_key(passage)
         if source_key:
             cited_source_keys.add(source_key)
+
+    # The arrest workflow's registry owner governs Articles 22/226 and the
+    # BNSS transition clause, while Article 21 remains a reviewed context
+    # source. Keep that constitutional context in the visible answer when
+    # the model cites Article 22 but omits Article 21; otherwise the route
+    # composite (Articles 21 and 22) is only retrieved, not actually cited.
+    if (
+        route.category == "arrest_custody_safeguard"
+        and plan is not None
+        and plan.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    ):
+        article_21 = next(
+            (
+                passage
+                for passage in passages
+                if isinstance(passage.get("index"), int)
+                and passage.get("index") not in cited
+                and "constitution" in str(passage.get("title") or "").lower()
+                and (
+                    str(passage.get("required_source_pack") or "").lower()
+                    == "constitution_article_21"
+                    or "/sec-21" in str(passage.get("anchor") or "").lower()
+                )
+            ),
+            None,
+        )
+        if article_21 is not None:
+            article_21_idx = article_21["index"]
+            line = (
+                "Constitution of India Article 21 protects life and personal liberty; "
+                f"keep this safeguard alongside Article 22 when checking an unexplained police pickup [{article_21_idx}]."
+            )
+            normalized = _normalize_for_dedupe(line)
+            if normalized not in planned_seen:
+                lines.append(line)
+                planned_seen.add(normalized)
+                cited.add(article_21_idx)
 
     if route.category == "social_welfare_identity" and _is_aadhaar_pension_identity_block_query(query):
         aadhaar_idx = _find_passage_index(
@@ -24196,6 +25157,44 @@ def _plan_must_cite_passages(
 
     out: list[dict] = []
     seen_indices: set[int] = set()
+
+    def matches_entry(entry, passage: dict) -> bool:
+        if not _plan_authority_matches_passage(entry.act, entry.section, passage):
+            return False
+        # A section heading is only a legal-text match. When the passage has
+        # authority metadata, require the exact plan identity as well. This
+        # prevents two distinct reviewed authorities for the same Act/section
+        # from being treated as interchangeable merely because their headings
+        # are identical (for example, split Section 142 chunks).
+        metadata_keys = {
+            "authority_ids",
+            "required_source_pack_authority_ids",
+        }
+        if metadata_keys.intersection(passage):
+            authority_ids: set[str] = set()
+            raw_ids = passage.get("authority_ids")
+            if not isinstance(raw_ids, (list, tuple, set)):
+                return False
+            authority_ids.update(str(value) for value in raw_ids if value)
+
+            if "required_source_pack_authority_ids" in passage:
+                raw_by_pack = passage.get("required_source_pack_authority_ids")
+                if not isinstance(raw_by_pack, dict):
+                    return False
+                if raw_by_pack and entry.source_pack_id:
+                    if entry.source_pack_id not in raw_by_pack:
+                        return False
+                    pack_ids = raw_by_pack[entry.source_pack_id]
+                    if not isinstance(pack_ids, (list, tuple, set)):
+                        return False
+                    # Once pack-scoped provenance exists, it is authoritative;
+                    # a flat ID from a neighbouring pack cannot override it.
+                    return entry.authority_id in {
+                        str(value) for value in pack_ids if value
+                    }
+            return entry.authority_id in authority_ids
+        return True
+
     for entry in plan.authority_ledger:
         if not entry.must_cite or not entry.act:
             continue
@@ -24204,7 +25203,7 @@ def _plan_must_cite_passages(
         already_cited = any(
             isinstance(p.get("index"), int)
             and p.get("index") in cited
-            and _plan_authority_matches_passage(entry.act, entry.section, p)
+            and matches_entry(entry, p)
             for p in official
         )
         if already_cited:
@@ -24217,7 +25216,7 @@ def _plan_must_cite_passages(
                 and int(p.get("index")) not in seen_indices
                 and not _should_skip_contract_source_line(route, _source_pack_key(p), set())
                 and not _should_skip_unrelated_source_excerpt(route, p, query=query)
-                and _plan_authority_matches_passage(entry.act, entry.section, p)
+                and matches_entry(entry, p)
             ),
             None,
         )
@@ -24265,6 +25264,20 @@ _PLAN_ACT_ALIASES = {
         "aadhaar targeted delivery",
         "targeted delivery of financial and other subsidies benefits and services act 2016",
     ),
+    "sexual harassment of women at workplace act 2013": (
+        "posh",
+        "sexual harassment of women at workplace",
+        "sexual harassment of women at workplace prevention prohibition and redressal act 2013",
+    ),
+    "central goods and services tax act 2017": (
+        "central goods and services tax act 2017",
+        "central goods and services tax act",
+    ),
+    "cgst act 2017": (
+        "cgst act 2017",
+        "central goods and services tax act 2017",
+        "central goods and services tax act",
+    ),
     "transfer of property act": ("transfer of property act",),
     "transfer of property act 1882": ("transfer of property act 1882", "transfer of property act"),
 }
@@ -24301,35 +25314,56 @@ def _section_token(section: str) -> str:
     match = re.search(r"\b(?:section|sec\.?|article|order)\s+([0-9a-z()./-]+)", section, flags=re.IGNORECASE)
     if not match:
         return ""
-    return _normalize_plan_authority_text(match.group(1))
+    return _normalize_section_token(match.group(1))
+
+
+def _normalize_section_token(text: str) -> str:
+    """Normalize section identity without dropping an alphanumeric suffix."""
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
 
 
 def _passage_section_tokens(passage: dict) -> set[str]:
-    text = " ".join(str(passage.get(field) or "") for field in ("title", "anchor"))
     tokens: set[str] = set()
-    for match in re.finditer(r"(?:/|#)sec-([0-9a-z][0-9a-z.-]*)", text, flags=re.IGNORECASE):
-        tokens.add(_normalize_plan_authority_text(match.group(1)))
+    anchor = str(passage.get("anchor") or "")
+    for match in re.finditer(r"(?:/|#)sec-([0-9a-z][0-9a-z.-]*)", anchor, flags=re.IGNORECASE):
+        tokens.add(_normalize_section_token(match.group(1)))
+
+    # Only the explicit heading (or the first non-empty chunk line used as a
+    # legacy heading) is structural evidence. Arbitrary body text can quote a
+    # neighbouring provision and must never create a section identity.
+    heading = str(passage.get("heading") or "")
+    if not heading:
+        heading = next(
+            (line.strip() for line in str(passage.get("text") or "").splitlines() if line.strip()),
+            "",
+        )
     for match in re.finditer(
         r"\b(?:section|sec\.?|article|order)\s+([0-9a-z()./-]+)",
-        text,
+        heading,
         flags=re.IGNORECASE,
     ):
-        tokens.add(_normalize_plan_authority_text(match.group(1)))
+        tokens.add(_normalize_section_token(match.group(1)))
     return {token for token in tokens if token}
 
 
 def _section_token_matches(expected: str, actual_tokens: set[str]) -> bool:
     if expected in actual_tokens:
         return True
+    compact_expected = expected.replace(" ", "")
+    if any(compact_expected == token.replace(" ", "") for token in actual_tokens):
+        # Preserve reviewed aliases such as Section 436A <-> sec-436-a.
+        return True
     expected_parts = expected.split()
-    if len(expected_parts) != 1:
-        return False
-    expected_root = expected_parts[0]
-    for token in actual_tokens:
-        parts = token.split()
-        if len(parts) > 1 and parts[0] == expected_root:
-            return True
-    return False
+    # Reviewed parent-section anchors can satisfy a subsection requirement
+    # (for example, Section 4(c) with a sec-4 passage). The reverse direction
+    # is deliberately rejected: Section 142 must not accept a sec-142-a
+    # anchor unless the passage text also contains an exact Section 142
+    # heading, which is now included in actual_tokens above.
+    suffix = expected_parts[1:]
+    # Parent anchors may satisfy reviewed alphanumeric subsection forms such
+    # as 4(c) or 436A. Numeric subsections such as 142(1) require an exact
+    # subsection anchor and must not fall back to the parent section.
+    return bool(suffix) and all(part.isalpha() for part in suffix) and expected_parts[0] in actual_tokens
 
 
 def _should_skip_contract_source_line(
@@ -25524,6 +26558,11 @@ def _route_regime_caveat(
 ) -> str | None:
     if route.category == "banking_credit_dispute":
         return None
+    if workflow_result is not None and workflow_result.id in {
+        "pmla_ed_asset_freeze",
+        "uapa_prima_facie_bail",
+    }:
+        return None
     if (
         route.legal_regime == UNKNOWN_CRIMINAL_REGIME
         and _route_uses_criminal_regime_sources(route)
@@ -25573,6 +26612,50 @@ async def answer(req: AnswerRequest):
     if issue_plan is not None:
         logger.debug("matter_plan: %s", issue_plan.to_event())
 
+    def _prestream_handoff_response(
+        reason: str,
+        source_gap: dict | None = None,
+    ) -> EventSourceResponse:
+        """Return the same sanitized contract for preparation failures."""
+        gap = _source_gap_handoff_payload(
+            route,
+            issue_plan,
+            source_gap or {
+                "has_gap": True,
+                "route_category": route.category,
+                "gap_kinds": [reason],
+                "missing_required_sources": [],
+                "message": "The answer could not be prepared and verified safely.",
+                "handoff": "DLSA/legal aid or a qualified lawyer",
+                "policy": "do_not_substitute_neighboring_authority",
+            },
+            reason=reason,
+        )
+        handoff = _source_gap_handoff_event(route, issue_plan, gap, reason=reason)
+        metrics.source_gap_handoff_total.inc()
+
+        async def stream() -> AsyncIterator[dict]:
+            for event in _initial_route_events(
+                route,
+                None,
+                req.q,
+                source_gap_event=gap,
+                intake_only=True,
+            ):
+                yield event
+            yield {"event": "sentence", "data": handoff["data"]}
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=False,
+            )
+            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+
+        return EventSourceResponse(stream())
+
+    plan_integrity_gap = matter_plan_integrity_gap(issue_plan, req.q)
+
     if route.category == "off_topic":
         metrics.refused_total.inc()
 
@@ -25604,21 +26687,49 @@ async def answer(req: AnswerRequest):
     _record_stage(timings, "llm_preflight", t_preflight)
     if not llm_status.get("ok"):
         llm_model_available = False
-
+        source_gap_event = _source_gap_handoff_payload(
+            route,
+            issue_plan,
+            {
+                "has_gap": True,
+                "route_category": route.category,
+                "gap_kinds": ["llm_unavailable"],
+                "missing_required_sources": [],
+                "message": "The answer model is unavailable, so source-backed guidance cannot be generated.",
+                "handoff": "DLSA/legal aid or a qualified lawyer",
+                "policy": "do_not_substitute_neighboring_authority",
+            },
+            reason="llm_unavailable",
+        )
+        handoff_event = _source_gap_handoff_event(
+            route, None, source_gap_event, reason="llm_unavailable"
+        )
+        metrics.source_gap_handoff_total.inc()
         async def llm_missing():
-            for ev in _initial_route_events(route, issue_plan, req.q):
+            for ev in _initial_route_events(
+                route,
+                None,
+                req.q,
+                source_gap_event=source_gap_event,
+                intake_only=True,
+            ):
                 yield ev
-            yield _llm_unavailable_error(llm_status, settings)
+            yield {"event": "sentence", "data": handoff_event["data"]}
             yield _timing_event(
                 timings,
                 request_started,
                 llm_model=settings.llm_model,
                 llm_model_available=False,
             )
+            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
 
         return EventSourceResponse(llm_missing())
 
-    pool = await get_pool()
+    try:
+        pool = await get_pool()
+    except Exception as e:
+        logger.exception("answer preparation database setup failed: %s", e)
+        return _prestream_handoff_response("answer_preparation_error")
 
     # NLI policy: the client hint is honoured ONLY when fast-mode is
     # enabled server-side. In production (answer_fast_enabled=False)
@@ -25635,17 +26746,22 @@ async def answer(req: AnswerRequest):
     # plain hybrid_retrieve automatically on any expander error.
     src_types = req.sources
     subj = req.subjects
-    t_retr = time.perf_counter()
-    retrieved, expansion_variants = await multi_query_hybrid_retrieve(
-        pool, req.q, route=route, plan=issue_plan,
-        source_types=src_types, subject_areas=subj,
-        top_k=max(req.top_k, settings.rerank_top_k),
-        timings=timings,
-    )
+    try:
+        t_retr = time.perf_counter()
+        retrieved, expansion_variants = await multi_query_hybrid_retrieve(
+            pool, req.q, route=route, plan=issue_plan,
+            source_types=src_types, subject_areas=subj,
+            top_k=max(req.top_k, settings.rerank_top_k),
+            timings=timings,
+        )
+    except Exception as e:
+        retrieval_elapsed = _record_stage(timings, "retrieval", t_retr)
+        metrics.retrieval_latency.observe(retrieval_elapsed)
+        logger.exception("answer retrieval failed: %s", e)
+        return _prestream_handoff_response("answer_retrieval_error")
     retrieval_elapsed = _record_stage(timings, "retrieval", t_retr)
     metrics.retrieval_latency.observe(retrieval_elapsed)
     if not retrieved:
-        metrics.refused_total.inc()
         source_gap_event = _source_gap_event_for_retrieved(
             query=req.q,
             route=route,
@@ -25653,16 +26769,19 @@ async def answer(req: AnswerRequest):
             top_k=req.top_k,
             plan=issue_plan,
         )
+        handoff_event = _source_gap_handoff_event(
+            route, issue_plan, source_gap_event, reason="empty_retrieval"
+        )
+        metrics.source_gap_handoff_total.inc()
         async def empty():
-            for ev in _initial_route_events(route, issue_plan, req.q):
+            for ev in _initial_route_events(
+                route,
+                issue_plan,
+                req.q,
+                source_gap_event=handoff_event["source_gap"],
+            ):
                 yield ev
-            if source_gap_event is not None:
-                yield {"event": "source_gap", "data": json.dumps(source_gap_event)}
-            yield {"event": "refused", "data": json.dumps({
-                "message": "The sources I have don't cover this clearly. I won't guess. "
-                           "You should talk to a lawyer for your specific situation.",
-                "disclaimer": DISCLAIMER_FOOTER,
-            })}
+            yield {"event": "sentence", "data": handoff_event["data"]}
             yield _timing_event(
                 timings,
                 request_started,
@@ -25670,7 +26789,26 @@ async def answer(req: AnswerRequest):
                 llm_model_available=llm_model_available,
                 expansion_variant_count=len(expansion_variants),
             )
+            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
         return EventSourceResponse(empty())
+
+    # Prefer the more specific empty-retrieval contract when the corpus
+    # returned nothing. For non-empty retrieval, retain the plan-integrity
+    # fail-closed gate before prompt construction; deferring only the return
+    # keeps the user-facing reason honest without allowing an invalid plan to
+    # reach the answer layer.
+    if plan_integrity_gap is not None:
+        integrity_source_gap = _source_gap_event_for_retrieved(
+            query=req.q,
+            route=route,
+            retrieved=retrieved,
+            top_k=req.top_k,
+            plan=issue_plan,
+        ) or plan_integrity_gap
+        return _prestream_handoff_response(
+            "matter_plan_integrity_gap",
+            integrity_source_gap,
+        )
 
     # Coverage gate: when the reranker can't find anything close to the
     # query, the LLM will either hallucinate or produce verbose "I don't
@@ -25689,11 +26827,10 @@ async def answer(req: AnswerRequest):
     if settings.rerank_enabled and top_rerank is None:
         # Reranker is supposed to be running but produced no scores.
         # Fail closed.
-        metrics.refused_total.inc()
         logger.warning(
             "coverage-gate refusal: reranker enabled but no rerank scores "
-            "produced (degraded service) for query %r",
-            req.q[:120],
+            "produced (degraded service) query_hash=%s",
+            query_fingerprint(req.q),
         )
         source_gap_event = _source_gap_event_for_retrieved(
             query=req.q,
@@ -25702,20 +26839,19 @@ async def answer(req: AnswerRequest):
             top_k=req.top_k,
             plan=issue_plan,
         )
+        handoff_event = _source_gap_handoff_event(
+            route, issue_plan, source_gap_event, reason="rerank_unavailable"
+        )
+        metrics.source_gap_handoff_total.inc()
         async def degraded():
-            for ev in _initial_route_events(route, issue_plan, req.q):
+            for ev in _initial_route_events(
+                route,
+                issue_plan,
+                req.q,
+                source_gap_event=handoff_event["source_gap"],
+            ):
                 yield ev
-            if source_gap_event is not None:
-                yield {"event": "source_gap", "data": json.dumps(source_gap_event)}
-            yield {"event": "refused", "data": json.dumps({
-                "message": "The retrieval service is in a degraded state right "
-                           "now (the reranker did not return scores). I won't "
-                           "answer without that quality signal. Please try again "
-                           "shortly, or talk to a lawyer for your specific "
-                           "situation.",
-                "reason": "rerank_unavailable",
-                "disclaimer": DISCLAIMER_FOOTER,
-            })}
+            yield {"event": "sentence", "data": handoff_event["data"]}
             yield _timing_event(
                 timings,
                 request_started,
@@ -25724,12 +26860,16 @@ async def answer(req: AnswerRequest):
                 retrieved_count=len(retrieved),
                 expansion_variant_count=len(expansion_variants),
             )
+            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
         return EventSourceResponse(degraded())
     effective_threshold = settings.refuse_below_rerank_general_legal if route.category == "general_legal" else settings.refuse_below_rerank
     if top_rerank is not None and top_rerank < effective_threshold:
-        metrics.refused_total.inc()
-        logger.info("coverage-gate refusal: top_rerank=%.3f < %.3f for query %r",
-                    top_rerank, effective_threshold, req.q[:120])
+        logger.info(
+            "coverage-gate refusal: top_rerank=%.3f < %.3f query_hash=%s",
+            top_rerank,
+            effective_threshold,
+            query_fingerprint(req.q),
+        )
         source_gap_event = _source_gap_event_for_retrieved(
             query=req.q,
             route=route,
@@ -25737,22 +26877,19 @@ async def answer(req: AnswerRequest):
             top_k=req.top_k,
             plan=issue_plan,
         )
+        handoff_event = _source_gap_handoff_event(
+            route, issue_plan, source_gap_event, reason="low_coverage"
+        )
+        metrics.source_gap_handoff_total.inc()
         async def low_coverage():
-            for ev in _initial_route_events(route, issue_plan, req.q):
+            for ev in _initial_route_events(
+                route,
+                issue_plan,
+                req.q,
+                source_gap_event=handoff_event["source_gap"],
+            ):
                 yield ev
-            if source_gap_event is not None:
-                yield {"event": "source_gap", "data": json.dumps(source_gap_event)}
-            yield {"event": "refused", "data": json.dumps({
-                "message": "I couldn't find sources in this index that clearly "
-                           "cover your question. I won't make something up from "
-                           "tangentially related judgments. Try asking the same "
-                           "question more concretely — for example "
-                           "'my landlord won't return my deposit' instead of "
-                           "'tenant rights' — or talk to a lawyer or legal-aid "
-                           "service for your specific situation.",
-                "reason": "low_coverage",
-                "disclaimer": DISCLAIMER_FOOTER,
-            })}
+            yield {"event": "sentence", "data": handoff_event["data"]}
             yield _timing_event(
                 timings,
                 request_started,
@@ -25761,6 +26898,7 @@ async def answer(req: AnswerRequest):
                 retrieved_count=len(retrieved),
                 expansion_variant_count=len(expansion_variants),
             )
+            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
         return EventSourceResponse(low_coverage())
 
     # Per round-3 review (security #5): when reranker is disabled in
@@ -25771,10 +26909,9 @@ async def answer(req: AnswerRequest):
     if not settings.rerank_enabled:
         top_combined = max((h.combined_score for h in retrieved), default=0.0)
         if top_combined < settings.refuse_below_combined:
-            metrics.refused_total.inc()
             logger.info(
-                "coverage-gate (no-rerank) refusal: top_combined=%.3f < %.3f for query %r",
-                top_combined, settings.refuse_below_combined, req.q[:120],
+                "coverage-gate (no-rerank) refusal: top_combined=%.3f < %.3f query_hash=%s",
+                top_combined, settings.refuse_below_combined, query_fingerprint(req.q),
             )
             source_gap_event = _source_gap_event_for_retrieved(
                 query=req.q,
@@ -25783,19 +26920,19 @@ async def answer(req: AnswerRequest):
                 top_k=req.top_k,
                 plan=issue_plan,
             )
+            handoff_event = _source_gap_handoff_event(
+                route, issue_plan, source_gap_event, reason="low_coverage_dense_fallback"
+            )
+            metrics.source_gap_handoff_total.inc()
             async def low_dense():
-                for ev in _initial_route_events(route, issue_plan, req.q):
+                for ev in _initial_route_events(
+                    route,
+                    issue_plan,
+                    req.q,
+                    source_gap_event=handoff_event["source_gap"],
+                ):
                     yield ev
-                if source_gap_event is not None:
-                    yield {"event": "source_gap", "data": json.dumps(source_gap_event)}
-                yield {"event": "refused", "data": json.dumps({
-                    "message": "I couldn't find sources that clearly cover your "
-                               "question. Try asking more concretely, or talk to "
-                               "a lawyer or legal-aid service for your specific "
-                               "situation.",
-                    "reason": "low_coverage_dense_fallback",
-                    "disclaimer": DISCLAIMER_FOOTER,
-                })}
+                yield {"event": "sentence", "data": handoff_event["data"]}
                 yield _timing_event(
                     timings,
                     request_started,
@@ -25804,71 +26941,99 @@ async def answer(req: AnswerRequest):
                     retrieved_count=len(retrieved),
                     expansion_variant_count=len(expansion_variants),
                 )
+                yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
             return EventSourceResponse(low_dense())
 
-    t_prompt = time.perf_counter()
-    prompt_candidates = _prompt_retrieval_candidates(req.q, route, retrieved)
-    prompt_candidates = _filter_state_specific_source_mismatches(req.q, prompt_candidates)
-    registry_owned_ids = {
-        entry.authority_id
-        for entry in (issue_plan.authority_ledger if issue_plan is not None else [])
-        if entry.note == "registry_workflow_authority" and entry.authority_id
-    }
-    if registry_owned_ids:
-        prompt_candidates = [
-            hit
-            for hit in prompt_candidates
-            if registry_owned_ids.intersection(hit.metadata.get("_authority_ids") or [])
-        ]
-    required_pack_ids = []
-    for h in prompt_candidates:
-        pack_id = h.metadata.get("_required_source_pack")
-        if pack_id and pack_id not in required_pack_ids:
-            required_pack_ids.append(pack_id)
-    prompt_retrieved = _preserve_required_source_packs(
-        prompt_candidates,
-        required_pack_ids,
-        limit=req.top_k,
-        preferred_top_n=settings.required_source_pack_preferred_top_n,
-        required_authorities=_required_authority_anchors(issue_plan),
-    )
-    passages, idx_map = _make_passages(
-        prompt_retrieved,
-        len(prompt_retrieved),
-        plan=issue_plan,
-    )
+    try:
+        t_prompt = time.perf_counter()
+        prompt_candidates = _prompt_retrieval_candidates(req.q, route, retrieved)
+        prompt_candidates = _filter_state_specific_source_mismatches(req.q, prompt_candidates)
+        prompt_candidates = _filter_registry_owner_prompt_candidates(
+            prompt_candidates,
+            issue_plan,
+        )
+        required_pack_ids = []
+        for h in prompt_candidates:
+            for pack_id in _required_source_pack_ids(h.metadata):
+                if pack_id not in required_pack_ids:
+                    required_pack_ids.append(pack_id)
+        prompt_retrieved = _preserve_required_source_packs(
+            prompt_candidates,
+            required_pack_ids,
+            limit=req.top_k,
+            preferred_top_n=settings.required_source_pack_preferred_top_n,
+            required_authorities=_required_authority_anchors(issue_plan),
+        )
+        passages, idx_map = _make_passages(
+            prompt_retrieved,
+            len(prompt_retrieved),
+            plan=issue_plan,
+        )
 
-    # Build prompt
-    system = load_answer_prompt()
-    messages = build_messages(system=system, user_question=req.q, passages=passages)
-    _record_stage(timings, "prompt_build", t_prompt)
-    workflow_result_for_template = _selected_workflow_result(
-        req.q,
-        route,
-        passages,
-        issue_plan,
-    )
-    template_lines = _grounded_template_lines(
-        req.q,
-        route,
-        passages,
-        plan=issue_plan,
-        workflow_result=workflow_result_for_template,
-    )
-    workflow_event = _workflow_diagnostics_event(
-        req.q,
-        route,
-        passages,
-        template_lines=template_lines,
-        plan=issue_plan,
-        workflow_result=workflow_result_for_template,
-    )
-    source_gap_event = build_source_gap_event(
-        query=req.q,
-        route_category=route.category,
-        required_sources=route.required_sources or [],
-        passages=passages,
-        plan=issue_plan,
+        # Build prompt
+        system = load_answer_prompt()
+        messages = build_messages(system=system, user_question=req.q, passages=passages)
+        _record_stage(timings, "prompt_build", t_prompt)
+        workflow_result_for_template = _selected_workflow_result(
+            req.q,
+            route,
+            passages,
+            issue_plan,
+        )
+        template_lines = _grounded_template_lines(
+            req.q,
+            route,
+            passages,
+            plan=issue_plan,
+            workflow_result=workflow_result_for_template,
+        )
+        workflow_event = _workflow_diagnostics_event(
+            req.q,
+            route,
+            passages,
+            template_lines=template_lines,
+            plan=issue_plan,
+            workflow_result=workflow_result_for_template,
+        )
+        source_gap_event = build_source_gap_event(
+            query=req.q,
+            route_category=route.category,
+            required_sources=route.required_sources or [],
+            passages=passages,
+            plan=issue_plan,
+            legal_regime=route.legal_regime,
+        )
+        if source_gap_event is not None:
+            # Normalize before any downstream helper can inspect the payload.
+            # This protects the critical-route and controlling-gap checks from
+            # malformed future implementations that return a non-dict value.
+            raw_reason = (
+                str(source_gap_event.get("reason") or "source_gap")
+                if isinstance(source_gap_event, dict)
+                else "invalid_source_gap_payload"
+            )
+            source_gap_event = _source_gap_handoff_payload(
+                route,
+                issue_plan,
+                source_gap_event,
+                reason=raw_reason,
+            )
+    except Exception as e:
+        logger.exception("answer prompt preparation failed: %s", e)
+        return _prestream_handoff_response("answer_preparation_error")
+    logger.info(
+        "answer_contract_decision query_hash=%s route=%s plan_owner=%s workflow=%s "
+        "workflow_source=%s source_gap=%s source_gap_reason=%s passages=%d "
+        "prompt_candidates=%d",
+        query_fingerprint(req.q),
+        route.category,
+        issue_plan.answer_policy.required_primary_owner if issue_plan is not None else None,
+        workflow_result_for_template.id if workflow_result_for_template is not None else None,
+        workflow_result_for_template.source if workflow_result_for_template is not None else None,
+        bool(source_gap_event and source_gap_event.get("has_gap")),
+        source_gap_event.get("reason") if source_gap_event is not None else None,
+        len(passages),
+        len(prompt_retrieved),
     )
     critical_contract_gap = _critical_route_needs_reviewed_contract(
         route,
@@ -25881,6 +27046,145 @@ async def answer(req: AnswerRequest):
         source_gap_event,
     )
     critical_contract_gap = critical_contract_gap or controlling_source_gap
+    if critical_contract_gap:
+        # Critical routes use the same first-class non-answer contract even
+        # when retrieval produced passages but the reviewed owner or
+        # controlling authority is still unavailable.
+        source_gap_event = _source_gap_handoff_payload(
+            route,
+            issue_plan,
+            source_gap_event,
+            reason=(
+                "controlling_source_gap"
+                if controlling_source_gap
+                else "critical_route_needs_reviewed_contract"
+            ),
+        )
+    elif source_gap_event is not None and source_gap_event.get("has_gap"):
+        # Any missing required authority is a non-answer, including ordinary
+        # routes. Do not let a low-risk label turn a corpus gap into an
+        # operative template or free-form LLM answer.
+        source_gap_reason = (
+            "invalid_source_gap_payload"
+            if source_gap_event.get("reason") == "invalid_source_gap_payload"
+            else (
+                "housing_pet_source_gap"
+                if source_gap_event.get("reason") == "housing_pet_source_gap"
+                else "required_source_gap"
+            )
+        )
+        source_gap_event = _source_gap_handoff_payload(
+            route,
+            issue_plan,
+            source_gap_event,
+            reason=source_gap_reason,
+        )
+    elif source_gap_event is not None:
+        # ``build_source_gap_event`` is an internal boundary today, but keep
+        # this branch fail-closed so a malformed future implementation or
+        # monkeypatched call cannot append a non-canonical signal and then
+        # continue into operative answer generation.
+        source_gap_event = _source_gap_handoff_payload(
+            route,
+            issue_plan,
+            source_gap_event,
+            reason="invalid_source_gap_payload",
+        )
+    source_gap_handoff = bool(
+        source_gap_event is not None
+        and source_gap_event.get("outcome") == "source_gap_handoff"
+    )
+    # Preflight the deterministic template before emitting the route plan. If
+    # a retrieved workflow authority would be silently omitted from the
+    # visible template, the browser must receive the canonical handoff before
+    # it can render any operative plan content.
+    def _preflight_template_citation_indices() -> set[int]:
+        preflight_citation_indices: set[int] = set()
+        pending_header: SentenceVerification | None = None
+        active_next_step_header: SentenceVerification | None = None
+        for sent in template_lines:
+            v = verify_sentence(sent, idx_map, skip_nli=skip_nli)
+            if _is_deferred_template_header(v.text):
+                pending_header = v
+                active_next_step_header = v
+                continue
+            v = _promote_safe_route_next_step(
+                v, route, pending_header or active_next_step_header, issue_plan
+            )
+            v = _promote_safe_template_source_bridge(v, route, issue_plan)
+            v = _promote_reviewed_workflow_contract_line(
+                v, workflow_result_for_template, template_lines, issue_plan
+            )
+            if (
+                _MAJOR_HEADER_RE.match(v.text.strip())
+                and not _is_deferred_template_header(v.text)
+            ) or _is_no_concrete_placeholder(v.text):
+                continue
+            if v.status == SentenceStatus.UNKNOWN_CITATION:
+                continue
+            if v.status == SentenceStatus.UNSUPPORTED and not (
+                _is_safe_template_next_step(v.text, route, pending_header)
+                or _is_safe_template_source_bridge(v.text, route)
+            ):
+                continue
+            if v.status == SentenceStatus.WEAK_SUPPORT and not (
+                _is_safe_template_next_step(v.text, route, pending_header)
+                or _is_safe_template_source_bridge(v.text, route)
+            ):
+                continue
+            preflight_citation_indices.update(v.citations)
+        return preflight_citation_indices
+
+    if template_lines and not source_gap_handoff:
+        try:
+            missing_answer_authorities = _missing_registry_must_cite_authority_ids(
+                issue_plan,
+                passages,
+                _preflight_template_citation_indices(),
+            )
+        except Exception as e:
+            logger.exception("template preflight failed: %s", e)
+            source_gap_event = _source_gap_handoff_payload(
+                route,
+                None,
+                {
+                    "has_gap": True,
+                    "route_category": route.category,
+                    "gap_kinds": ["answer_stream_error"],
+                    "missing_required_sources": [],
+                    "message": "The answer could not be completed and verified safely.",
+                    "handoff": "DLSA/legal aid or a qualified lawyer",
+                    "policy": "do_not_substitute_neighboring_authority",
+                },
+                reason="answer_stream_error",
+            )
+            source_gap_handoff = True
+        else:
+            if missing_answer_authorities:
+                source_gap_event = _source_gap_handoff_payload(
+                    route,
+                    issue_plan,
+                    {
+                        "has_gap": True,
+                        "route_category": route.category,
+                        "gap_kinds": ["mandatory_answer_authority_not_cited"],
+                        "missing_required_sources": [
+                            {
+                                "required_source": authority_id,
+                                "kind": "mandatory_answer_authority",
+                            }
+                            for authority_id in missing_answer_authorities
+                        ],
+                        "message": (
+                            "The reviewed answer could not safely cite every mandatory "
+                            "authority, so I will not provide an operative conclusion."
+                        ),
+                        "handoff": "DLSA/legal aid or a qualified lawyer",
+                        "policy": "do_not_substitute_neighboring_authority",
+                    },
+                    reason="mandatory_authority_not_cited",
+                )
+                source_gap_handoff = True
 
     # Coverage chip — sent up front so the UI can render bounds immediately
     seen_sources = set()
@@ -25890,27 +27194,89 @@ async def answer(req: AnswerRequest):
         if h.subject_area:
             seen_subjects.add(h.subject_area)
 
-    async def event_stream() -> AsyncIterator[dict]:
-        for ev in _initial_route_events(route, issue_plan, req.q):
-            yield ev
-        # Send the coverage chip first
-        yield {"event": "coverage", "data": json.dumps({
+    async def _answer_event_stream_impl() -> AsyncIterator[dict]:
+        if source_gap_handoff:
+            # Do not expose coverage, passages, workflow, or MatterPlan data
+            # for a non-answer. The only user-visible payloads are the
+            # sanitized route, source-gap contract, neutral handoff, timing,
+            # and the standard disclaimer.
+            for ev in _initial_route_events(
+                route,
+                None,
+                req.q,
+                source_gap_event=source_gap_event,
+                intake_only=True,
+            ):
+                yield ev
+            handoff_event = _source_gap_handoff_event(
+                route,
+                None,
+                source_gap_event,
+                reason=(
+                    "controlling_source_gap"
+                    if controlling_source_gap
+                    else source_gap_event.get("reason", "source_gap")
+                ),
+            )
+            metrics.source_gap_handoff_total.inc()
+            yield {"event": "sentence", "data": handoff_event["data"]}
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=llm_model_available,
+            )
+            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+            return
+        initial_events = _initial_route_events(
+            route,
+            issue_plan,
+            req.q,
+            source_gap_event=None,
+        )
+        # Keep diagnostics buffered until the model stream has successfully
+        # opened. If the runtime disappears after preflight, no plan or
+        # passage metadata can reach the client before the safe handoff.
+        initial_events.extend([
+            {"event": "coverage", "data": json.dumps({
             "sources_searched": sorted(seen_sources),
             "subjects_in_results": sorted(seen_subjects),
             "passages_used": len(passages),
-        })}
-        # Send the passages so the UI can render citation popovers eagerly
-        yield {"event": "passages", "data": json.dumps([
-            {"index": p["index"], "anchor": p["anchor"], "title": p["title"],
+            })},
+            {"event": "passages", "data": json.dumps([
+            {"index": p["index"], "anchor": p["anchor"],
+             "canonical_anchor": p.get("canonical_anchor", p["anchor"]),
+             "display_anchor": p.get("display_anchor", p["anchor"]),
+             "chunk_id": p.get("chunk_id"), "title": p["title"],
+             "provenance_verified": p.get("provenance_verified") is True,
+             "heading": p.get("heading"),
              "as_at": p["as_at"], "court": p["court"], "citation": p["citation"],
              "source_type": p.get("source_type"), "document_id": p.get("document_id"),
              "statute_short": p.get("statute_short"),
+             "required_source_pack": p.get("required_source_pack"),
+             "required_source_packs": p.get("required_source_packs") or [],
+             "required_source_pack_authority_ids": (
+                 p.get("required_source_pack_authority_ids") or {}
+             ),
              "authority_ids": p.get("authority_ids") or []}
             for p in passages
-        ])}
-        yield workflow_event
+            ])},
+            workflow_event,
+        ])
         if source_gap_event is not None:
-            yield {"event": "source_gap", "data": json.dumps(source_gap_event)}
+            initial_events.append({"event": "source_gap", "data": json.dumps(source_gap_event)})
+
+        def _safe_stop_prefix_events() -> list[dict]:
+            """Return only the route/plan contract on an insufficient-support stop.
+
+            Coverage, passages, and workflow diagnostics stay buffered until a
+            visible answer sentence proves the stream is answerable. A stop
+            must not accidentally turn those diagnostics into a partial answer.
+            """
+            return [
+                event for event in initial_events
+                if event.get("event") in {"matter_route", "matter_plan", "intake"}
+            ]
 
         # Mutable state — closured into _check_and_emit so the strict-stop
         # check runs identically in the streaming-loop and final-flush paths.
@@ -26213,53 +27579,101 @@ async def answer(req: AnswerRequest):
                 out.append(sentence_ev)
             return out, should_stop
 
-        def _template_candidate_citation_indices() -> set[int]:
-            """Preflight the exact candidate filter used by the template path."""
-            citation_indices: set[int] = set()
-            pending_header: SentenceVerification | None = None
-            active_next_step_header: SentenceVerification | None = None
-            for sent in template_lines:
-                v = _verify_with_timing(sent)
-                if _is_deferred_template_header(v.text):
-                    pending_header = v
-                    active_next_step_header = v
-                    continue
-                v = _promote_safe_route_next_step(
-                    v,
-                    route,
-                    pending_header or active_next_step_header,
-                    issue_plan,
+        initial_events_emitted = False
+
+        def _empty_answer_handoff_events(
+            *,
+            reason: str = "post_verification_empty_answer",
+        ) -> list[dict]:
+            """Return the safe contract when verification leaves no answer body.
+
+            A model response can be non-empty while every sentence is rejected
+            by citation verification. Treating that state as an ordinary stop
+            leaves the browser with no answer and no explicit source-gap
+            outcome, which is indistinguishable from a broken request. The
+            canonical handoff makes the fail-closed state visible without
+            inventing a legal conclusion.
+            """
+            nonlocal initial_events_emitted
+            gap = _source_gap_handoff_payload(
+                route,
+                issue_plan,
+                {
+                    "has_gap": True,
+                    "route_category": route.category,
+                    "gap_kinds": ["post_verification_empty_answer"],
+                    "missing_required_sources": [],
+                    "message": (
+                        "The retrieved material did not yield a sentence that could "
+                        "be verified safely for this question."
+                    ),
+                    "handoff": "DLSA/legal aid or a qualified lawyer",
+                    "policy": "do_not_substitute_neighboring_authority",
+                },
+                reason=reason,
+            )
+            handoff = _source_gap_handoff_event(
+                route,
+                issue_plan,
+                gap,
+                reason=reason,
+            )
+            events: list[dict] = []
+            if not initial_events_emitted:
+                events.extend(
+                    _initial_route_events(
+                        route,
+                        None,
+                        req.q,
+                        source_gap_event=gap,
+                        intake_only=True,
+                    )
                 )
-                v = _promote_safe_template_source_bridge(v, route, issue_plan)
-                v = _promote_reviewed_workflow_contract_line(
-                    v,
-                    workflow_result_for_template,
-                    template_lines,
-                    issue_plan,
-                )
-                if not _candidate_template_sentence_should_emit(v, pending_header):
-                    continue
-                citation_indices.update(v.citations)
-                pending_header = None
-            return citation_indices
+                initial_events_emitted = True
+            else:
+                # The stream may already have released a route-only prefix.
+                # Append the contract signal without duplicating that prefix.
+                events.append({"event": "source_gap", "data": json.dumps(gap)})
+            metrics.source_gap_handoff_total.inc()
+            events.extend([
+                {"event": "sentence", "data": handoff["data"]},
+                _timing_event(
+                    timings,
+                    request_started,
+                    llm_model=settings.llm_model,
+                    llm_model_available=llm_model_available,
+                    retrieved_count=len(retrieved),
+                    passages_used=len(passages),
+                    expansion_variant_count=len(expansion_variants),
+                    state=state,
+                ),
+                {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})},
+            ])
+            return events
 
         # A fail-closed owner/source gap must not leak even harmless answer
         # preamble before the refusal. Emit only routing diagnostics and the
         # structured handoff for these cases.
         route_caveat = (
             None
-            if critical_contract_gap
+            if critical_contract_gap or source_gap_handoff
             else _route_regime_caveat(route, workflow_result_for_template)
         )
+        prefix_events: list[dict] = []
         if route_caveat:
             caveat_v = _verify_with_timing(route_caveat)
             caveat_ev, caveat_stop = _emit_and_check(caveat_v)
             if caveat_ev is not None:
-                yield caveat_ev
+                prefix_events.append(caveat_ev)
             if caveat_stop:
+                if not state["answer_body_sentences"]:
+                    for ev in _empty_answer_handoff_events():
+                        yield ev
+                    _record_final_metrics(state, time.perf_counter())
+                    return
                 metrics.stopped_total.inc()
-                yield _stop_event()
-                yield _timing_event(
+                prefix_events.append(_stop_event())
+                prefix_events.append(_timing_event(
                     timings,
                     request_started,
                     llm_model=settings.llm_model,
@@ -26268,86 +27682,20 @@ async def answer(req: AnswerRequest):
                     passages_used=len(passages),
                     expansion_variant_count=len(expansion_variants),
                     state=state,
-                )
-                yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                ))
+                prefix_events.append({"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})})
+                for ev in _safe_stop_prefix_events():
+                    yield ev
+                for ev in prefix_events:
+                    if ev.get("event") in {"stop", "timing", "disclaimer"}:
+                        yield ev
                 _record_final_metrics(state, time.perf_counter())
                 return
-
-        if critical_contract_gap:
-            metrics.refused_total.inc()
-            _add_stage_elapsed(timings, "llm_stream", 0.0)
-            yield {"event": "refused", "data": json.dumps({
-                "message": (
-                    "The controlling arbitration or pre-judgment attachment authority is "
-                    "missing from the retrieved source window. I will not substitute a "
-                    "neighboring CPC, criminal-seizure, or banking source. Treat this as "
-                    "intake and verify the order and controlling provision with DLSA, a "
-                    "qualified lawyer, or the relevant court/tribunal."
-                    if controlling_source_gap
-                    else _critical_route_contract_gap_message(route, source_gap_event)
-                ),
-                "reason": (
-                    "controlling_source_gap"
-                    if controlling_source_gap
-                    else "critical_route_needs_reviewed_contract"
-                ),
-                "disclaimer": DISCLAIMER_FOOTER,
-            })}
-            yield _timing_event(
-                timings,
-                request_started,
-                llm_model=settings.llm_model,
-                llm_model_available=llm_model_available,
-                retrieved_count=len(retrieved),
-                passages_used=len(passages),
-                expansion_variant_count=len(expansion_variants),
-                state=state,
-            )
-            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
-            _record_final_metrics(state, time.perf_counter())
-            return
 
         if template_lines:
+            template_events: list[dict] = list(prefix_events)
             state["server_template_used"] = True
             _add_stage_elapsed(timings, "llm_stream", 0.0)
-            missing_answer_authorities = _missing_registry_must_cite_authority_ids(
-                issue_plan,
-                passages,
-                _template_candidate_citation_indices(),
-            )
-            if missing_answer_authorities:
-                metrics.refused_total.inc()
-                yield {"event": "source_gap", "data": json.dumps({
-                    "reason": "mandatory_authority_not_cited",
-                    "missing_authority_ids": list(missing_answer_authorities),
-                    "message": (
-                        "The retrieved legal sources are complete, but the reviewed "
-                        "answer could not safely cite every mandatory authority."
-                    ),
-                })}
-                yield {"event": "refused", "data": json.dumps({
-                    "message": (
-                        "I found the controlling sources, but I could not produce a "
-                        "complete claim-level cited answer without dropping a mandatory "
-                        "authority. Please treat this as intake and verify the route with "
-                        "DLSA or a qualified lawyer."
-                    ),
-                    "reason": "mandatory_authority_not_cited",
-                    "disclaimer": DISCLAIMER_FOOTER,
-                })}
-                yield _timing_event(
-                    timings,
-                    request_started,
-                    llm_model=settings.llm_model,
-                    llm_model_available=llm_model_available,
-                    retrieved_count=len(retrieved),
-                    passages_used=len(passages),
-                    expansion_variant_count=len(expansion_variants),
-                    state=state,
-                )
-                yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
-                _record_final_metrics(state, time.perf_counter())
-                return
             pending_template_header: SentenceVerification | None = None
             active_template_next_step_header: SentenceVerification | None = None
             for sent in template_lines:
@@ -26375,11 +27723,16 @@ async def answer(req: AnswerRequest):
                     header_ev, header_stop = _emit_and_check(pending_template_header)
                     pending_template_header = None
                     if header_ev is not None:
-                        yield header_ev
+                        template_events.append(header_ev)
                     if header_stop:
+                        if not state["answer_body_sentences"]:
+                            for ev in _empty_answer_handoff_events():
+                                yield ev
+                            _record_final_metrics(state, time.perf_counter())
+                            return
                         metrics.stopped_total.inc()
-                        yield _stop_event()
-                        yield _timing_event(
+                        template_events.append(_stop_event())
+                        template_events.append(_timing_event(
                             timings,
                             request_started,
                             llm_model=settings.llm_model,
@@ -26388,17 +27741,23 @@ async def answer(req: AnswerRequest):
                             passages_used=len(passages),
                             expansion_variant_count=len(expansion_variants),
                             state=state,
-                        )
-                        yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                        ))
+                        template_events.append({"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})})
+                        for ev in [*initial_events, *template_events]:
+                            yield ev
                         _record_final_metrics(state, time.perf_counter())
                         return
                 sentence_events, should_stop = _emit_sentence_with_actionable_floor(v)
-                for ev in sentence_events:
-                    yield ev
+                template_events.extend(sentence_events)
                 if should_stop:
+                    if not state["answer_body_sentences"]:
+                        for ev in _empty_answer_handoff_events():
+                            yield ev
+                        _record_final_metrics(state, time.perf_counter())
+                        return
                     metrics.stopped_total.inc()
-                    yield _stop_event()
-                    yield _timing_event(
+                    template_events.append(_stop_event())
+                    template_events.append(_timing_event(
                         timings,
                         request_started,
                         llm_model=settings.llm_model,
@@ -26407,20 +27766,26 @@ async def answer(req: AnswerRequest):
                         passages_used=len(passages),
                         expansion_variant_count=len(expansion_variants),
                         state=state,
-                    )
-                    yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                    ))
+                    template_events.append({"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})})
+                    for ev in [*initial_events, *template_events]:
+                        yield ev
                     _record_final_metrics(state, time.perf_counter())
                     return
 
             contract_events, contract_stop = _emit_contract_floor(
                 source_floor_only=workflow_contract_preempts_legacy(workflow_result_for_template)
             )
-            for ev in contract_events:
-                yield ev
+            template_events.extend(contract_events)
             if contract_stop:
+                if not state["answer_body_sentences"]:
+                    for ev in _empty_answer_handoff_events():
+                        yield ev
+                    _record_final_metrics(state, time.perf_counter())
+                    return
                 metrics.stopped_total.inc()
-                yield _stop_event()
-                yield _timing_event(
+                template_events.append(_stop_event())
+                template_events.append(_timing_event(
                     timings,
                     request_started,
                     llm_model=settings.llm_model,
@@ -26429,26 +27794,44 @@ async def answer(req: AnswerRequest):
                     passages_used=len(passages),
                     expansion_variant_count=len(expansion_variants),
                     state=state,
-                )
-                yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                ))
+                template_events.append({"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})})
+                for ev in [*initial_events, *template_events]:
+                    yield ev
                 _record_final_metrics(state, time.perf_counter())
                 return
 
-            yield {"event": "sources", "data": json.dumps([
+            if not state["answer_body_sentences"]:
+                for ev in _empty_answer_handoff_events():
+                    yield ev
+                _record_final_metrics(state, time.perf_counter())
+                return
+
+            template_events.append({"event": "sources", "data": json.dumps([
                 {
                     "index": p["index"],
                     "title": p["title"],
                     "court": p["court"],
                     "citation": p["citation"],
                     "anchor": p["anchor"],
+                    "canonical_anchor": p.get("canonical_anchor", p["anchor"]),
+                    "display_anchor": p.get("display_anchor", p["anchor"]),
+                    "chunk_id": p.get("chunk_id"),
+                    "provenance_verified": p.get("provenance_verified") is True,
                     "as_at": p["as_at"],
                     "source_type": p.get("source_type"),
                     "document_id": p.get("document_id"),
                     "statute_short": p.get("statute_short"),
+                    "heading": p.get("heading"),
+                    "required_source_pack": p.get("required_source_pack"),
+                    "required_source_packs": p.get("required_source_packs") or [],
+                    "required_source_pack_authority_ids": (
+                        p.get("required_source_pack_authority_ids") or {}
+                    ),
                     "authority_ids": p.get("authority_ids") or [],
                 }
                 for p in passages
-            ])}
+            ])})
             if settings.answer_relevance_enabled and state["answer_body_sentences"]:
                 body = " ".join(state["answer_body_sentences"]).strip()
                 t_relevance = time.perf_counter()
@@ -26470,13 +27853,13 @@ async def answer(req: AnswerRequest):
                 )
                 _record_stage(timings, "relevance", t_relevance)
                 if rel is not None:
-                    yield {"event": "relevance", "data": json.dumps({
+                    template_events.append({"event": "relevance", "data": json.dumps({
                         "score": round(rel.score, 4),
                         "verdict": rel.verdict.value,
                         "threshold": round(rel.threshold, 4),
                         "band": round(rel.band, 4),
-                    })}
-            yield _timing_event(
+                    })})
+            template_events.append(_timing_event(
                 timings,
                 request_started,
                 llm_model=settings.llm_model,
@@ -26485,8 +27868,10 @@ async def answer(req: AnswerRequest):
                 passages_used=len(passages),
                 expansion_variant_count=len(expansion_variants),
                 state=state,
-            )
-            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+            ))
+            template_events.append({"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})})
+            for ev in [*initial_events, *template_events]:
+                yield ev
             _record_final_metrics(state, time.perf_counter())
             return
 
@@ -26501,77 +27886,79 @@ async def answer(req: AnswerRequest):
                 _record_stage(timings, "llm_stream", llm_t0)
                 llm_stream_recorded = True
 
-        try:
-            async for delta in stream_chat(messages):
-                if not first_token_seen and delta.strip():
-                    metrics.llm_ttft.observe(time.perf_counter() - llm_t0)
-                    first_token_seen = True
-                buf += delta
+        model_terminal_section = False
+        pending_llm_header: SentenceVerification | None = None
 
-            composed_text = _strip_model_terminal_sections(buf)
-            if composed_text.strip():
-                pending_llm_header: SentenceVerification | None = None
-                for sent in segment_sentences(composed_text):
-                    v = _verify_with_timing(sent)
-                    if _is_deferred_template_header(v.text):
-                        pending_llm_header = v
-                        continue
-                    v = _promote_safe_route_next_step(v, route, pending_llm_header)
-                    v = _promote_safe_template_source_bridge(v, route)
-                    if not _candidate_sentence_should_emit(v):
-                        continue
-                    if pending_llm_header is not None:
-                        header_ev, header_stop = _emit_and_check(pending_llm_header)
-                        pending_llm_header = None
-                        if header_ev is not None:
-                            yield header_ev
-                        if header_stop:
-                            metrics.stopped_total.inc()
-                            _record_llm_stream_once()
-                            yield _stop_event()
-                            yield _timing_event(
-                                timings,
-                                request_started,
-                                llm_model=settings.llm_model,
-                                llm_model_available=llm_model_available,
-                                retrieved_count=len(retrieved),
-                                passages_used=len(passages),
-                                expansion_variant_count=len(expansion_variants),
-                                state=state,
-                            )
-                            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
-                            _record_final_metrics(state, llm_t0)
-                            return
-                    sentence_events, should_stop = _emit_sentence_with_actionable_floor(v)
-                    for ev in sentence_events:
-                        yield ev
-                    if should_stop:
-                        metrics.stopped_total.inc()
-                        _record_llm_stream_once()
-                        yield _stop_event()
-                        yield _timing_event(
-                            timings,
-                            request_started,
-                            llm_model=settings.llm_model,
-                            llm_model_available=llm_model_available,
-                            retrieved_count=len(retrieved),
-                            passages_used=len(passages),
-                            expansion_variant_count=len(expansion_variants),
-                            state=state,
-                        )
-                        yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
-                        _record_final_metrics(state, llm_t0)
-                        return
+        def _process_llm_sentence(sent: str) -> tuple[list[dict], bool]:
+            """Verify one complete model sentence without buffering it for the UI."""
+            nonlocal pending_llm_header, model_terminal_section
+            if model_terminal_section or not sent.strip():
+                return [], False
+            stripped = sent.strip()
+            # Sentence segmentation can keep a markdown terminal header and
+            # the following fake source line in one segment. Detect the
+            # header at a line boundary (or after sentence punctuation) before
+            # verification so the whole model-authored terminal section is
+            # discarded. Some models emit "claim; Sources: [1]" on one line.
+            terminal_header = re.search(
+                r"(?im)(?:^|\n|[^\w\s])[ \t]*(?:#{1,6}\s*)?(?:\*\*\s*)?"
+                r"(?:sources?|references?|bibliography|disclaimer)"
+                r"(?:\s*\*\*)?[ \t]*:?[ \t]*(?=\n|$|\[\d+\])",
+                sent,
+            )
+            if terminal_header is not None:
+                prefix = sent[:terminal_header.start()].strip()
+                if prefix:
+                    events, should_stop = _process_llm_sentence(prefix)
+                    model_terminal_section = True
+                    return events, should_stop
+                model_terminal_section = True
+                return [], False
+            if _SOURCES_HEADER_RE.match(stripped) or _DISCLAIMER_HEADER_RE.match(stripped):
+                model_terminal_section = True
+                return [], False
+            v = _verify_with_timing(sent)
+            if _is_deferred_template_header(v.text):
+                pending_llm_header = v
+                return [], False
+            v = _promote_safe_route_next_step(v, route, pending_llm_header)
+            v = _promote_safe_template_source_bridge(v, route)
+            # Let unsupported/unknown model prose reach _emit_and_check so it
+            # is counted against the stop budget and suppressed from the
+            # visible answer. Other rejected candidates remain dropped before
+            # emission as before.
+            if (
+                not _candidate_sentence_should_emit(v)
+                and v.status not in (SentenceStatus.UNSUPPORTED, SentenceStatus.UNKNOWN_CITATION)
+            ):
+                return [], False
+            events: list[dict] = []
+            if pending_llm_header is not None:
+                header_ev, header_stop = _emit_and_check(pending_llm_header)
+                pending_llm_header = None
+                if header_ev is not None:
+                    events.append(header_ev)
+                if header_stop:
+                    return events, True
+            sentence_events, should_stop = _emit_sentence_with_actionable_floor(v)
+            events.extend(sentence_events)
+            return events, should_stop
 
+        def _stop_events() -> list[dict]:
+            nonlocal initial_events_emitted
+            if not state["answer_body_sentences"]:
+                _record_llm_stream_once()
+                return _empty_answer_handoff_events()
+            metrics.stopped_total.inc()
             _record_llm_stream_once()
-
-            contract_events, contract_stop = _emit_contract_floor()
-            for ev in contract_events:
-                yield ev
-            if contract_stop:
-                metrics.stopped_total.inc()
-                yield _stop_event()
-                yield _timing_event(
+            prefix_events_to_emit: list[dict] = []
+            if not initial_events_emitted:
+                prefix_events_to_emit = _safe_stop_prefix_events()
+                initial_events_emitted = True
+            return [
+                *prefix_events_to_emit,
+                _stop_event(),
+                _timing_event(
                     timings,
                     request_started,
                     llm_model=settings.llm_model,
@@ -26580,10 +27967,91 @@ async def answer(req: AnswerRequest):
                     passages_used=len(passages),
                     expansion_variant_count=len(expansion_variants),
                     state=state,
-                )
-                yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+                ),
+                {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})},
+            ]
+
+        try:
+            async for delta in stream_chat(messages):
+                if not first_token_seen and delta.strip():
+                    metrics.llm_ttft.observe(time.perf_counter() - llm_t0)
+                    first_token_seen = True
+                buf += delta
+                segments = segment_sentences(buf)
+                if len(segments) < 2:
+                    continue
+                complete_segments, buf = segments[:-1], segments[-1]
+                for sent in complete_segments:
+                    sentence_events, should_stop = _process_llm_sentence(sent)
+                    if (
+                        not initial_events_emitted
+                        and any(ev.get("event") == "sentence" for ev in sentence_events)
+                    ):
+                        for ev in [*initial_events, *prefix_events]:
+                            yield ev
+                        initial_events_emitted = True
+                    for ev in sentence_events:
+                        yield ev
+                    if should_stop:
+                        for ev in _stop_events():
+                            yield ev
+                        _record_final_metrics(state, llm_t0)
+                        return
+
+            # Flush the final unterminated sentence only after the model closes.
+            composed_text = _strip_model_terminal_sections(buf)
+            for sent in segment_sentences(composed_text):
+                sentence_events, should_stop = _process_llm_sentence(sent)
+                if (
+                    not initial_events_emitted
+                    and any(ev.get("event") == "sentence" for ev in sentence_events)
+                ):
+                    for ev in [*initial_events, *prefix_events]:
+                        yield ev
+                    initial_events_emitted = True
+                for ev in sentence_events:
+                    yield ev
+                if should_stop:
+                    for ev in _stop_events():
+                        yield ev
+                    _record_final_metrics(state, llm_t0)
+                    return
+
+            _record_llm_stream_once()
+
+            contract_events, contract_stop = _emit_contract_floor()
+            if not state["answer_body_sentences"]:
+                for ev in _empty_answer_handoff_events():
+                    yield ev
                 _record_final_metrics(state, llm_t0)
                 return
+            # A model can finish with every generated sentence suppressed
+            # while the server-side contract floor still produces a safe
+            # actionable sentence. Release the buffered route/plan metadata
+            # before that first visible server-authored sentence.
+            prefix_to_emit, initial_events_emitted = _buffered_prefix_for_first_sentence(
+                initial_events,
+                prefix_events,
+                contract_events,
+                initial_events_emitted,
+            )
+            for ev in prefix_to_emit:
+                yield ev
+            for ev in contract_events:
+                yield ev
+            if contract_stop:
+                for ev in _stop_events():
+                    yield ev
+                _record_final_metrics(state, llm_t0)
+                return
+
+            # A successful stream must never finish with sources/timing but
+            # without the route prefix. This can happen when both model prose
+            # and the contract floor produce no visible sentence.
+            if not initial_events_emitted:
+                for ev in [*initial_events, *prefix_events]:
+                    yield ev
+                initial_events_emitted = True
 
             # Server-authored authoritative Sources event. Per Codex review
             # (round 2) #4, the LLM is no longer allowed to author the
@@ -26597,10 +28065,20 @@ async def answer(req: AnswerRequest):
                     "court": p["court"],
                     "citation": p["citation"],
                     "anchor": p["anchor"],
+                    "canonical_anchor": p.get("canonical_anchor", p["anchor"]),
+                    "display_anchor": p.get("display_anchor", p["anchor"]),
+                    "chunk_id": p.get("chunk_id"),
+                    "provenance_verified": p.get("provenance_verified") is True,
                     "as_at": p["as_at"],
                     "source_type": p.get("source_type"),
                     "document_id": p.get("document_id"),
                     "statute_short": p.get("statute_short"),
+                    "heading": p.get("heading"),
+                    "required_source_pack": p.get("required_source_pack"),
+                    "required_source_packs": p.get("required_source_packs") or [],
+                    "required_source_pack_authority_ids": (
+                        p.get("required_source_pack_authority_ids") or {}
+                    ),
                     "authority_ids": p.get("authority_ids") or [],
                 }
                 for p in passages
@@ -26659,36 +28137,127 @@ async def answer(req: AnswerRequest):
         except LLMModelUnavailable as e:
             logger.exception("answer stream llm unavailable: %s", e)
             _record_llm_stream_once()
-            yield _llm_unavailable_error({
-                "ok": False,
-                "model": settings.llm_model,
-                "available_models": [],
-                "message": str(e),
-            }, settings)
+            runtime_gap = _source_gap_handoff_payload(
+                route,
+                issue_plan,
+                {
+                    "has_gap": True,
+                    "route_category": route.category,
+                    "gap_kinds": ["llm_unavailable"],
+                    "missing_required_sources": [],
+                    "message": "The answer model became unavailable before the answer could be verified.",
+                    "handoff": "DLSA/legal aid or a qualified lawyer",
+                    "policy": "do_not_substitute_neighboring_authority",
+                },
+                reason="llm_unavailable",
+            )
+            runtime_handoff = _source_gap_handoff_event(
+                route, None, runtime_gap, reason="llm_unavailable"
+            )
+            metrics.source_gap_handoff_total.inc()
+            if not initial_events_emitted:
+                for ev in _initial_route_events(
+                    route,
+                    None,
+                    req.q,
+                    source_gap_event=runtime_gap,
+                    intake_only=True,
+                ):
+                    yield ev
+            yield {"event": "sentence", "data": runtime_handoff["data"]}
             yield _timing_event(
                 timings,
                 request_started,
                 llm_model=settings.llm_model,
                 llm_model_available=False,
-                retrieved_count=len(retrieved),
-                passages_used=len(passages),
-                expansion_variant_count=len(expansion_variants),
-                state=state,
             )
+            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+            _record_final_metrics(state, time.perf_counter())
         except Exception as e:
+            # Never expose raw exceptions or leave a partial answer as the
+            # apparent result. The browser can only trust a canonical
+            # source-gap handoff after any answer-stream failure.
             logger.exception("answer stream error: %s", e)
-            yield {"event": "error", "data": json.dumps({"message": str(e)})}
             _record_llm_stream_once()
+            runtime_gap = _source_gap_handoff_payload(
+                route,
+                issue_plan,
+                {
+                    "has_gap": True,
+                    "route_category": route.category,
+                    "gap_kinds": ["answer_stream_error"],
+                    "missing_required_sources": [],
+                    "message": "The answer could not be completed and verified safely.",
+                    "handoff": "DLSA/legal aid or a qualified lawyer",
+                    "policy": "do_not_substitute_neighboring_authority",
+                },
+                reason="answer_stream_error",
+            )
+            runtime_handoff = _source_gap_handoff_event(
+                route, None, runtime_gap, reason="answer_stream_error"
+            )
+            metrics.source_gap_handoff_total.inc()
+            if not initial_events_emitted:
+                for ev in _initial_route_events(
+                    route,
+                    None,
+                    req.q,
+                    source_gap_event=runtime_gap,
+                    intake_only=True,
+                ):
+                    yield ev
+            yield {"event": "sentence", "data": runtime_handoff["data"]}
             yield _timing_event(
                 timings,
                 request_started,
                 llm_model=settings.llm_model,
-                llm_model_available=llm_model_available,
-                retrieved_count=len(retrieved),
-                passages_used=len(passages),
-                expansion_variant_count=len(expansion_variants),
-                state=state,
+                llm_model_available=False,
             )
+            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
+            _record_final_metrics(state, time.perf_counter())
+
+    async def event_stream() -> AsyncIterator[dict]:
+        try:
+            async for ev in _answer_event_stream_impl():
+                yield ev
+        except Exception as e:
+            # Template/verification failures happen outside the model branch;
+            # keep those paths on the same sanitized, terminal contract.
+            logger.exception("answer event stream failed: %s", e)
+            runtime_gap = _source_gap_handoff_payload(
+                route,
+                None,
+                {
+                    "has_gap": True,
+                    "route_category": route.category,
+                    "gap_kinds": ["answer_stream_error"],
+                    "missing_required_sources": [],
+                    "message": "The answer could not be completed and verified safely.",
+                    "handoff": "DLSA/legal aid or a qualified lawyer",
+                    "policy": "do_not_substitute_neighboring_authority",
+                },
+                reason="answer_stream_error",
+            )
+            handoff_event = _source_gap_handoff_event(
+                route, None, runtime_gap, reason="answer_stream_error"
+            )
+            metrics.source_gap_handoff_total.inc()
+            for ev in _initial_route_events(
+                route,
+                None,
+                req.q,
+                source_gap_event=runtime_gap,
+                intake_only=True,
+            ):
+                yield ev
+            yield {"event": "sentence", "data": handoff_event["data"]}
+            yield _timing_event(
+                timings,
+                request_started,
+                llm_model=settings.llm_model,
+                llm_model_available=False,
+            )
+            yield {"event": "disclaimer", "data": json.dumps({"text": DISCLAIMER_FOOTER})}
 
     return EventSourceResponse(event_stream())
 
@@ -26716,10 +28285,18 @@ _CITATION_TAG_RE = re.compile(r"\[\d+(?:\s*,\s*\d+)*\]")
 
 def _normalize_for_dedupe(text: str) -> str:
     """Normalize a sentence for verbatim-repeat detection. Strip leading
-    bullet markers, citation tags, surrounding whitespace, and casefold.
+    action-section headers, bullet markers, citation tags, surrounding
+    whitespace, and casefold.
     A sentence like "- You may apply ... [1][2]." and "  You may apply ...
     [1] [2]" should compare equal."""
     s = text.strip()
+    s = re.sub(
+        r"^\s*(?:#{1,6}\s*)?(?:\*\*\s*)?what you can do next"
+        r"(?:\s*\*\*)?\s*",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
     s = re.sub(r"^\s*[-*]\s*", "", s)
     s = re.sub(r"\[\d+\]", "", s)
     s = re.sub(r"\s+", " ", s)
@@ -26751,6 +28328,20 @@ def _sentence_event(v: SentenceVerification) -> dict:
     }
 
 
+def _buffered_prefix_for_first_sentence(
+    initial_events: list[dict],
+    prefix_events: list[dict],
+    buffered_events: list[dict],
+    already_emitted: bool,
+) -> tuple[list[dict], bool]:
+    """Release route metadata when buffered server prose becomes visible."""
+    if already_emitted or not any(
+        event.get("event") == "sentence" for event in buffered_events
+    ):
+        return [], already_emitted
+    return [*initial_events, *prefix_events], True
+
+
 def _record_final_metrics(state: dict, llm_t0: float) -> None:
     """End-of-stream metrics (skip_ratio + total LLM time)."""
     metrics.llm_total.observe(time.perf_counter() - llm_t0)
@@ -26760,26 +28351,155 @@ def _record_final_metrics(state: dict, llm_t0: float) -> None:
 
 # ----- health ---------------------------------------------------------------
 
-@app.get("/healthz")
-async def healthz(
-    deep: bool = Query(False, description="also check local Ollama model availability"),
-):
+
+async def _corpus_counts() -> tuple[int, int]:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        chunk_count = await conn.fetchval("SELECT COUNT(*) FROM chunks WHERE NOT quarantined")
-        doc_count = await conn.fetchval("SELECT COUNT(*) FROM documents")
+        # Readiness must measure the corpus that production retrieval can use,
+        # not merely rows present in Postgres. In particular, the CI seed is
+        # intentionally unverified and must never make /readyz green.
+        eligible = f"NOT c.quarantined AND {_provenance_filter_sql()}"
+        chunk_count = await conn.fetchval(
+            f"""
+            SELECT COUNT(*)
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE {eligible}
+            """
+        )
+        doc_count = await conn.fetchval(
+            f"""
+            SELECT COUNT(*)
+            FROM documents d
+            WHERE EXISTS (
+                SELECT 1
+                FROM chunks c
+                WHERE c.document_id = d.id
+                  AND {eligible}
+            )
+            """
+        )
+    return int(chunk_count or 0), int(doc_count or 0)
+
+
+@app.get("/readyz")
+async def readyz(
+    deep: bool = False,
+):
+    """Return 200 only when the requested serving dependencies are ready.
+
+    The default check is intentionally cheap for local orchestration. Production
+    Compose uses ``deep=true`` so a live database cannot mask an unavailable
+    answer model.
+    """
+    try:
+        chunk_count, doc_count = await _corpus_counts()
+    except Exception:
+        logger.warning("readiness check failed", exc_info=True)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "dependency": "postgres",
+                "reason": "database_unavailable",
+            },
+        )
+    if chunk_count <= 0 or doc_count <= 0:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "dependency": "corpus",
+                "reason": "corpus_empty",
+                "chunks": chunk_count,
+                "documents": doc_count,
+            },
+        )
+    if deep:
+        try:
+            llm = await check_model_available()
+            warmup = get_model_warmup_state()
+        except Exception:
+            logger.warning("deep readiness model check failed", exc_info=True)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "dependency": "llm",
+                    "reason": "model_unavailable",
+                },
+            )
+        if not llm.get("ok"):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "dependency": "llm",
+                    "reason": "model_unavailable",
+                },
+            )
+        if warmup.get("enabled") and not warmup.get("ready"):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "dependency": "llm",
+                    "reason": "model_warming",
+                },
+            )
+    return {
+        "status": "ready",
+        "chunks": chunk_count,
+        "documents": doc_count,
+        "build_fingerprint": runtime_identity()["fingerprint"],
+        "build_fingerprint_source": runtime_identity()["source"],
+    }
+
+@app.get("/healthz")
+async def healthz(
+    deep: bool = False,
+):
+    try:
+        chunk_count, doc_count = await _corpus_counts()
+    except Exception:
+        logger.warning("health check failed", exc_info=True)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "dependency": "postgres",
+                "reason": "database_unavailable",
+            },
+        )
     body = {
         "status": "ok",
         "chunks": chunk_count,
         "documents": doc_count,
+        "build_fingerprint": runtime_identity()["fingerprint"],
+        "build_fingerprint_source": runtime_identity()["source"],
     }
     if deep:
         llm = await check_model_available()
-        body["llm"] = llm
-        body["model_warmup"] = get_model_warmup_state()
+        warmup = get_model_warmup_state()
+        # Health is public through the web rewrite. Keep internal model names,
+        # exception text, available-model lists, and warmup diagnostics out of
+        # the response while preserving an actionable dependency status.
+        body["llm"] = {
+            "status": "available" if bool(llm.get("ok")) else "unavailable",
+        }
+        body["model_warmup"] = {
+            "enabled": bool(warmup.get("enabled")),
+            "ready": bool(warmup.get("ready")),
+            "status": (
+                "ready"
+                if bool(warmup.get("ready"))
+                else "pending"
+                if bool(warmup.get("enabled"))
+                else "disabled"
+            ),
+        }
         if not llm.get("ok"):
             body["status"] = "degraded"
-        warmup = body["model_warmup"]
         if warmup.get("enabled") and not warmup.get("ready"):
             body["status"] = "degraded"
     return body

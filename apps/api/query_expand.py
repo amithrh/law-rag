@@ -50,6 +50,7 @@ from .config import get_settings
 from .legal_hyde import maybe_append_legal_hyde_brief
 from .llm import chat_once
 from .matter_router import MatterRoute, route_matter
+from .privacy import query_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -1465,8 +1466,8 @@ async def expand_query(query: str, *, max_variants: int = 3) -> list[str]:
             break
 
     logger.info(
-        "query_expand: %d variants in %.2fs (query=%r)",
-        len(variants), elapsed, query[:60],
+        "query_expand: %d variants in %.2fs query_hash=%s",
+        len(variants), elapsed, query_fingerprint(query),
     )
 
     # Always return original first — it's the most reliable signal even

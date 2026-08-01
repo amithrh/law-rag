@@ -90,13 +90,42 @@ def test_registry_migration_hash_and_order_are_deterministic():
         "0005_bns_extortion",
         "0006_custody_authority_family",
         "0007_custody_answer_citation_policy",
+        "0008_bank_freeze_authority_family",
+        "0009_bnss_106_provenance_refresh",
+        "0010_crpc_102_provenance_refresh",
+        "0011_pmla_asset_freeze_authority_family",
+        "0012_pmla_consolidation_snapshot",
+        "0013_pmla_complete_restraint_checks",
+        "0014_pmla_section_17_verbatim_correction",
+        "0015_pmla_retire_undated_projections",
+        "0016_pmla_retire_split_aliases",
+        "0017_uapa_43d_bail_authority",
+        "0018_uapa_statute_only_workflow",
+        "0019_crpc_device_return_authority",
+        "0020_bnss_device_return_authority",
+        "0021_bnss_section_531_savings",
+        "0022_crpc_154_fir_information_authority",
+        "0023_bnss_173_175_fir_authorities",
+        "0024_crpc_154_vehicle_theft_pack",
+        "0025_msmed_sale_of_goods_authorities",
+        "0026_legal_services_authorities_lok_adalat",
+        "0027_legal_services_authorities_lok_adalat_temporal_correction",
+        "0028_legal_services_authorities_lok_adalat_projection_repair",
+        "0029_legal_services_authorities_lok_adalat_official_projection_retirement",
     ]
     assert all(len(item.manifest_sha256) == 64 for item in migrations)
-    assert len(registry.records) == 27
+    # Section 531 is already canonicalized by 0006; 0021 only activates it
+    # in the seized-device workflow.
+    assert len(registry.records) == 52
     assert {workflow.scenario_id for workflow in registry.workflows} == {
         "arrest_custody_station_case_not_disclosed",
+        "bank_account_freeze_legal_hold",
         "wrong_bank_debit",
         "loan_app_harassment",
+        "pmla_ed_asset_freeze",
+        "police_seized_device_return",
+        "uapa_prima_facie_bail",
+        "vehicle_theft_fir_refusal",
     }
 
 
@@ -112,11 +141,93 @@ def test_applied_migrations_must_be_exact_hash_matched_prefix():
         )
 
 
+def test_pmla_authorities_pin_the_official_pdf_consolidation_snapshot():
+    registry = load_authority_registry()
+    for section in (5, 17, 8, 26):
+        record = registry.by_key(
+            f"prevention_of_money_laundering_act_2002_section_{section}"
+        )
+        assert record is not None
+        assert record.consolidation_as_at == date(2024, 8, 30)
+
+
+def test_msmed_and_sale_of_goods_records_are_explicit_and_hash_pinned():
+    registry = load_authority_registry()
+    expected = {
+        "msmed_2006_section_15": ("15", "authority_14b3ca26914b4862dc29"),
+        "msmed_2006_section_16": ("16", "authority_84e3db3e8d92860b7ac6"),
+        "msmed_2006_section_18": ("18", "authority_f96da9f5d7d66e9c94d2"),
+        "sale_of_goods_1930_section_31": ("31", "authority_ca972b62188fc00d2d93"),
+        "sale_of_goods_1930_section_32": ("32", "authority_ad5352abbebc38174948"),
+        "sale_of_goods_1930_section_55": ("55", "authority_e82f7a1ce9d8cd81476e"),
+        "sale_of_goods_1930_section_56": ("56", "authority_712ff6f224db04da10af"),
+    }
+    for key, (section, authority_id) in expected.items():
+        record = registry.by_key(key)
+        assert record is not None
+        assert record.authority_id_expected == authority_id
+        assert record.provision.number == section
+        assert record.provenance.raw_sha256
+        assert record.provenance.raw_bytes_size in {242312, 377988}
+        assert record.canonical_url.startswith("https://www.indiacode.nic.in/")
+
+
+def test_lok_adalat_authorities_pin_the_current_consolidated_text_date():
+    registry = load_authority_registry()
+    expected = {
+        "legal_services_authorities_act_1987_section_19": "authority_4311cfc807f876973217",
+        "legal_services_authorities_act_1987_section_20": "authority_73374f30d45eec49c931",
+        "legal_services_authorities_act_1987_section_21": "authority_71a26d0ccbf7b61f6d84",
+    }
+    for key, authority_id in expected.items():
+        record = registry.by_key(key)
+        assert record is not None
+        assert record.authority_id_expected == authority_id
+        assert record.effective_from == date(1994, 10, 29)
+        assert record.consolidation_as_at == date(1994, 10, 29)
+        assert record.provenance.raw_sha256 == (
+            "3aae5d5c9f8c2ad100c0553c351af559e35fb36c3fc68a921fd1e64dd4a9318f"
+        )
+        assert record.provenance.tier == "canonical"
+
+
+def test_lok_adalat_matter_plan_binds_all_operating_sections_canonically():
+    query = "how do I approach Lok Adalat for pending traffic challan settlement"
+    plan = build_matter_plan(query, route_matter(query))
+    entries = {
+        entry.registry_key: entry
+        for entry in plan.authority_ledger
+        if entry.registry_key and entry.registry_key.startswith(
+            "legal_services_authorities_act_1987_section_"
+        )
+    }
+    assert set(entries) == {
+        "legal_services_authorities_act_1987_section_19",
+        "legal_services_authorities_act_1987_section_20",
+        "legal_services_authorities_act_1987_section_21",
+    }
+    assert all(entry.identity_status == "canonical" for entry in entries.values())
+    assert {entry.section for entry in entries.values()} == {
+        "Section 19",
+        "Section 20",
+        "Section 21",
+    }
+    source = next(
+        source
+        for source in plan.retrieval_sources
+        if source.source_pack_id == "legal_services_authorities_1987_lok_adalat"
+    )
+    assert set(source.authority_ids) == {
+        entry.authority_id for entry in entries.values()
+    }
+
+
 @pytest.mark.parametrize(
     "query,scenario_id",
     [
         ("Bank deducted money wrongly and customer care is not helping", "wrong_bank_debit"),
         ("Loan app is harassing my contacts", "loan_app_harassment"),
+        ("my bank account is frozen, what do i do", "bank_account_freeze_legal_hold"),
     ],
 )
 def test_rbi_workflows_make_plan_authorities_and_actions_canonical(query, scenario_id):
@@ -184,6 +295,60 @@ def test_rbi_registry_uses_current_official_consolidation_and_correct_clauses():
     )
     assert all(record.provenance.raw_bytes_size == 178811 for record in records)
     assert registry.by_key("rbi_integrated_ombudsman_2021_clause_2") is None
+
+
+def test_vehicle_theft_plan_binds_crpc_154_to_the_exact_source_pack():
+    query = "My bike is stolen and police are not filing FIR"
+    plan = build_matter_plan(query, route_matter(query))
+    record = load_authority_registry().by_key(
+        "code_of_criminal_procedure_1973_section_154"
+    )
+
+    assert record is not None
+    crpc_entries = [
+        entry
+        for entry in plan.authority_ledger
+        if entry.registry_key == record.canonical_key
+    ]
+    assert len(crpc_entries) == 1
+    assert crpc_entries[0].section == "Section 154"
+    assert crpc_entries[0].identity_status == "canonical"
+    source = next(
+        source
+        for source in plan.retrieval_sources
+        if source.source_pack_id == "crpc_1973_vehicle_theft_fir"
+    )
+    assert source.authority_ids == [record.authority_id_expected]
+
+
+def test_vehicle_theft_plan_binds_current_bnss_fir_authorities_canonically():
+    query = "My bike is stolen and police are not filing FIR; incident was on 1 August 2024"
+    plan = build_matter_plan(query, route_matter(query))
+    registry = load_authority_registry()
+    expected = {
+        "bharatiya_nagarik_suraksha_sanhita_2023_section_173",
+        "bharatiya_nagarik_suraksha_sanhita_2023_paragraph_173_4",
+        "bharatiya_nagarik_suraksha_sanhita_2023_section_175",
+    }
+    entries = {
+        entry.registry_key: entry
+        for entry in plan.authority_ledger
+        if entry.registry_key in expected
+    }
+
+    assert set(entries) == expected
+    assert all(entry.identity_status == "canonical" for entry in entries.values())
+    assert {entry.section for entry in entries.values()} == {
+        "Section 173", "Section 173(4)", "Section 175",
+    }
+    source = next(
+        source
+        for source in plan.retrieval_sources
+        if source.source_pack_id == "bnss_2023_vehicle_theft_fir"
+    )
+    assert set(source.authority_ids) == {
+        registry.by_key(key).authority_id_expected for key in expected
+    }
 
 
 def test_rbi_loan_app_registry_owns_current_conduct_and_data_provisions():

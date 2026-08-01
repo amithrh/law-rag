@@ -5,7 +5,9 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +30,18 @@ class Settings(BaseSettings):
     postgres_db: str = "lawrag"
     postgres_user: str = "lawrag"
     postgres_password: str = ""
+    # Bound startup/readiness failure when Postgres is stopped or awaiting
+    # host-level authorization (for example, Postgres.app on macOS).
+    postgres_connect_timeout_sec: float = Field(default=5.0, gt=0, le=60)
+
+    # Redis is the shared admission/rate-limit backend in production. The
+    # host-side mapped port is used only when the API runs outside Docker.
+    redis_host: str = "localhost"
+    redis_port: int = Field(default=6379, ge=1, le=65535)
+    redis_host_port: int = Field(default=6380, ge=1, le=65535)
+    redis_password: str = ""
+    redis_db: int = Field(default=0, ge=0, le=15)
+    redis_connect_timeout_sec: float = Field(default=2.0, gt=0, le=30)
 
     @property
     def resolved_database_url(self) -> str:
@@ -54,6 +68,13 @@ class Settings(BaseSettings):
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{host}:{port}/{self.postgres_db}"
         )
+
+    @property
+    def resolved_redis_url(self) -> str:
+        host = self.redis_host
+        port = self.redis_port if host not in ("localhost", "127.0.0.1", "::1") else self.redis_host_port
+        auth = f":{quote(self.redis_password, safe='')}@" if self.redis_password else ""
+        return f"redis://{auth}{host}:{port}"
 
     @property
     def resolved_database_url_host_side(self) -> str:
@@ -102,6 +123,42 @@ class Settings(BaseSettings):
     # where 32b clearly wins.
     llm_model: str = "qwen3:14b"
     llm_max_tokens: int = 384
+    # Ollama is the scarce resource for the local 14B deployment. Keep the
+    # API admission limit independent from model generation capacity so a
+    # burst queues behind the model instead of turning into llm_unavailable.
+    llm_max_concurrent: int = Field(default=1, ge=1, le=64)
+    llm_admission_wait_sec: float = Field(default=120.0, gt=0, le=900)
+    # Avoid an /api/tags stampede when many requests arrive together. A short
+    # TTL keeps startup/configuration failures visible without making model
+    # availability stale for a meaningful portion of a deployment window.
+    llm_preflight_cache_sec: float = Field(default=5.0, ge=0, le=60)
+
+    # HTTP admission controls. In production, set ENVIRONMENT=production and
+    # ANSWER_API_KEY behind the deployment's secret manager or API gateway.
+    # Development defaults keep the local browser usable while still bounding
+    # request size, concurrency, and per-client request rate.
+    environment: Literal["development", "production"] = "development"
+    answer_api_key: str = ""
+    answer_max_query_chars: int = Field(default=2000, ge=1, le=10000)
+    answer_max_filter_items: int = Field(default=20, ge=0, le=100)
+    answer_max_filter_item_chars: int = Field(default=100, ge=1, le=1000)
+    answer_max_top_k: int = Field(default=20, ge=1, le=100)
+    answer_max_body_bytes: int = Field(default=16384, ge=1024, le=1_048_576)
+    answer_max_concurrent: int = Field(default=4, ge=1, le=256)
+    answer_max_waiters: int = Field(default=32, ge=0, le=10_000)
+    answer_rate_limit_per_minute: int = Field(default=120, ge=1, le=100_000)
+    answer_network_rate_limit_per_minute: int = Field(default=6_000, ge=1, le=1_000_000)
+    # A bounded queue absorbs normal bursts (for example, the fifth user
+    # arriving while four expensive streams are active). A short 100 ms
+    # timeout turned ordinary bursts into user-visible 429s.
+    answer_admission_wait_ms: int = Field(default=60_000, ge=0, le=300_000)
+    answer_admission_lease_sec: int = Field(default=300, ge=30, le=3600)
+    answer_distributed_admission: bool = False
+    answer_admission_redis_prefix: str = "law-rag:answer-admission"
+    answer_client_id_header: str = "X-Answer-Client"
+    # Only accept forwarded client identity from explicitly trusted reverse
+    # proxy addresses. Leave empty when the API is directly exposed.
+    answer_trusted_proxy_ips: str = ""
 
     @property
     def resolved_ollama_api_host(self) -> str:
@@ -139,6 +196,12 @@ class Settings(BaseSettings):
     hnsw_ef_search: int = 40
     rerank_enabled: bool = True       # disable for ablation / when model unavailable
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    # MPS is useful for short interactive Mac runs, but repeated long-lived
+    # cross-encoder traffic can grow temporary Metal graph files. Production
+    # operators can select CPU for a bounded-memory serving profile with
+    # RERANK_DEVICE=cpu; the existing runtime fallback still handles an MPS
+    # load failure automatically.
+    rerank_device: Literal["mps", "cpu"] = "mps"
     # Local fine-tune path. When non-empty, get_reranker() loads from this
     # directory (via from_pretrained), letting us A/B between the upstream
     # BAAI baseline and our Stage-3 fine-tune via env only:
@@ -421,10 +484,10 @@ class Settings(BaseSettings):
     prewarm_models_required: bool = True
 
     # Provenance gate (PLAN §10.1 + provenance system).
-    # In production, retrieval must only return chunks from documents whose
-    # source has been verified against the canonical Govt of India source.
-    # Set to False during development / evaluation to access the full corpus.
-    require_provenance_verified: bool = False
+    # Retrieval fails closed by default: only verified material is eligible.
+    # Offline ingestion or deliberately labelled evaluation may opt out with
+    # REQUIRE_PROVENANCE_VERIFIED=false, never the other way around.
+    require_provenance_verified: bool = True
 
     # Other
     log_level: str = "info"

@@ -153,7 +153,7 @@ def get_reranker() -> _RerankerWorker:
     local = (getattr(settings, "rerank_model_path", None) or "").strip()
     name = local or settings.rerank_model or DEFAULT_RERANKER_MODEL
     logger.info("reranker resolved to %r (local=%s)", name, bool(local))
-    return _RerankerWorker(model_name=name, device="mps")
+    return _RerankerWorker(model_name=name, device=settings.rerank_device)
 
 
 def rerank(

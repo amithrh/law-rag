@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -15,6 +17,30 @@ import httpx
 from apps.api.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_generation_slots: asyncio.Semaphore | None = None
+_generation_slot_limit: int | None = None
+_generation_slot_loop: asyncio.AbstractEventLoop | None = None
+_model_preflight_cache: dict[str, tuple[float, dict]] = {}
+_model_preflight_lock: asyncio.Lock | None = None
+_model_preflight_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _generation_semaphore() -> asyncio.Semaphore:
+    """Return the per-process limiter for the configured Ollama capacity."""
+    global _generation_slots, _generation_slot_limit, _generation_slot_loop
+    settings = get_settings()
+    limit = int(getattr(settings, "llm_max_concurrent", 1))
+    loop = asyncio.get_running_loop()
+    if (
+        _generation_slots is None
+        or _generation_slot_limit != limit
+        or _generation_slot_loop is not loop
+    ):
+        _generation_slots = asyncio.Semaphore(limit)
+        _generation_slot_limit = limit
+        _generation_slot_loop = loop
+    return _generation_slots
 
 
 class LLMModelUnavailable(RuntimeError):
@@ -65,35 +91,92 @@ async def list_available_models(timeout_s: float = 2.0) -> list[str]:
 
 
 async def check_model_available(model: str | None = None) -> dict:
-    """Cheap preflight for /answer so model config failures fail early."""
+    """Cheap, single-flight preflight for /answer.
+
+    A burst of answer requests must not turn the inexpensive ``/api/tags``
+    check into a second overload of Ollama. Results are cached briefly and
+    concurrent callers share one probe. The generation request still handles
+    a model disappearing after this check, so the cache cannot authorize an
+    unsafe answer.
+    """
     s = get_settings()
     target = model or s.llm_model
-    try:
-        available_models = await list_available_models()
-    except Exception as e:
-        error = str(e)
-        return {
-            "ok": False,
-            "model": target,
-            "available_models": [],
-            "error": error,
-            "message": _model_unavailable_message(model=target, error=error),
-        }
+    ttl = float(getattr(s, "llm_preflight_cache_sec", 5.0))
 
-    ok = target in available_models
-    if not ok and ":" not in target:
-        ok = f"{target}:latest" in available_models
-    message = None if ok else _model_unavailable_message(
-        model=target,
-        available_models=available_models,
-    )
-    return {
-        "ok": ok,
-        "model": target,
-        "available_models": available_models,
-        "error": None if ok else "model_not_found",
-        "message": message,
-    }
+    def cached(now: float) -> dict | None:
+        item = _model_preflight_cache.get(target)
+        if item is None or ttl <= 0 or now - item[0] >= ttl:
+            return None
+        status = item[1]
+        return {**status, "available_models": list(status.get("available_models") or [])}
+
+    now = time.monotonic()
+    hit = cached(now)
+    if hit is not None:
+        return hit
+
+    global _model_preflight_lock, _model_preflight_lock_loop
+    loop = asyncio.get_running_loop()
+    if _model_preflight_lock is None or _model_preflight_lock_loop is not loop:
+        _model_preflight_lock = asyncio.Lock()
+        _model_preflight_lock_loop = loop
+
+    async with _model_preflight_lock:
+        hit = cached(time.monotonic())
+        if hit is not None:
+            return hit
+        previous = _model_preflight_cache.get(target)
+        try:
+            available_models = await list_available_models()
+        except Exception as e:
+            error = str(e)
+            status = {
+                "ok": False,
+                "model": target,
+                "available_models": [],
+                "error": error,
+                "message": _model_unavailable_message(model=target, error=error),
+            }
+        else:
+            ok = target in available_models
+            if not ok and ":" not in target:
+                ok = f"{target}:latest" in available_models
+            status = {
+                "ok": ok,
+                "model": target,
+                "available_models": available_models,
+                "error": None if ok else "model_not_found",
+                "message": None if ok else _model_unavailable_message(
+                    model=target,
+                    available_models=available_models,
+                ),
+            }
+        # Never cache a negative probe. A transient Ollama /api/tags timeout
+        # must not turn a short dependency blip into a burst-wide refusal;
+        # callers will still share the in-flight probe through the lock.
+        if ttl > 0 and status.get("ok"):
+            _model_preflight_cache[target] = (time.monotonic(), status)
+        elif previous is not None and previous[1].get("ok"):
+            # /api/tags is an observability probe, not the authority to answer
+            # a request. Keep the last known-good state through a transient
+            # probe failure and let /api/chat be the final liveness check. If
+            # the model really disappeared, stream_chat still emits the safe
+            # llm_unavailable handoff.
+            logger.warning(
+                "model preflight refresh failed; using last known-good model state"
+            )
+            stale = previous[1]
+            return {
+                **stale,
+                "available_models": list(stale.get("available_models") or []),
+                "stale": True,
+            }
+        return {**status, "available_models": list(status.get("available_models") or [])}
+
+
+def clear_model_preflight_cache() -> None:
+    """Clear cached model probes for tests and controlled operator changes."""
+    _model_preflight_cache.clear()
 
 
 def load_answer_prompt() -> str:
@@ -184,31 +267,54 @@ async def stream_chat(
         },
     }
     url = _ollama_url("/api/chat")
-    async with httpx.AsyncClient(timeout=600) as client, client.stream(
-        "POST",
-        url,
-        json=payload,
-    ) as resp:
-        if resp.status_code == 404:
-            raw = await resp.aread()
-            detail = raw.decode("utf-8", errors="replace").strip()
-            raise LLMModelUnavailable(
-                _model_unavailable_message(model=model, error=detail)
-            )
-        resp.raise_for_status()
-        async for line in resp.aiter_lines():
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                logger.warning("non-json line from ollama: %r", line[:200])
-                continue
-            if obj.get("done"):
-                return
-            msg = obj.get("message", {}).get("content", "")
-            if msg:
-                yield msg
+    slots = _generation_semaphore()
+    wait_sec = float(getattr(s, "llm_admission_wait_sec", 120.0))
+    try:
+        await asyncio.wait_for(slots.acquire(), timeout=wait_sec)
+    except TimeoutError as exc:
+        message = (
+            f"Ollama generation capacity was busy for {wait_sec:.0f} seconds; "
+            "retry the request."
+        )
+        logger.warning("ollama generation admission timed out: %s", message)
+        raise LLMModelUnavailable(message) from exc
+    try:
+        async with httpx.AsyncClient(timeout=600) as client, client.stream(
+            "POST",
+            url,
+            json=payload,
+        ) as resp:
+            if resp.status_code == 404:
+                raw = await resp.aread()
+                detail = raw.decode("utf-8", errors="replace").strip()
+                raise LLMModelUnavailable(
+                    _model_unavailable_message(model=model, error=detail)
+                )
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning("non-json line from ollama: %r", line[:200])
+                    continue
+                if obj.get("done"):
+                    return
+                msg = obj.get("message", {}).get("content", "")
+                if msg:
+                    yield msg
+    except LLMModelUnavailable:
+        raise
+    except (httpx.HTTPError, OSError, TimeoutError) as exc:
+        # Treat connection, timeout, 5xx, and mid-stream transport failures
+        # as an unavailable answer model. The API owns the safe handoff.
+        logger.warning("ollama answer stream unavailable: %s", exc)
+        raise LLMModelUnavailable(
+            _model_unavailable_message(model=model, error=str(exc))
+        ) from exc
+    finally:
+        slots.release()
 
 
 async def chat_once(
@@ -230,6 +336,7 @@ __all__ = [
     "build_messages",
     "chat_once",
     "check_model_available",
+    "clear_model_preflight_cache",
     "list_available_models",
     "load_answer_prompt",
     "stream_chat",

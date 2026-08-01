@@ -8,10 +8,11 @@ import pytest
 
 from apps.api.config import Settings
 from apps.api.legal_issue_plan import build_matter_plan
-from apps.api.matter_router import route_matter
+from apps.api.matter_router import MatterRoute, route_matter
 from apps.api.retrieval import (
     _anchor_boundary_regexes,
     _fetch_source_pack_candidates,
+    _retrieval_policy,
     _section_numbers_from_anchor_patterns,
 )
 from apps.api.source_packs import source_packs_for_route
@@ -27,10 +28,84 @@ def _packs_by_id(query: str):
     return {pack.id: pack for pack in source_packs_for_route(route, query)}
 
 
+def test_mgnrega_administrative_social_audit_does_not_pull_criminal_packs_without_misconduct():
+    packs = set(_pack_ids("social audit report is pending and BDO has not replied"))
+    assert "mgnrega_2005" in packs
+    assert "rti_2005" in packs
+    assert not {
+        "prevention_corruption_1988_mgnrega_records",
+        "bns_2023_mgnrega_forgery_cheating",
+    } & packs
+
+
+def test_mgnrega_unemployment_allowance_retrieves_rti_records_pack():
+    packs = set(_pack_ids("my MGNREGA job demand was ignored and no unemployment allowance was paid"))
+    assert {"mgnrega_2005", "rti_2005"} <= packs
+
+
+def test_mgnrega_mixed_social_audit_and_allowance_keeps_both_section_families():
+    pack = _packs_by_id(
+        "Gram Sabha social audit found no work was provided and no unemployment allowance was paid"
+    )["mgnrega_2005"]
+    assert {"/sec-7@", "/sec-17@"} <= set(pack.anchor_patterns)
+    assert "unemployment allowance" in pack.search_query.lower()
+
+
+def test_mgnrega_negated_integrity_terms_do_not_pull_criminal_packs():
+    ids = set(_pack_ids("there is no fake muster or corruption, only wages are late"))
+    assert "mgnrega_2005" in ids
+    assert "prevention_corruption_1988_mgnrega_records" not in ids
+    assert "bns_2023_mgnrega_forgery_cheating" not in ids
+
+
+def test_mgnrega_fake_record_without_bribe_pulls_bns_but_not_pca():
+    ids = set(_pack_ids("muster roll shows fake attendance but no bribe or corruption allegation yet"))
+    assert "bns_2023_mgnrega_forgery_cheating" in ids
+    assert "prevention_corruption_1988_mgnrega_records" not in ids
+
+
 def test_scst_atrocity_route_gets_exact_bare_act_pack():
     assert "scst_poa_1989" in _pack_ids(
         "mob attacked our pahan during sarna puja calling adivasi non hindu"
     )
+
+
+def test_lok_adalat_pack_carries_canonical_authority_ids():
+    packs = _packs_by_id(
+        "how do I approach Lok Adalat for pending traffic challan settlement"
+    )
+    pack = packs["legal_services_authorities_1987_lok_adalat"]
+    assert pack.authority_ids == (
+        "authority_4311cfc807f876973217",
+        "authority_73374f30d45eec49c931",
+        "authority_71a26d0ccbf7b61f6d84",
+    )
+
+
+def test_scst_targeted_violence_selects_packs_for_incident_date_regime():
+    current = set(
+        _pack_ids("upper caste people beat me on 2025-01-02 what action can i take")
+    )
+    assert {
+        "bnss_2023_scst_atrocity_fir",
+        "bns_2023_scst_atrocity_threat_hurt",
+    } <= current
+    assert not {
+        "crpc_1973_scst_atrocity_fir",
+        "ipc_1860_scst_atrocity_threat_hurt",
+    } & current
+
+    legacy = set(
+        _pack_ids("upper caste people beat me on 2023-01-02 what action can i take")
+    )
+    assert {
+        "crpc_1973_scst_atrocity_fir",
+        "ipc_1860_scst_atrocity_threat_hurt",
+    } <= legacy
+    assert not {
+        "bnss_2023_scst_atrocity_fir",
+        "bns_2023_scst_atrocity_threat_hurt",
+    } & legacy
 
 
 def test_mental_health_confinement_gets_protection_and_emergency_sections():
@@ -73,6 +148,29 @@ def test_regional_slur_wage_retaliation_gets_bnss_complaint_pack():
     assert "/sec-173" in packs["bnss_2023_regional_slur_wage_retaliation"].anchor_patterns
 
 
+def test_fssai_route_includes_reviewed_licensing_regulation_pack():
+    packs = _packs_by_id(
+        "fssai notice mismatch in licence category for snack manufacturing renewal due how to upgrade state to central"
+    )
+    licensing = packs["fssai_licensing_2011"]
+
+    assert licensing.doc_ids == ("fssai-licensing-2011",)
+    assert licensing.source_types == ("regulation",)
+    assert "/reg-2-1" in licensing.anchor_patterns
+
+
+def test_date_ambiguous_cyber_route_has_both_criminal_regime_families():
+    query = "fake call from sbi pension office took 2 lakh from my account 75 yr father"
+    route = route_matter(query)
+    packs = _packs_by_id(query)
+
+    assert route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    assert any("bharatiya nyaya sanhita" in title.lower() for title in packs["bns_2023"].title_patterns)
+    assert any("bharatiya nagarik suraksha" in title.lower() for title in packs["bnss_2023"].title_patterns)
+    assert "ipc_1860_cyber_regime" in packs
+    assert any("code of criminal procedure" in title.lower() for title in packs["crpc_1973"].title_patterns)
+
+
 def test_forest_produce_dacoity_route_gets_fra_bns_bnss_packs():
     packs = _packs_by_id(
         "urgent gaon people took tendu leaves by force 8 men with lathi forest produce dacoity or theft what to do"
@@ -90,6 +188,12 @@ def test_domestic_violence_route_gets_pwdva_pack():
     assert "pwdva_2005" in _pack_ids(
         "my husband's mother taunts me daily for not bringing more dowry"
     )
+
+
+def test_acid_domestic_pack_matches_spouse_terms_but_not_wife_as_aggressor():
+    assert "pwdva_2005" in _pack_ids("my spouse threatened acid attack on me")
+    assert "pwdva_2005" in _pack_ids("my patni threatened me with acid")
+    assert "pwdva_2005" not in _pack_ids("my wife threatened me with acid")
 
 
 def test_spousal_property_return_uses_neutral_packs_not_pwdva_streedhan_by_default():
@@ -173,6 +277,34 @@ def test_criminal_bail_cheque_bounce_gets_ni_act_pack():
     assert route.category == "criminal_defence_bail"
     assert "ni_act_1881" in packs
     assert {"/sec-138", "/sec-141", "/sec-142"} <= set(packs["ni_act_1881"].anchor_patterns)
+
+
+def test_acid_route_gets_current_and_legacy_regime_packs_until_date_is_known():
+    query = "someone threatened to throw acid on me"
+    route = route_matter(query)
+    assert route.legal_regime == "incident_date_needed_for_bns_bnss_bsa_vs_ipc_crpc"
+    packs = {pack.id: pack for pack in source_packs_for_route(route, query)}
+
+    assert {"bns_2023_acid_attack", "bnss_2023_fir_information_acid"} <= set(packs)
+    assert {"ipc_1860_acid_attack", "crpc_1973_fir_information_acid"} <= set(packs)
+    assert packs["ipc_1860_acid_attack"].doc_ids == ("ipc-1860",)
+    assert "/sec-326A" in packs["ipc_1860_acid_attack"].anchor_patterns
+    assert "/sec-62" in packs["bns_2023_acid_attack"].anchor_patterns
+    assert "/sec-511" in packs["ipc_1860_acid_attack"].anchor_patterns
+    assert "/sec-154" in packs["crpc_1973_fir_information_acid"].anchor_patterns
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "my mother-in-law threatened to throw acid on me",
+        "my father-in-law threatened an acid attack",
+        "my sasural threatened to throw acid on me",
+    ),
+)
+def test_acid_domestic_variants_get_pwdva_pack(query: str):
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
+    assert "pwdva_2005" in packs
 
 
 def test_false_nbfc_loan_signature_gets_credit_and_rbi_packs():
@@ -358,8 +490,10 @@ def test_carceral_safety_precedence_source_packs_are_official_and_specific():
         "jj_2015",
         "jj_2015_age_claim_court",
         "jj_2015_age_documents",
-        "jj_2015_bail_board",
+        "jj_2015_custody_transfer",
     } <= set(juvenile)
+    assert juvenile["jj_2015_custody_transfer"].anchor_patterns == ("/sec-10",)
+    assert "jj_2015_bail_board" not in juvenile
     assert "pocso_2012" not in juvenile
 
     undertrial = {
@@ -514,6 +648,10 @@ def test_wife_as_aggressor_prompts_do_not_pin_pwdva_pack():
         "my wife threw me out of house what to do",
         "my wife kicked me out at night what to do",
         "my wife threatens me what to do",
+        "my wife is beating me what to do",
+        "my wife punched me what to do",
+        "my wife assaulted me what to do",
+        "my wife threatened to kill me what to do",
         "my wife took my jewellery what to do",
         "my wife sold my house without consent what to do",
         "my wife forced sex without consent what to do",
@@ -524,6 +662,28 @@ def test_wife_as_aggressor_prompts_do_not_pin_pwdva_pack():
         assert "pwdva_2005" not in packs
         assert "bnss_2023" in packs
         assert "bns_2023" in packs
+
+
+def test_negated_gratuity_wording_does_not_add_gratuity_source_pack():
+    for query in (
+        "I worked 6 years and resigned; I am not asking about gratuity, only unpaid salary",
+        "I do not want gratuity, only unpaid salary",
+        "gratuity is not the issue, my salary is unpaid",
+        "salary dispute not related to gratuity",
+        "I need unpaid salary without asking for gratuity",
+    ):
+        packs = _pack_ids(query)
+
+        assert "gratuity_1972" not in packs
+        assert "gratuity_1972_eligibility" not in packs
+        assert "gratuity_1972_pf_closure" not in packs
+        assert "code_on_wages_2019" in packs
+
+
+def test_mixed_wife_and_daughter_in_law_jewellery_query_does_not_inject_pwdva():
+    packs = _pack_ids("my wife and daughter in law stole my jewellery what police complaint")
+
+    assert "pwdva_2005" not in packs
 
 
 def test_household_drug_and_child_assault_guards_get_criminal_safety_sources():
@@ -954,6 +1114,14 @@ def test_arrest_production_delay_gets_current_and_legacy_packs_when_date_unclear
     assert by_id["crpc_1973"].anchor_patterns == ("/sec-56", "/sec-57")
 
 
+def test_arrest_with_missing_fir_copy_keeps_legacy_production_authorities():
+    query = "brother arrested no FIR copy given family police saying secret"
+    route = route_matter(query)
+    by_id = {pack.id: pack for pack in source_packs_for_route(route, query)}
+
+    assert by_id["crpc_1973"].anchor_patterns == ("/sec-154", "/sec-56", "/sec-57")
+
+
 def test_custody_legal_aid_gets_constitution_and_lsa_packs():
     query = "husband first time arrest jail superintendent not allowing lawyer meeting legal"
     route = route_matter(query)
@@ -964,6 +1132,18 @@ def test_custody_legal_aid_gets_constitution_and_lsa_packs():
     assert "legal_services_authorities_1987" in by_id
 
 
+def test_lok_adalat_traffic_gets_sections_19_to_21_pack():
+    query = "how to approach Lok Adalat for pending traffic challan settlement"
+    route = route_matter(query)
+    assert route.category == "legal_aid"
+    packs = {pack.id: pack for pack in source_packs_for_route(route, query)}
+    assert "legal_services_authorities_1987_lok_adalat" in packs
+    assert packs["legal_services_authorities_1987_lok_adalat"].anchor_patterns == (
+        "/sec-19",
+        "/sec-20",
+        "/sec-21",
+    )
+    assert "legal_services_authorities_1987" not in packs
 def test_criminal_video_link_court_status_gets_bnss_and_crpc_not_cpc_pack():
     query = "my criminal case was adjourned twice because video link failed but i am already on bail, how to ask next date status"
     route = route_matter(query)
@@ -1634,6 +1814,18 @@ def test_ed_summons_gets_pmla_pack_not_cpc():
     assert "/sec-50" in by_id["pmla_2002"].anchor_patterns
 
 
+def test_ed_bank_freeze_uses_pmla_packs_not_bank_legal_hold_floor():
+    query = "Enforcement Directorate froze my bank account under PMLA"
+    route = route_matter(query)
+    assert route.category == "pmla_ed"
+    packs = source_packs_for_route(route, query)
+    by_id = {pack.id: pack for pack in packs}
+    assert "pmla_2002" in by_id
+    assert "rbi_integrated_ombudsman_2021" not in by_id
+    assert "bnss_2023_bank_account_legal_hold" not in by_id
+    assert "crpc_1973_bank_account_legal_hold" not in by_id
+
+
 def test_handcuff_custody_route_gets_constitution_and_restraint_anchors():
     query = "brother in handcuffs taken to court as high security prisoner without reason"
     route = route_matter(query)
@@ -1895,8 +2087,43 @@ def test_gst_search_seal_gets_cgst_67_83_pack():
 def test_food_sealing_and_supplier_payment_get_records_and_primary_packs():
     hotel_query = "health department sealed my small hotel kitchen without giving inspection report"
     hotel_ids = _pack_ids(hotel_query)
-    assert "food_safety_2006" in hotel_ids
+    assert "food_safety_2006" not in hotel_ids
     assert "rti_2005" in hotel_ids
+
+    local_health_ids = set(
+        _pack_ids("local health authority closed my hotel after health inspection")
+    )
+    assert "rti_2005" in local_health_ids
+    assert "food_safety_2006" not in local_health_ids
+
+    for query in (
+        "health officer sealed my restaurant after hygiene inspection",
+        "health inspector closed my hotel after food inspection",
+        "health team sealed my restaurant after food inspection",
+        "local health inspector closed my hotel after hygiene inspection",
+        "municipal health inspector sealed my restaurant after inspection",
+    ):
+        ids = set(_pack_ids(query))
+        assert "rti_2005" in ids, query
+        assert "food_safety_2006" not in ids, query
+
+    mixed_authority_ids = set(
+        _pack_ids("BMC sealed my restaurant after FSSAI inspection")
+    )
+    assert {"food_safety_2006", "fssai_licensing_2011", "rti_2005"} <= mixed_authority_ids
+
+    for query in (
+        "health department sealed my restaurant after food inspection",
+        "health department closed my hotel after hygiene inspection",
+        "local health authority closed my hotel after food inspection",
+        "health officer sealed my restaurant after hygiene inspection",
+        "health inspector closed my hotel after food inspection",
+        "local health inspector closed my hotel after hygiene inspection",
+        "municipal health inspector sealed my restaurant after food inspection",
+    ):
+        ids = set(_pack_ids(query))
+        assert "food_safety_2006" not in ids, query
+        assert "fssai_licensing_2011" not in ids, query
 
     supplier_query = "ICDS nutrition supplier payment pending"
     supplier_ids = _pack_ids(supplier_query)
@@ -2449,6 +2676,17 @@ def test_nrega_query_gets_mgnrega_pack():
     )
 
 
+def test_ordinary_construction_mate_does_not_pollute_with_mgnrega_sources():
+    ids = set(_pack_ids("construction mate not paying my wages"))
+
+    assert "mgnrega_2005" not in ids
+    assert "rti_2005" not in ids
+
+
+def test_mgnrega_mate_wording_still_gets_scheme_sources_when_scheme_is_named():
+    assert "mgnrega_2005" in _pack_ids("MGNREGA mate wages not paid")
+
+
 def test_construction_injury_gets_bocw_pack():
     assert "bocw_1996" in _pack_ids(
         "construction site fall broke spine no bocw card contractor says no compensation"
@@ -2500,7 +2738,7 @@ def test_unclear_default_bail_gets_both_bnss_and_crpc_packs():
     assert "crpc_1973" in ids
 
 
-def test_uapa_prima_facie_bail_routes_to_criminal_defence_and_gets_uapa_pack():
+def test_uapa_regular_bail_routes_to_criminal_defence_and_gets_uapa_bail_packs():
     query = "urgent brother in jail 18 months UAPA bail when prima facie case made out kya hota how to complain"
     route = route_matter(query)
     assert route.category == "criminal_defence_bail"
@@ -2514,6 +2752,18 @@ def test_uapa_prima_facie_bail_routes_to_criminal_defence_and_gets_uapa_pack():
     assert "/sec-43d" in uapa_pack.anchor_patterns
     crpc_pack = next(pack for pack in packs if pack.id == "crpc_1973_uapa_bail_custody")
     assert "/sec-439" in crpc_pack.anchor_patterns
+
+
+def test_uapa_default_bail_keeps_exact_default_bail_packs_not_undertrial_pack():
+    query = "urgent brother arrested uapa 90 days over no chargesheet default bail possible how to complain"
+    packs = source_packs_for_route(route_matter(query), query)
+    by_id = {pack.id: pack for pack in packs}
+
+    assert "uapa_1967" in by_id
+    assert by_id["bnss_2023"].anchor_patterns == ("/sec-187",)
+    assert "/sec-167" in by_id["crpc_1973"].anchor_patterns
+    assert "bnss_2023_uapa_bail_custody" not in by_id
+    assert "crpc_1973_uapa_bail_custody" not in by_id
 
 
 def test_regular_bail_query_with_complain_words_gets_crpc_bail_pack():
@@ -2553,7 +2803,8 @@ def test_ndps_default_bail_gets_ndps_pack():
     assert "ndps_1985" in ids
     ndps_pack = next(pack for pack in packs if pack.id == "ndps_1985")
     assert "section 36A" in ndps_pack.search_query
-    assert {"/sec-35-b", "/sec-35-c", "/sec-35-d"} <= set(ndps_pack.anchor_patterns)
+    assert {"/sec-36A", "/sec-36-a", "/sec-37"} <= set(ndps_pack.anchor_patterns)
+    assert not {"/sec-35-b", "/sec-35-c", "/sec-35-d"} & set(ndps_pack.anchor_patterns)
 
 
 def test_stage_goal_ppirp_gets_rules_and_regulations_source_packs():
@@ -2603,6 +2854,225 @@ def test_ndps_default_bail_pack_fetches_focused_section_36a_from_runtime_chunks(
             await pool.close()
 
     asyncio.run(check())
+
+
+@pytest.mark.needs_stack
+def test_bank_freeze_legal_hold_fetches_verified_runtime_authorities_not_registry_backfills(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The date regime must retrieve positive-ID, provenance-verified chunks.
+
+    This protects a user-facing criminal-procedure answer from silently relying
+    on the synthetic registry fallback used only when retrieval has failed.
+    """
+
+    monkeypatch.setenv("REQUIRE_PROVENANCE_VERIFIED", "true")
+    from apps.api.config import get_settings
+
+    get_settings.cache_clear()
+    assert get_settings().require_provenance_verified is True
+
+    async def check() -> None:
+        asyncpg = pytest.importorskip("asyncpg")
+        settings = Settings()
+        try:
+            pool = await asyncpg.create_pool(
+                dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1
+            )
+        except Exception as exc:
+            pytest.fail(f"runtime DB unavailable for bank-freeze source-pack validation: {exc}")
+        try:
+            cases = [
+                (
+                    "Cyber police froze my bank account in August 2025",
+                    "bnss_2023_bank_account_legal_hold",
+                    "bnss-2023/sec-106",
+                ),
+                (
+                    "Cyber police froze my bank account in May 2023",
+                    "crpc_1973_bank_account_legal_hold",
+                    "crpc-1973/sec-102",
+                ),
+            ]
+            for query, pack_id, expected_anchor in cases:
+                route = route_matter(query)
+                pack = next(
+                    pack for pack in source_packs_for_route(route, query) if pack.id == pack_id
+                )
+                chunks = await _fetch_source_pack_candidates(
+                    pool,
+                    query,
+                    packs=[pack],
+                    limit_per_pack=4,
+                )
+                matching = [chunk for chunk in chunks if chunk.anchor == expected_anchor]
+                assert matching, f"missing {expected_anchor} for: {query}"
+                assert all(chunk.chunk_id > 0 for chunk in matching)
+                assert all(not chunk.metadata.get("_registry_authority_backfill") for chunk in matching)
+
+                async with pool.acquire() as conn:
+                    verified = await conn.fetchval(
+                        "SELECT bool_and(provenance_verified) FROM chunks WHERE id = ANY($1::bigint[])",
+                        [chunk.chunk_id for chunk in matching],
+                    )
+                assert verified is True
+            async with pool.acquire() as conn:
+                stale_eligible = await conn.fetchval(
+                    """
+                    SELECT count(*)
+                    FROM chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    WHERE d.doc_id = 'pmla-2002'
+                      AND c.anchor = ANY($1::text[])
+                      AND (NOT c.quarantined OR c.provenance_verified)
+                    """,
+                    [
+                        "pmla-2002/sec-5",
+                        "pmla-2002/sec-8",
+                        "pmla-2002/sec-8-a",
+                        "pmla-2002/sec-8-b",
+                        "pmla-2002/sec-8-c",
+                        "pmla-2002/sec-8-d",
+                        "pmla-2002/sec-8-e",
+                        "pmla-2002/sec-8-f",
+                        "pmla-2002/sec-17",
+                        "pmla-2002/sec-17-a",
+                        "pmla-2002/sec-17-b",
+                        "pmla-2002/sec-17-c",
+                        "pmla-2002/sec-26",
+                    ],
+                )
+            assert stale_eligible == 0
+        finally:
+            await pool.close()
+
+    try:
+        asyncio.run(check())
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.needs_stack
+def test_pmla_asset_restraint_fetches_verified_runtime_authorities_from_matter_plan(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("REQUIRE_PROVENANCE_VERIFIED", "true")
+    from apps.api.config import get_settings
+
+    get_settings.cache_clear()
+    assert get_settings().require_provenance_verified is True
+
+    async def check() -> None:
+        asyncpg = pytest.importorskip("asyncpg")
+        settings = Settings()
+        pool = await asyncpg.create_pool(
+            dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1
+        )
+        try:
+            cases = (
+                (
+                    "Enforcement Directorate froze my bank account under PMLA",
+                    {"pmla-2002/sec-17", "pmla-2002/sec-8", "pmla-2002/sec-26"},
+                    "pmla-2002/sec-5",
+                ),
+                (
+                    "ED issued a provisional attachment order for my property under PMLA",
+                    {"pmla-2002/sec-5", "pmla-2002/sec-8", "pmla-2002/sec-26"},
+                    "pmla-2002/sec-17",
+                ),
+            )
+            for query, expected_anchors, excluded_anchor in cases:
+                route = route_matter(query)
+                plan = build_matter_plan(query, route)
+                assert plan is not None
+                _, packs = _retrieval_policy(query, route=route, plan=plan)
+                chunks = await _fetch_source_pack_candidates(
+                    pool,
+                    query,
+                    packs=packs,
+                    limit_per_pack=4,
+                )
+                by_anchor = {chunk.anchor.split("@", 1)[0]: chunk for chunk in chunks}
+                assert expected_anchors <= by_anchor.keys()
+                assert excluded_anchor not in by_anchor
+                matching = [by_anchor[anchor] for anchor in expected_anchors]
+                assert all(chunk.chunk_id > 0 for chunk in matching)
+                assert all(str(chunk.as_at) == "2024-08-30" for chunk in matching)
+                assert all(
+                    not chunk.metadata.get("_registry_authority_backfill")
+                    for chunk in matching
+                )
+
+                async with pool.acquire() as conn:
+                    verified = await conn.fetchval(
+                        "SELECT bool_and(provenance_verified) "
+                        "FROM chunks WHERE id = ANY($1::bigint[])",
+                        [chunk.chunk_id for chunk in matching],
+                    )
+                assert verified is True
+        finally:
+            await pool.close()
+
+    try:
+        asyncio.run(check())
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.needs_stack
+def test_uapa_bail_fetches_natural_verified_section_43d_without_registry_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("REQUIRE_PROVENANCE_VERIFIED", "true")
+    from apps.api.config import get_settings
+
+    get_settings.cache_clear()
+
+    async def check() -> None:
+        asyncpg = pytest.importorskip("asyncpg")
+        settings = Settings()
+        pool = await asyncpg.create_pool(
+            dsn=settings.resolved_database_url_host_side, min_size=1, max_size=1
+        )
+        try:
+            query = (
+                "urgent brother in jail 18 months UAPA bail when prima facie case "
+                "made out kya hota how to complain"
+            )
+            route = route_matter(query)
+            plan = build_matter_plan(query, route)
+            assert plan is not None
+            _, packs = _retrieval_policy(query, route=route, plan=plan)
+            assert [pack.id for pack in packs] == ["uapa_1967"]
+            chunks = await _fetch_source_pack_candidates(
+                pool,
+                query,
+                packs=packs,
+                limit_per_pack=4,
+            )
+            matching = [
+                chunk for chunk in chunks
+                if chunk.anchor.split("@", 1)[0].lower() == "uapa-1967/sec-43d"
+            ]
+            assert matching
+            assert all(chunk.chunk_id > 0 for chunk in matching)
+            assert all(
+                not chunk.metadata.get("_registry_authority_backfill") for chunk in matching
+            )
+            async with pool.acquire() as conn:
+                verified = await conn.fetchval(
+                    "SELECT bool_and(provenance_verified) "
+                    "FROM chunks WHERE id = ANY($1::bigint[])",
+                    [chunk.chunk_id for chunk in matching],
+                )
+            assert verified is True
+        finally:
+            await pool.close()
+
+    try:
+        asyncio.run(check())
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.mark.needs_stack
@@ -2831,7 +3301,9 @@ def test_jj_adoption_pack_fetches_focused_runtime_adoption_sections():
                 "62",
                 "63",
             }
-            assert any(chunk.anchor == "jj-2015/sec-56" for chunk in chunks)
+            assert any(chunk.anchor == "jj-2015/sec-56-official" for chunk in chunks)
+            assert any(chunk.metadata.get("display_anchor") == "jj-2015/sec-56" for chunk in chunks)
+            assert all(chunk.metadata.get("canonical_repair") is True for chunk in chunks)
         finally:
             await pool.close()
 
@@ -2863,8 +3335,11 @@ def test_jj_age_pack_fetches_focused_runtime_age_sections():
                 limit_per_pack=4,
             )
             anchors = {chunk.anchor for chunk in chunks}
-            assert "jj-2015/sec-9" in anchors
-            assert "jj-2015/sec-94" in anchors
+            assert "jj-2015/sec-9-official" in anchors
+            assert "jj-2015/sec-94-official" in anchors
+            assert {
+                chunk.metadata.get("display_anchor") for chunk in chunks
+            } >= {"jj-2015/sec-9", "jj-2015/sec-94"}
             normalized_texts = [" ".join(chunk.text.lower().split()) for chunk in chunks]
             assert any(
                 "claims before a court other than a board" in text for text in normalized_texts
@@ -2961,7 +3436,7 @@ def test_lok_adalat_award_challenge_gets_section_21_pack():
     query = "lok adalat award passed without my consent can I challenge it"
     route = route_matter(query)
     packs = source_packs_for_route(route, query)
-    assert "legal_services_authorities_1987" in [pack.id for pack in packs]
+    assert "legal_services_authorities_1987_lok_adalat" in [pack.id for pack in packs]
     assert any("/sec-21" in pack.anchor_patterns for pack in packs)
 
 
@@ -3037,8 +3512,9 @@ def test_bank_legal_hold_source_pack_follows_incident_regime(
     assert required_pack in packs
     assert forbidden_pack not in packs
     assert packs["rbi_integrated_ombudsman_2021"].anchor_patterns == (
-        "/sec-2",
+        "/sec-1",
         "/sec-3",
+        "/sec-6",
         "/sec-9",
         "/sec-10",
     )
@@ -3049,6 +3525,7 @@ def test_bank_legal_hold_source_pack_follows_incident_regime(
     [
         "Bank deducted money wrongly and customer care is not helping",
         "Loan app is harassing my contacts",
+        "my bank account is frozen, what do i do",
     ],
 )
 def test_released_rbi_workflows_use_plan_scoped_registry_owned_clauses(query):
@@ -3253,8 +3730,8 @@ def test_stage5_money_cyber_identity_source_packs_cover_exact_variants():
             "ED freeze marked on my current account, bank only says legal hold",
         )
     }
-    assert "rbi_integrated_ombudsman_2021" in legal_hold_packs
-    assert "bnss_2023_bank_account_legal_hold" in legal_hold_packs
+    assert "pmla_2002" in legal_hold_packs
+    assert "rbi_integrated_ombudsman_2021" not in legal_hold_packs
 
     political_packs = {
         pack.id: pack
@@ -3459,9 +3936,19 @@ def test_silicosis_quarry_gets_occupational_disease_source_packs():
 
 
 def test_hard_fail_router_repairs_get_required_source_packs():
-    assert {"jj_2015_age_claim_court", "jj_2015_age_documents", "jj_2015_bail_board"} <= set(
-        _pack_ids("16 yr boy detained adult jail 2 weeks already how to transfer observation home")
+    juvenile_packs = {
+        pack.id: pack
+        for pack in source_packs_for_route(
+            route_matter("16 yr boy detained adult jail 2 weeks already how to transfer observation home"),
+            "16 yr boy detained adult jail 2 weeks already how to transfer observation home",
+        )
+    }
+    assert {"jj_2015_age_claim_court", "jj_2015_age_documents", "jj_2015_custody_transfer"} <= set(
+        juvenile_packs
     )
+    assert juvenile_packs["jj_2015_age_claim_court"].anchor_patterns == ("/sec-9",)
+    assert juvenile_packs["jj_2015_custody_transfer"].anchor_patterns == ("/sec-10",)
+    assert "jj_2015_bail_board" not in juvenile_packs
     assert {"pwdva_2005", "bns_2023", "bnss_2023"} <= set(
         _pack_ids(
             "my mother in law is threatening to throw acid on me if I don't get more money from my parents"
@@ -3688,6 +4175,16 @@ def test_surrogacy_route_gets_indexed_source_pack():
         pack.id == "surrogacy_2021" and "surrogacy-2021/sec-4-" in pack.anchor_patterns
         for pack in packs
     )
+
+
+def test_stage_surrogacy_clinic_query_keeps_eligibility_anchors():
+    query = "clinic says my wife had hysterectomy but can we use surrogacy in Gujarat"
+    route = route_matter(query)
+    packs = source_packs_for_route(route, query)
+    pack = next(pack for pack in packs if pack.id == "surrogacy_2021")
+    assert "surrogacy-2021/sec-4-" in pack.anchor_patterns
+    assert "surrogacy-2021/sec-6@" in pack.anchor_patterns
+    assert "surrogacy-2021/sec-3@" in pack.anchor_patterns
 
 
 def test_surrogacy_abortion_gets_surrogacy_section_10_and_mtp_pack():
@@ -4008,6 +4505,7 @@ def test_civil_registration_and_ration_source_packs_have_stage_iic1_anchors():
     assert {"/sec-7", "/sec-8", "/sec-12", "/sec-13", "/sec-15"} <= set(
         birth_packs["births_deaths_registration_1969"].anchor_patterns
     )
+    assert "/sec-17" in birth_packs["births_deaths_registration_1969"].anchor_patterns
 
     ration_packs = {
         pack.id: pack
@@ -4020,6 +4518,44 @@ def test_civil_registration_and_ration_source_packs_have_stage_iic1_anchors():
     assert {"/sec-14", "/sec-15", "/sec-24"} <= set(
         ration_packs["national_food_security_2013"].anchor_patterns
     )
+
+
+def test_civil_registration_source_pack_accepts_birth_cert_abbreviation():
+    query = "panchayat secretary not giving me birth cert of my child born at home"
+    packs = {pack.id for pack in source_packs_for_route(route_matter(query), query)}
+
+    assert {"births_deaths_registration_1969", "rti_2005"} <= packs
+
+
+def test_civil_registration_source_pack_accepts_delayed_death_registration():
+    query = "death registration delayed by panchayat"
+    packs = {pack.id: pack for pack in source_packs_for_route(route_matter(query), query)}
+
+    assert {"births_deaths_registration_1969", "rti_2005"} <= set(packs)
+    assert "/sec-13" in packs["births_deaths_registration_1969"].anchor_patterns
+
+
+def test_civil_registration_source_pack_handles_duplicate_death_records():
+    query = "need duplicate death cert from municipality"
+    packs = {pack.id for pack in source_packs_for_route(route_matter(query), query)}
+
+    assert {"births_deaths_registration_1969", "rti_2005"} <= packs
+
+
+def test_school_admission_birth_cert_query_does_not_activate_civil_registration_pack():
+    query = "my daughter school admission rejected because birth cert is not available"
+    packs = {pack.id for pack in source_packs_for_route(route_matter(query), query)}
+
+    assert "rte_2009" in packs
+    assert "births_deaths_registration_1969" not in packs
+
+
+def test_school_panchayat_certificate_refusal_activates_civil_registration_pack():
+    query = "school asked for birth certificate but panchayat is not issuing it"
+    packs = {pack.id for pack in source_packs_for_route(route_matter(query), query)}
+
+    assert "births_deaths_registration_1969" in packs
+    assert "rte_2009" not in packs
 
 
 def test_stage24_review_fix_source_pack_false_positive_guards():
@@ -4153,6 +4689,55 @@ def test_explicit_posh_pip_retaliation_pack_keeps_posh_source():
     ids = {pack.id for pack in packs}
     assert route.category == "workplace_sexual_harassment"
     assert "posh_2013" in ids
+
+
+def test_explicit_posh_source_does_not_require_pip_or_retaliation_context():
+    route = MatterRoute(
+        category="employment_wages",
+        label="Employment matter",
+        confidence=0.7,
+        urgency="medium",
+        required_sources=[],
+        forums=[],
+        missing_facts=[],
+        red_flags=[],
+    )
+
+    ids = {pack.id for pack in source_packs_for_route(route, "sexual harassment at my workplace")}
+
+    assert "posh_2013" in ids
+
+
+@pytest.mark.needs_stack
+def test_posh_pack_fetches_verified_chunks_for_respondent_wording():
+    async def check() -> None:
+        asyncpg = pytest.importorskip("asyncpg")
+        settings = Settings()
+        pool = await asyncpg.create_pool(
+            dsn=settings.resolved_database_url_host_side,
+            min_size=1,
+            max_size=1,
+        )
+        try:
+            query = "I am accused of sexually harassing a colleague and got an ICC notice"
+            route = route_matter(query)
+            pack = next(
+                pack for pack in source_packs_for_route(route, query) if pack.id == "posh_2013"
+            )
+            chunks = await _fetch_source_pack_candidates(
+                pool,
+                query,
+                packs=[pack],
+                limit_per_pack=8,
+            )
+            assert chunks
+            assert any(chunk.anchor == "posh-2013/sec-9" for chunk in chunks)
+            assert all(chunk.document_key == "posh-2013" for chunk in chunks)
+            assert all(chunk.metadata.get("_required_source_pack") == "posh_2013" for chunk in chunks)
+        finally:
+            await pool.close()
+
+    asyncio.run(check())
 
 
 def test_ordinary_pip_pack_gets_id_and_wage_boundary_not_posh():
@@ -4377,20 +4962,8 @@ def test_stage25_source_pack_false_positive_guards():
         "police notice for release of seized phone after investigation",
     )
     release_by_id = {pack.id: pack for pack in release_notice_packs}
-    assert release_by_id["bnss_2023"].anchor_patterns == (
-        "/sec-105",
-        "/sec-106",
-        "/sec-185",
-        "/sec-497",
-        "/sec-503",
-    )
-    assert release_by_id["crpc_1973"].anchor_patterns == (
-        "/sec-100",
-        "/sec-102",
-        "/sec-165",
-        "/sec-451",
-        "/sec-457",
-    )
+    assert release_by_id["bnss_2023"].anchor_patterns == ("/sec-497", "/sec-503")
+    assert release_by_id["crpc_1973"].anchor_patterns == ("/sec-451", "/sec-457")
 
 
 def test_witch_false_case_does_not_trigger_generic_child_pocso_packs():
@@ -4817,9 +5390,9 @@ def test_stage36_blocker_queries_get_required_source_packs():
         "my land taken for highway 4 years back compensation still not received who to ask": {
             "rfctlarr_2013"
         },
-        "how to approach Lok Adalat for pending traffic challan settlement": {
-            "legal_services_authorities_1987"
-        },
+            "how to approach Lok Adalat for pending traffic challan settlement": {
+                "legal_services_authorities_1987_lok_adalat"
+            },
         "maharashtra construction site labour department raid kiya overtime register not maintained 11 workers what to do": {
             "maharashtra_shops_establishments_2017",
             "bocw_1996",
@@ -5501,7 +6074,9 @@ def test_stage38_review_blocker_queries_get_precise_source_packs():
     assert "it_act_2000_bank_freeze_cyber_hold" not in bank_kyc_ids
 
     ed_freeze_ids = set(_pack_ids("bank account frozen after ED notice what order copy can I ask"))
-    assert "bnss_2023_bank_account_legal_hold" in ed_freeze_ids
+    assert "pmla_2002" in ed_freeze_ids
+    assert "bnss_2023_bank_account_legal_hold" not in ed_freeze_ids
+    assert "crpc_1973_bank_account_legal_hold" not in ed_freeze_ids
 
     mining_noc_ids = _pack_ids(
         "DM gave NOC to bauxite project bastar without gram sabha resolution how to challenge"
@@ -6059,14 +6634,25 @@ def test_reviewer_counterexample_source_packs_stay_specific():
     assert "constitution_article_341_342" not in obc_ids
 
     restaurant_ids = set(_pack_ids("restaurant sealed by corporation no notice"))
-    assert {"food_safety_2006", "rti_2005"} <= restaurant_ids
+    assert "food_safety_2006" not in restaurant_ids
 
     hotel_kitchen_ids = set(
         _pack_ids(
             "health department sealed my small hotel kitchen without giving inspection report"
         )
     )
-    assert "food_safety_2006" in hotel_kitchen_ids
+    assert "food_safety_2006" not in hotel_kitchen_ids
+
+    local_health_ids = set(
+        _pack_ids("local health authority closed my hotel after health inspection")
+    )
+    assert "rti_2005" in local_health_ids
+    assert "food_safety_2006" not in local_health_ids
+
+    mixed_authority_ids = set(
+        _pack_ids("BMC sealed my restaurant after FSSAI inspection")
+    )
+    assert {"food_safety_2006", "fssai_licensing_2011", "rti_2005"} <= mixed_authority_ids
 
     gujarat_shop_ids = set(_pack_ids("My shop is in Gujarat and municipality sealed it."))
     assert {
@@ -6078,6 +6664,14 @@ def test_reviewer_counterexample_source_packs_stay_specific():
 
     pan_ids = set(_pack_ids("my pan and aadhaar is mismatch"))
     assert {"income_tax_pan_1961", "aadhaar_2016", "rti_2005"} <= pan_ids
+
+    pan_linking = _packs_by_id("PAN Aadhaar linking failed and bank KYC rejected")
+    assert pan_linking["income_tax_pan_1961"].anchor_patterns == ("/sec-139aa",)
+    assert pan_linking["income_tax_pan_1961"].doc_ids == ("income-tax-1961-official",)
+
+    pan_correction = _packs_by_id("my PAN and Aadhaar mismatch")
+    assert "/sec-139aa" not in pan_correction["income_tax_pan_1961"].anchor_patterns
+    assert pan_correction["income_tax_pan_1961"].doc_ids == ("income-tax-1961",)
 
     death_ids = set(
         _pack_ids(
@@ -6858,6 +7452,13 @@ def test_source_packs_do_not_trigger_mgnrega_from_bare_panchayat_wage_words():
     )
 
 
+def test_mgnrega_standard_pack_targets_allowance_and_schedule_two_coverage():
+    packs = _packs_by_id("my mgnrega job demand was ignored and no unemployment allowance was paid")
+    mgnrega = packs["mgnrega_2005"]
+    assert {"/sec-6@", "/sec-7@", "/sec-35@"} <= set(mgnrega.anchor_patterns)
+    assert "Schedule II" in mgnrega.search_query
+
+
 def test_jharkhand_tribal_land_pack_targets_cnt_section_46():
     packs = _packs_by_id(
         "munda land grabbed by upper caste in our agency village how to get back chaibasa"
@@ -6902,6 +7503,10 @@ def test_stage_e9e_source_packs_cover_common_source_gap_repairs():
         "my boss keeps asking late night meetings alone and touched my back twice should i file POSH"
     )
     assert "posh_2013" in workplace_packs
+    assert (
+        "Sexual Harassment of Women at Workplace (Prevention, Prohibition and Redressal) Act 2013"
+        in workplace_packs["posh_2013"].title_patterns
+    )
     assert "bns_2023_workplace_sexual_contact_threat" in workplace_packs
     assert {"/sec-74", "/sec-75", "/sec-78", "/sec-351"} <= set(
         workplace_packs["bns_2023_workplace_sexual_contact_threat"].anchor_patterns
