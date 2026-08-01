@@ -46,10 +46,10 @@ rather than forcing a misleading hunk split.
 | `4a9f91d` | Production API runtime, MatterPlan, routing, answer ownership, and evaluator alias compatibility | 2,449 deterministic tests, 68 live-stack tests, 7 model tests, 2 evaluation-data tests |
 | `283b285` | Authenticated web proxy, fail-closed SSE UI, Compose/environment hardening | 26 web tests, TypeScript, production build, Compose merge, live browser contract |
 | `1ce286b` | Legal-safety evaluator and dated release evidence | 58 evaluator tests; all holdout documents retain NO-GO decisions |
+| `98197dd` | README, Makefile, architecture, recovery, and checkpoint governance | Clean worktree inventory; inventory tests/Ruff; exact full API gate: 2,532 passed, 3 separately covered opt-in skips |
 
-The remaining governance/documentation commit records the final local
-checkpoint. Remote CI, branch reconciliation, independent legal-quality
-holdouts, and production operations remain release gates.
+Remote CI, branch reconciliation, independent legal-quality holdouts, and
+production operations remain release gates.
 
 ## Proposed stacked commits
 

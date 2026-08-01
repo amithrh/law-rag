@@ -46,10 +46,11 @@ accepts a later launch date.
 - The stale MGNREGA wage-delay assertion has been corrected to enforce the
   current authority contract: ordinary wage delay uses Section 19, while
   Section 17 remains conditional on social-audit/accountability facts.
-- The exact staged API integration snapshot passed 2,449 deterministic tests;
-  four fixture/opt-in contracts were skipped and 77 marker-selected tests were
-  excluded. The final legal-safety evaluator delta then passed its 58-test
-  focused contract. The live PostgreSQL/Redis slice passed 68 tests.
+- Clean integration checkpoint `98197dd` passed the exact full API gate with
+  2,532 tests passed, 3 explicit Redis/PostgreSQL opt-in contracts skipped,
+  and zero failures. Those opt-in contracts were also exercised separately:
+  the live PostgreSQL/Redis marker slice passed 68 tests, including the real
+  Redis admission contract and the two rollback-only database contracts.
 - The model-backed integration slice passed 7 tests and the local
   evaluation-data contract slice passed 2 tests.
 - Frontend type-checking, all 26 protocol tests, and the optimized production
@@ -67,7 +68,8 @@ accepts a later launch date.
   commits for governance (`c0cf002`), immutable authority/provenance repair
   (`4cc75cb`), API and matter contracts (`4a9f91d`), web/deployment boundaries
   (`283b285`), and legal-safety evidence (`1ce286b`). This is an integration
-  checkpoint, not a frozen production candidate.
+  checkpoint, followed by the documentation checkpoint (`98197dd`); it is not
+  a frozen production candidate.
 - Production admission control exists in code but the real Redis-backed
   topology, proxy cancellation, and final deployed-configuration holdout are
   not verified.
