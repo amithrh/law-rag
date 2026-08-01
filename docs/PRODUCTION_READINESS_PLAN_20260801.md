@@ -46,24 +46,28 @@ accepts a later launch date.
 - The stale MGNREGA wage-delay assertion has been corrected to enforce the
   current authority contract: ordinary wage delay uses Section 19, while
   Section 17 remains conditional on social-audit/accountability facts.
-- The current CI-equivalent deterministic API run is 2,455 passed, 3 skipped,
-  and 77 deselected. The three skipped real-service contracts were exercised
-  separately as part of the 68-test PostgreSQL/Redis slice, which passed.
+- The exact staged API integration snapshot passed 2,449 deterministic tests;
+  four fixture/opt-in contracts were skipped and 77 marker-selected tests were
+  excluded. The final legal-safety evaluator delta then passed its 58-test
+  focused contract. The live PostgreSQL/Redis slice passed 68 tests.
 - The model-backed integration slice passed 7 tests and the local
   evaluation-data contract slice passed 2 tests.
 - Frontend type-checking, all 26 protocol tests, and the optimized production
-  build pass.
+  build pass. The production-built browser contract also passes against the
+  live staged API, covering authenticated same-origin proxying, SSE terminal
+  ordering, a normal consumer answer, and an acid/chemical fail-closed handoff.
 - The merged production Compose contract and authority-registry release wheel
   verification pass.
 - A live API startup against the local service stack returned HTTP 200 from
   deep readiness with 189,748 eligible chunks and 5,827 documents.
 - The substantive implementation originated on `codex/latency-hardening` and
-  is now isolated on `codex/production-readiness-20260801` for integration;
-  `main` is effectively empty.
-- The generated release inventory currently groups 114 modified/untracked
-  paths by release concern; the pre-existing change set contains about 29,000
-  uncommitted inserted lines. There is no frozen, reproducible release
-  candidate.
+  is now assembled on `codex/production-readiness-20260801`; `main` remains
+  effectively empty and has not yet been reconciled with this release line.
+- The initial 114-path dirty inventory has been converted into reviewable
+  commits for governance (`c0cf002`), immutable authority/provenance repair
+  (`4cc75cb`), API and matter contracts (`4a9f91d`), web/deployment boundaries
+  (`283b285`), and legal-safety evidence (`1ce286b`). This is an integration
+  checkpoint, not a frozen production candidate.
 - Production admission control exists in code but the real Redis-backed
   topology, proxy cancellation, and final deployed-configuration holdout are
   not verified.
@@ -219,12 +223,16 @@ Human decisions/evidence are still required for:
 
 ## Immediate next actions
 
-1. Fix the single deterministic MGNREGA regression.
-2. Produce a machine-readable inventory of the 108 dirty paths grouped by
-   release concern.
-3. Split and commit the current work into reviewable checkpoints.
-4. Run CI and real-stack verification on the candidate commit.
-5. Lock the four-lane V1 scope and generate its authority-coverage matrix.
+1. Push the integration branch and require remote CI on its exact head.
+2. Review the stacked commits and reconcile this release line with `main`
+   without squashing away the audit boundary.
+3. Lock the four-lane V1 scope and publish its supported/unsupported route and
+   authority-coverage matrix.
+4. Run uninjected recall/provenance closure for every V1 authority family and
+   obtain independent Indian-law review for each action pack.
+5. Freeze a new candidate only after privacy, security, load, backup/restore,
+   rollback, monitoring, and production-host checks pass; then run a fresh
+   sealed holdout.
 
 No launch date is considered committed until Phase 0 is green and the V1 scope
 has an assigned legal reviewer.

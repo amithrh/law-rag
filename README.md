@@ -39,8 +39,15 @@ make web-dev
 ```
 
 The API listens on `http://127.0.0.1:8000`; the web app listens on
-`http://127.0.0.1:3000`. Set `NEXT_PUBLIC_API_BASE` when the web app should use
-another API origin.
+`http://127.0.0.1:3000`. Set the server-only `LAW_RAG_API_URL` (or
+`API_INTERNAL_URL`) when the web proxy should use another API origin. In
+production, configure the same secret as `LAW_RAG_API_KEY` on the web service
+and `ANSWER_API_KEY` on the API; the browser never receives it.
+
+The API exposes `/healthz` for diagnostics and `/readyz` for orchestration.
+`/readyz` returns `503` unless PostgreSQL is reachable and the legal corpus has
+at least one document and one non-quarantined, provenance-verified chunk; it
+never exposes the database connection string.
 
 The real legal corpus is deliberately not stored in Git. `make seed-ci-corpus`
 only proves schema and API startup from a clean clone. Reconstructing a reviewed,
@@ -66,6 +73,8 @@ corpus, installed models, and ignored evaluation datasets. Neither a passing
 focused test nor a generated evaluation set is production evidence. See
 [docs/PRODUCT_RECOVERY_TODO.md](docs/PRODUCT_RECOVERY_TODO.md) for the current
 measured blockers and release criteria.
+The dated integration schedule and current release-branch evidence are in
+[docs/PRODUCTION_READINESS_PLAN_20260801.md](docs/PRODUCTION_READINESS_PLAN_20260801.md).
 
 ## Deployment Boundary
 
@@ -73,6 +82,8 @@ measured blockers and release criteria.
 prebuilt `API_IMAGE` and `WEB_IMAGE`. It enables model prewarming and requires
 provenance-verified sources. Do not deploy it until the recovery TODO's API,
 holdout, PII, security, and operations gates are all green.
+The admission-control contract and its remaining live-deployment checks are
+tracked in [docs/PRODUCTION_ADMISSION_CONTROL_20260729.md](docs/PRODUCTION_ADMISSION_CONTROL_20260729.md).
 
 ## Repo layout
 

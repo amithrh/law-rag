@@ -10,7 +10,7 @@ UV         ?= uv
 .PHONY: help env up down restart logs ps doctor psql redis-cli pull-models \
         bench-day0 clean nuke sync test-api test-api-ci test-models \
         test-eval-data test-workflows test-eval-gates typecheck-web verify \
-        api-dev web-dev corpus-manifest seed-ci-corpus
+        api-dev web-dev corpus-manifest seed-ci-corpus promote-source-packs
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / { printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -97,6 +97,9 @@ seed-ci-corpus: env ## Load one synthetic row for clean-clone/API smoke tests on
 	$(COMPOSE) up -d --wait postgres
 	$(COMPOSE) exec -T postgres psql -U lawrag -d lawrag \
 		-f /dev/stdin < $(ROOT)/infra/postgres/ci-seed.sql
+
+promote-source-packs: env ## Promote hash-pinned official Act sections before a production release.
+	PYTHONPATH=$(ROOT) $(UV) run python $(ROOT)/scripts/promote_source_pack_sections.py
 
 bench-day0: ## Run Day-0 model-dependent benches (Q1 verifier, Q3 embedding, Q4 reranker, Q2 HNSW). Requires stack up + models pulled.
 	@bash $(ROOT)/scripts/bench-day0.sh

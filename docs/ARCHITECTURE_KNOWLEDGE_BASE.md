@@ -920,3 +920,672 @@ arrest expansion miss and an MPS-to-CPU reranker fallback.
 Independent post-implementation review remains open after three final retries
 because the reviewer service reports `agent thread limit reached`. The stage is technically green,
 not independently closed and not product launch evidence.
+
+## 2026-07-16 P2D-P2E Bank Holds and Platform-KYC Authority Boundaries
+
+P2D adds a registry-owned bank legal-hold family: RBI Ombudsman clauses form
+the banking-service floor, while BNSS Section 106 and CrPC Section 102 are
+conditional by incident regime for police/cyber holds. ED/PMLA freezes remain
+outside this family and fail closed until their own reviewed PMLA contract is
+available. Registry backfill supplies canonical authority passages when
+retrieval misses a required provision; this is a safety fallback, not evidence
+that retrieval recall is good enough.
+
+P2E fixes a source-gap policy error exposed by a realistic app query: a generic
+platform account held for pending KYC was being forced to retrieve RBI or
+gaming law without any bank, payment, or gaming fact. The router now requires
+IT Act and Consumer Protection Act sources for the generic platform lane, adds
+RBI/KYC only for a bank, NBFC, UPI, or identified payment-wallet fact, and adds
+state gaming law only for a real-money gaming account dispute. A bare crypto
+wallet or casual gaming-app suspension does not borrow the regulated-payment
+or gambling gate.
+
+The stage also removes an unreachable duplicate PMLA/ED route block. There is
+now one early PMLA owner, so later edits cannot silently change only an
+unreachable copy. Targeted router, source-gap, source-pack, workflow, and
+answer-ownership checks pass after the cleanup. P2 remains open: natural
+retrieval of conditional bank-hold provisions, PMLA/ED authority contracts,
+and broader registry coverage are still required before any production claim.
+
+## 2026-07-16 P2F Provenance Refresh and Natural-Retrieval Proof
+
+The bank legal-hold family is now backed by fresh official-source evidence,
+not an assertion that registry fallback is adequate. The official BNSS Gazette
+PDF and India Code CrPC PDF changed byte hashes while their provision text
+continued to match. Immutable migrations `0009` and `0010` pin the observed
+official bytes for BNSS Section 106 and CrPC Section 102 respectively; a
+targeted hash-and-text audit marks only their mapped chunks verified.
+
+The verifier now distinguishes `verified` from `text only`: matching extracted
+text cannot be reported as a provenance pass when the source file hash has
+drifted. It continues to fail closed until the versioned authority record is
+refreshed and audited.
+
+Natural retrieval is separately tested against the runtime PostgreSQL corpus.
+For realistic current and legacy cyber-police account-freeze prompts, the
+required source pack returns the exact `bnss-2023/sec-106` or
+`crpc-1973/sec-102` chunk with a positive database ID and
+`provenance_verified=true`. The test rejects the negative-ID synthetic
+registry fallback. A live `/answer` replay for the current prompt exposed
+positive document ID `3040` for BNSS Section 106 and produced no source gap.
+
+An independent review found that the original serving path could still add
+negative-ID synthetic registry records after retrieval. That path is removed
+from both source-gap evaluation and prompt construction: a required authority
+miss now remains a real coverage miss and is handed off rather than fabricated
+in memory. The review also found that a source hash refresh had to invalidate
+all existing projections from that source, not only the updated section. The
+migration projector now clears document and chunk verification across that
+source before a new audit can promote any provision.
+
+`REQUIRE_PROVENANCE_VERIFIED` now defaults to `true`. Any corpus-wide offline
+evaluation that intentionally studies unverified material must explicitly opt
+out; a missing production environment variable cannot silently disable the
+source gate.
+
+This proves one authority family, not general retrieval quality. Every new
+authority-owned workflow still needs the same three-part gate: official source
+refresh, mapped-chunk verification, and an uninjected runtime-retrieval test.
+
+## 2026-07-16 P2G PMLA/ED Asset-Restraint Authority Workflow
+
+P2G replaces intake-only refusal for a supported ED/PMLA asset restraint with
+two fact-specific statutory paths. A Section 17 freezing order is not described
+as a Section 5 provisional attachment order. Both paths converge on Section 8
+adjudication and the Section 26 Appellate Tribunal route.
+
+The immutable `0011` migration pins the official India Code PMLA PDF
+(`d3699f0228f7b9cdf8311f9e8998032fb15e6570070b99a578eca3cb8fcd6413`,
+504,120 bytes) and declares Sections 5, 17, 8, and 26 as separate canonical
+authorities. A source audit re-fetched that PDF, persisted four exact
+mapped-chunk verdicts, and marked all four mapped chunks provenance verified. Migration
+`0012` pins the official PDF artifact snapshot date (`2024-08-30`); `0013` and
+the immutable corrective `0014` expand the Section 5/17 statutory checks; and
+`0015` quarantines and unverifies the superseded undated projections without
+deleting their audit history. The immutable repair migration `0016` replays
+that retirement for canonical and split alias anchors on databases where
+`0015` was already recorded before alias-aware retirement shipped.
+
+The serving invariants are:
+
+1. A freeze query activates Sections 17, 8, and 26; an attachment query
+   activates Sections 5, 8, and 26. The unused path is excluded.
+2. Missing Section 8 or Section 26 fails closed. A neighboring judgment or
+   generic PMLA chunk cannot substitute for the controlling provision.
+3. The answer owner is `authority_graph:pmla_ed_asset_freeze`, freeform LLM
+   generation is disabled, and the reviewed contract is a primary answer.
+4. `ED` matching is token-aware. Text such as `ordered attachment` cannot be
+   captured merely because it contains the letters `ed attachment`.
+5. Ordinary ED summons, PMLA bail, cyber-police freezes, KYC holds, civil
+   attachments, and arbitral restraints remain outside this owner.
+6. Production retrieval uses the MatterPlan source policy and must return
+   positive-ID, provenance-verified chunks. Synthetic registry backfill is not
+   accepted as retrieval proof.
+7. The generic old/new criminal-code caveat is suppressed for this asset path;
+   it does not determine the PMLA Sections 5/17/8/26 procedure described here.
+8. Explicit Section 5 attachment and explicit Section 17 freeze/seizure wording
+   stay on their respective paths. Plain-language holds, liens, locks,
+   restraints, and transfer bars retrieve both paths and tell the user to inspect
+   the complete order instead of guessing the provision. Document attachments
+   and blocked access to account records do not activate asset ownership.
+9. Canonical PMLA passages satisfy the answer gate only at the registry snapshot.
+   Request-level deduplication removes an older copy, ingestion retires undated
+   projections, and source-gap validation rejects a stale fallback.
+10. The reviewed deterministic answer remains available if the configured LLM
+    is unavailable; the endpoint regression requires dated authority passages,
+    the correct workflow, and branch-specific legal content.
+
+Real-stack retrieval returned exactly Sections 17/8/26 and 5/8/26 for the two
+paths. Live SSE replays selected the reviewed owner, emitted no unsupported
+legal sentence, and cited only the active dated official provisions. Ambiguous
+wording returned Sections 5/17/8/26 and a conditional dual-path answer; explicit
+seizure wording used the seizure branch. Provenance re-verification reported
+four verified chunks and zero failures, the real PostgreSQL migration contract
+passed through `0016`, the wheel contained the full migration chain, and the
+final broad non-stack regression completed with `1,166 passed` and zero
+failures. The reviewer initially held the stage because the automated database
+test stopped at `0005` and split Section 8/17 aliases could survive on an
+already-migrated database. The repair added the rollback-isolated full-chain
+test, immutable migration `0016`, runtime alias assertions, and a fresh
+provenance audit. The repaired authority suite passed `39` tests, the focused
+real-stack gate passed `4`, the release wheel contained `0016`, and the final
+
+## 2026-07-17 P3 Guided Intake Safety and Privacy Gate
+
+The first guided-intake slice is a bounded refinement layer over the reviewed
+MatterPlan. It asks at most three material questions and derives them from the
+existing route and plan; it does not run a second classifier, call an LLM, or
+persist answers. Route-specific questions cover immediate safety, bank-hold
+reason, criminal-regime transition, jurisdiction, cyber money loss, case stage,
+documents, role, and desired outcome.
+
+The criminal transition question is deliberately about the Section 531 fact,
+not merely an incident or seizure date. Bare years and relative dates such as
+"in 2023", "before 1 July 2024", or "after 1 July 2024" keep the question
+open. Only explicit pending/started/concluded status or an explicit unknown
+choice satisfies it. The four bounded choices are consumed by the same
+`criminal_transition_status` classifier used by routing, so a refinement can
+select saved CrPC, current BNSS, concluded/unknown, without a second routing
+owner.
+
+The SSE event is schema-versioned and bounded before browser rendering. Intake
+controls remain editable while the first answer is streaming. A monotonically
+increasing request ID plus the active `AbortController` prevents packets,
+errors, or completion callbacks from an aborted request from overwriting a
+newer refinement. Operational correlation uses a short SHA-256 fingerprint;
+raw user questions are not emitted by the query-expansion or answer-coverage
+logs covered by this gate. Intake guidance warns users not to share Aadhaar,
+full account/card numbers, passwords, OTPs, or private intimate material.
+
+Evidence for this slice: API intake/privacy `12/12`, affected no-stack API
+regression `522 passed, 36 deselected`, web contract/stream-guard tests `6/6`,
+frontend type-check and production build pass, and live device refinement
+selected current BNSS and removed the transition question after the choice was
+consumed. Fermat and Averroes independently re-reviewed the final patch and
+returned PASS with no P0/P1/P2 findings.
+
+This closes the intake implementation gate, not the product gate. The system
+still needs a true independent holdout with human/legal-quality review,
+un-injected authority recall measurement, privacy/security operations, and
+production deployment controls before it can be called production-ready.
+
+## 2026-07-17 Stage 1 Provenance RCA
+
+The fresh 500-request live holdout exposed a corpus/provenance failure rather
+than a latency failure. Wall-clock latency was healthy (`p50 4.7s`, `p90
+17.5s`), routing and action-pack telemetry were present for all 500 rows, but
+only `122/485` expected Act rows hit and only `219/500` produced a usable
+answer. The most important cause was that many high-frequency official Acts
+were present in the corpus but their documents/chunks were still
+`provenance_verified=false`; production retrieval correctly excluded them.
+
+The first repair is intentionally below retrieval and answer generation.
+`scripts/verify_provenance.py` now tolerates India Code handle-page whitespace
+and quote variants, retries transient discovery/download failures with bounded
+backoff, fetches all candidate PDF artifacts, and prefers an exact pinned
+SHA-256 over text similarity. Text similarity is diagnostic-only when a source
+hash is missing; `--strict` exits nonzero and no document/chunk is promoted.
+Legacy sources are compared per document over their complete
+non-quarantined chunk sets. Temporary files are unique and cleaned up, and
+promotion remains document/chunk scoped; it does not globally bless a source.
+
+The NDPS source was independently checked against the official India Code
+artifact, pinned locally at SHA-256
+`ef1b399172971dc8bc6e4da0ae67444f62ee2ea05a983ac26821e96a4e866bd6` and
+719,612 bytes, and passed strict verification; one compared document was
+promoted locally. This is a verifier/authority-data stage result, not a
+quality or production-readiness result. The next step is to verify the
+high-frequency national Acts, re-run live smoke, and then repeat the full
+holdout. No benchmark result file or local corpus data is part of the release
+artifact.
+
+The first authority batch then passed strict verification for TPA 1882,
+Indian Contract Act 1872, POSH 2013, NI Act 1881, Income-tax Act 1961, POCSO
+2012, RTE 2009, Dowry Prohibition Act 1961, Payment of Gratuity Act 1972,
+Aadhaar Act 2016, and Bonded Labour System (Abolition) Act 1976. The batch
+also corrected the Income-tax source from an invalid handle response to its
+official India Code PDF artifact. A 50-row live smoke showed the expected
+directional improvement in several routes, but remained far below launch
+quality: Act hit/cited `28/50`, strict product pass `10/50`, critical pass
+`5/24`, visible source gaps `30/50`, and safety hard fails `8/50`. Latency
+remained healthy (`p50 5.1s`, `p90 12.5s`).
+
+Trade Marks is intentionally not promoted: its six stored passages are
+server-authored summaries and have only `0.0557` similarity to the official
+PDF. This is a corpus reconstruction task, not a verifier threshold to lower.
+The full 500 holdout must be rerun only after the remaining high-volume source
+gaps and safety failures are addressed; the 50-row smoke is not a release
+claim.
+
+## 2026-07-17 Source-Gap Handoff Contract
+
+Source verification is a hard boundary in the answer architecture. When the
+required authority is missing, stale, unverified, or cannot be matched to the
+required anchor, the API emits an intake-only `matter_route` event followed by
+`source_gap`. The event may carry the route label, urgency/red flags, missing
+facts, and a document checklist for preparation. It must carry empty
+`required_sources` and `forums`, a null `legal_regime`, and an action pack with
+empty next steps, portals, escalation, and cautions. This prevents a route
+classifier's plausible forum or action pack from becoming unverified legal
+advice.
+
+The browser validates both the intake-only route invariant and every sentence
+event before rendering. A malformed route or sentence clears the answer state
+and raises the contract error; a source-gap handoff remains safe and visible.
+The UI uses the handoff to tell the user what facts and records to gather,
+without presenting a forum, portal, deadline, or legal conclusion as verified.
+
+The stage was independently reviewed after implementation with no P0, P1, or
+P2 findings. Focused validation passed with 119 backend tests, 13 web contract
+tests, and web type-check. A fresh 500-request live holdout completed with no
+errors or refusals, p50 latency 5.0s and p90 5.8s. It produced 339 source-gap
+handoffs, 107/485 expected Act hits and citations, 59/500 strict product
+passes, 37/183 critical passes, and 268/500 safety hard fails. These numbers
+show correct fail-closed behavior and fast operation, but not sufficient legal
+coverage or production quality.
+
+The next architectural stage is authority coverage and plan completeness:
+strictly verify and promote the highest-frequency official source packs, then
+make the MatterPlan producer satisfy its schema and authority obligations on
+both answered and handoff rows. No answer-generation or training change should
+be accepted unless it improves the locked holdout without increasing safety or
+source-gap violations.
+
+## 2026-07-17 Provenance-Safe Document-to-Chunk Promotion
+
+The provenance verifier now treats document-to-chunk promotion as a safety
+boundary rather than a bookkeeping step. A document-level official artifact
+check is persisted in one transaction with its derived chunk updates. On any
+SQL failure, the transaction rolls back; a document cannot remain verified while
+its retrieval chunks are stale or half-updated. Promotion targets are scoped to
+the compared document IDs. Non-quarantined chunks are promoted only when they
+are not owned by `document_authorities`; registry-owned chunks are changed only
+by their exact chunk-scoped audit. Quarantined chunks are excluded from
+promotion, and failed audits clear stale document/chunk verification without
+unquarantining data.
+
+Every live chunk is independently compared against the refetched official
+artifact. Aggregate document similarity is used only for candidate scoring and
+cannot mask a corrupted chunk in the final verdict. The generated chunker
+prefix (`<exact document title>, Section N`) is stripped only when the prefix
+title matches the stored document title after conservative punctuation
+normalization. A different title remains part of the comparison and fails the
+threshold. Hashless HF mirror extraction remains diagnostic-only and explicitly
+cannot set `verification_pass`.
+
+Evidence for this stage:
+
+- `17` focused provenance tests passed; the real PostgreSQL rollback/scope
+  fixture passed; `104` verifier/retrieval regression tests passed.
+- Independent final review returned PASS with no P0/P1/P2 findings.
+- Strict official India Code audits passed for NI Act, POCSO, and POSH. The NI
+  Act has `125/126` live chunks verified; one corrupted/mixed chunk is
+  quarantined and remains unavailable to retrieval.
+- The fresh live holdout report is
+  `data/processed/timed_eval_holdout_new500_provenance_20260717.md`.
+  It completed `500/500` rows with zero transport errors: expected Act hit
+  `230/485 (47.4%)`, cited hit `219/485 (45.2%)`, strict product pass
+  `66/500 (13.2%)`, critical pass `40/183 (21.9%)`, safety hard fails
+  `88/500`, route retrieval gaps `222/500`, route citation gaps `236/500`,
+  MatterPlan authority retrieval gaps `403/1034`, MatterPlan citation gaps
+  `411/1034`, and visible source gaps `322/500`.
+- Latency was `p50 5.4s`, `p90 17.2s`, max `47.1s`; latency is not the only
+  blocker, although the tail still needs an operational budget.
+
+The 500 prompts are newly generated human-like wording from the curated
+501-case inventory with prior exact prompt text excluded. They are not real-user
+telemetry or blinded human/legal review, and the changed wording mix means the
+metrics must not be presented as a causal before/after comparison against the
+earlier source-gap handoff run. The release remains blocked by authority
+coverage, plan-obligation retrieval/citation, refusal calibration, and the
+safety gate. The next implementation target is the recurring missing authority
+families and MatterPlan producer, not answer-model training.
+
+## 2026-07-17 Exact Authority Identity and 500-Row Gate
+
+The serving identity layer now treats a split anchor as an ambiguous storage
+representation until the passage heading proves the legal provision. This
+applies to both numeric requests and explicit alphanumeric requests. For
+example, `sec-22-a` can represent a split chunk of Article 22 or a neighboring
+Article 22A; only a matching heading in the passage text can decide. The same
+rule protects RTI Section 6 versus 6A and HMA Section 13A versus a Section 13
+fragment. Native anchors such as `sec-66e` remain distinct and may pass their
+exact identity check.
+
+The generic statute matcher is not allowed to undo that decision. Explicit
+Act/Code section requirements take the strict section path before broad
+statute-specific branches. HMA's legacy Section 13 divorce-ground matcher has
+an additional guard for explicit alphanumeric sections. Constitution and RTI
+special branches use the same heading-aware matcher rather than broad anchor
+membership. This is a fail-closed provenance invariant, not a retrieval
+ranking heuristic.
+
+Source-pack identity is also part of legal provenance. When multiple packs have
+the same Act title, the plan cannot bind by title alone. A child-specific
+Christian succession pack is selected when a query explicitly contains child
+relationship terms, even when `widow` makes the base pack tie on selection
+score. The resulting ledger keeps the exact source-pack ID and `/sec-37`
+anchor requirement. Title-only authorities without registry identity remain
+provisional; an unknown religion does not create a generic personal-law
+authority obligation.
+
+Validation for this stage: `161` focused source-gap/planner tests, `1` exact
+endpoint regression, direct negative probes for Article 22A, RTI 6A, and HMA
+Section 13, direct positive probe for HMA 13A, and independent reviewer GO.
+The fresh 500-row holdout completed `500/500` with zero transport errors. Its
+report is
+`data/processed/timed_eval_holdout_new500_anchorfix_final_20260717.md`.
+Expected Act hit and cited hit were both `120/485 (24.7%)`; strict product
+pass was `63/500 (12.6%)`; legal-safety hard fails were `264/500`; visible
+source gaps were `335/500`; and MatterPlan obligation retrieval/citation were
+`245/313` and `236/313`. Latency was `p50 5.1s`, `p90 5.9s`, max `31.5s`.
+
+The stage therefore proves identity hardening and no transport regression, but
+not product quality. The same prompt set before this patch had `120/485`
+Act hit/cited, `64/500` strict pass, and `264/500` safety hard fails. The
+system is not production-ready. The next architecture target is to make the
+MatterPlan producer/schema a first-class gate on every row, followed by strict
+verification and retrieval coverage for the high-frequency missing authorities
+(senior maintenance, succession, labour/EPF, welfare, revenue/land, IBC/NCLT,
+trademark/IP, prison procedure, business/MSME, and state/local law). Do not
+fine-tune the answer generator until those evidence and safety gates improve.
+
+## 2026-07-17 Intake Ownership and Fresh Holdout Evidence
+
+The serving ownership layer now has explicit guards for generic consumer
+ownership. Vehicle terms use word boundaries, and a vehicle is treated as a
+consumer product only when the query also supplies online/seller/manufacturer
+context. This prevents a bike service-centre dispute or a seized-device query
+from being silently converted into a defective-goods answer while preserving
+the online-vehicle warranty path. Registered-will queries have a dedicated
+owner, and PMLA/UAPA non-criminal plans use schema-valid non-applicable
+incident-date statuses rather than pretending to know a criminal cutover.
+
+The evaluator distinguishes an intentional safe source-gap handoff from an
+answer row with a malformed MatterPlan. This improves diagnosis only: a safe
+handoff remains a product failure because the user still lacks a supported
+answer. The safety evaluator applies the same distinction, so it does not call
+an intentionally empty source-gap handoff dangerous solely for omitting an
+operative forum or legal regime. Real answers with missing authority, dangerous
+framing, or nonzero source counts still fail closed.
+
+Validation and evidence:
+
+- Independent review returned GO with no P0/P1/P2 findings; targeted ownership
+  and schema tests passed `289` tests.
+- The fresh 500-row run used seed `2026071717` and excluded prior exact prompt
+  packs. It completed `500/500` with `0` transport errors, `500/500` route
+  matches, `120/485 (24.7%)` expected Act hits and citations, `63/500`
+  strict product passes, `4/500` legal-safety hard fails, and `336/500` safe
+  source-gap handoffs. Latency was `p50 5.0s`, `p90 5.7s`, max `25.9s`.
+- MatterPlan authority retrieval/citation were `245/310` and `237/310` on
+  applicable answer rows. The common-user gate measured `91/500 (18.2%)`
+  product passes, `58.4%` must-term coverage, `16` route-required source gaps,
+  `336` visible source gaps, and `25.3s` LLM-path p90.
+- The failure ledger grouped `409` strict failed rows: `360` source/retrieval
+  gaps, `16` route-source gaps, `62` criminal-procedure high-risk rows, `44`
+  labour/welfare rows, and `36` family/child-safety rows.
+
+The evidence confirms that latency and routing are functioning, but the
+authority graph/source packs and MatterPlan obligation producer remain the
+dominant product bottlenecks. Training the answer model now would amplify
+unsupported coverage; source activation, provenance, and action-pack contracts
+must improve first. The repository is not production-ready.
+
+## Source-Gap Guided Intake (2026-07-19)
+
+Source gaps are a typed recovery protocol, not a generic empty answer. When
+the server has a canonical state or local authority gap, it emits a sanitized
+route, the source-gap contract, and a bounded intake event. The intake is
+fact-only: jurisdiction, date, and document status may be requested, while
+MatterPlan logistics, forums, portals, deadlines, and legal conclusions remain
+withheld until a retry verifies the authority.
+
+The browser reducer treats the source-gap event as a latch. It clears the plan,
+passages, sources, relevance, and operative sentences; rejects late route or
+answer events; and accepts intake only when the latched gap kind is
+`state_or_local_authority_gap`. Both API and UI enforce the 2,000-character
+query budget, so guided retry construction cannot silently exceed the serving
+contract.
+
+This protocol is intentionally orthogonal to retrieval quality. It improves
+honesty and recovery for unsupported jurisdictional procedures, but it cannot
+create missing law. Authority registry activation, exact provenance, and
+source-pack coverage remain the quality bottleneck and must be evaluated on
+fresh holdouts before any production claim.
+
+## Municipal and Food-Authority Ownership Boundary (2026-07-19)
+
+The router treats a municipal/local authority sealing as the operative action.
+That ownership wins even when the user mentions a generic food inspection or
+an FSSAI inspection. An FSSAI route is selected for an explicit food-safety
+authority/fact, such as FSSAI, a food-safety officer, a food inspector, food
+licensing, food poisoning, contaminated/unsafe/adulterated food, or a
+sanitation inspection without an ambiguous department actor. Unnamed health or
+food departments remain in the bounded business-license/intake path rather
+than being asserted as FSSAI.
+
+Bare corporation is deliberately not a municipal identity because private
+companies use the same word. Named city-corporation phrases use a
+qualifier-aware matcher: private/Pvt/Ltd/Limited/company/entity qualifiers are
+rejected, while a genuine city corporation can own the municipal route. The
+source-gap materiality check mirrors the same qualifier rule, so exact Act or
+FSSAI regulation passages cannot satisfy the missing municipal-law obligation.
+
+Negated food facts are fail-closed before specialized FSSAI routing. The
+boundary covers direct phrases and a bounded negation pattern for forms such
+as not/no/does not involve food, hygiene, contamination, unsafe food,
+adulterated food, or food poisoning. Active evidence fixtures use the
+configured document IDs, source packs, anchors (/sec-26, /reg-2-1), and
+source types (bare_act, regulation).
+
+Validation for this stage: selected router/source-gap/workflow tests passed
+207, the deterministic backend suite passed 2062 with stack/model tests
+excluded, the web protocol suite passed 18, TypeScript passed, and the latest
+independent review returned GO for the final routing/source-gap boundary.
+This improves authority ownership and handoff correctness; it does not replace
+the required fresh 500-prompt quality gate, which remains blocked until the
+serving database is available.
+
+## Municipal Boundary Review Closure (2026-07-19)
+
+`apps/api/local_authority.py` is now the shared identity boundary for municipal
+routing and source-gap materiality. It rejects private/Pvt/Ltd/company/entity
+city-corporation names, distinguishes generic health actors from explicit
+local/municipal health actors, and exposes one narrow predicate for a public
+hawker/vending permit plus a concrete corporation removal/seizure. The latter
+is intentionally paired with source-gap vocabulary for every accepted wording;
+otherwise a route could be public while its local procedure requirement was
+silently treated as non-material.
+
+The boundary was independently reviewed by Hubble and Avicenna, both GO with no
+P0/P1/P2 findings. The final affected deterministic suite passed `1119` tests;
+`57` stack/model tests were excluded because the local database/model services
+were unavailable. This is a correctness milestone, not a product-quality
+milestone: the API must still start against PostgreSQL and pass a fresh real
+500-prompt holdout before production readiness can be considered.
+
+## Bounded Database Startup (2026-07-19)
+
+`POSTGRES_CONNECT_TIMEOUT_SEC` is a bounded setting (`0 < value <= 60`) passed
+to `asyncpg.create_pool` for both host-side development and the production
+Compose overlay. The API still fails closed when the database is unavailable,
+but it now exits promptly with a connection timeout rather than hanging during
+lifespan startup. Invalid values are rejected by Settings and the pool builder
+retains a defensive clamp for non-Settings test/runtime doubles.
+
+Independent review returned GO from both Hubble and Avicenna. The full
+deterministic API suite passed `2075` tests, with one explicitly skipped live
+database contract and `70` stack/model/evaluation tests deselected. This is an
+operations improvement, not evidence of corpus quality or production
+readiness; live database startup and a fresh 500-prompt holdout remain required.
+
+## Verified Readiness and Service Probe (2026-07-19)
+
+`/readyz` is now a release-orchestration check, not a row-count check. It counts
+only chunks that are live (`NOT quarantined`) and satisfy the exact production
+provenance predicate used by retrieval: either the chunk is explicitly
+verified, or it has no conflicting authority mapping and its parent document is
+verified. A document contributes to readiness only when it owns at least one
+such chunk. The CI seed is intentionally unverified and therefore cannot make
+the API ready.
+
+`/healthz` keeps the same corpus/build information on success, but returns a
+sanitized `503` with `dependency=postgres` and
+`reason=database_unavailable` when the database cannot be reached. The lifespan
+still closes the pool if model prewarm fails. Production Compose calls
+`/readyz` from its API healthcheck and starts the web service only after the API
+is healthy.
+
+Independent Hubble and Avicenna reviews both returned GO with no P0/P1
+findings. Focused readiness/provenance tests passed `7`; the full live service
+probe did not pass because Docker/OrbStack is stopped and the active local
+Postgres cluster has no `lawrag` role/database. This stage improves operational
+truthfulness but does not establish corpus quality, answer quality, or
+production readiness. A populated database, `/readyz` verification, and a
+fresh real 500-prompt holdout are still mandatory.
+
+## Live Service and Fresh 500 Holdout (2026-07-20)
+
+The populated local service was restored without initializing a replacement
+database. The API and web app served successfully from the same worktree:
+`/healthz?deep=true` reported `189907` indexed chunks, `5808` documents, and
+build fingerprint
+`2be63bea2eb7205c62e3202c4953eb617e3832dad9d79b54fca6e6887f00b2f3`; the web
+root returned HTTP 200. The holdout was pinned to that fingerprint, so the
+benchmark cannot silently exercise a different checkout.
+
+The first 500 unique prompts from the new 501-question human-like inventory
+were streamed through the live `/answer` endpoint and completed `500/500` with
+zero transport errors, zero API errors, and zero refusals. This inventory is
+synthetic human-like evaluation data, not production user telemetry or blinded
+human legal review; it must be described that way in grant, product, and release
+materials.
+
+Measured results:
+
+- expected Act hit `189/485 (39.0%)`; expected Act cited `187/485 (38.6%)`;
+- strict timed product pass `132/500 (26.4%)`; common-user gate pass
+  `162/500 (32.4%)`;
+- route match `499/500 (99.8%)`; MatterPlan contract valid on `247/247`
+  applicable answer rows;
+- source-gap handoffs `253/500`, route required-source retrieval gaps `13`,
+  route citation gaps `19`, and MatterPlan authority citation gaps `45`;
+- legal-safety hard fails `1/500`, labelled `dangerous_off_topic` for a CIBIL
+  loan-closure/NOC query that was routed without a supported answer;
+- total latency p50 `5.2s`, p90 `6.1s`, max `38.6s`; the LLM-path p90 was
+  `24.9s` across `19` rows.
+
+The result confirms that the service is operational and routing is strong, but
+the product is not production-ready. The dominant blocker remains activated,
+provenance-verified authority coverage and citation completion, especially for
+criminal/custody procedure, labour/welfare, property/succession, banking,
+consumer, local/state, and long-tail routes. The single safety hard fail must
+also become a regression before release. Training the answer generator is still
+premature: it would increase confidence without repairing the `293` source or
+retrieval-gap rows in the failure ledger.
+
+## Multi-Pack Evidence Identity and Juvenile Custody Repair (2026-07-21)
+
+One verified `RetrievedChunk` may legitimately discharge more than one reviewed
+`SourcePack` obligation. This is common when a single statutory section is
+needed both by a generic Act pack and a narrower procedure pack. The retrieval
+boundary therefore preserves two metadata fields:
+
+- `_required_source_pack` is the deterministic primary pack used for existing
+  ranking and UI behaviour.
+- `_required_source_packs` is the complete set of reviewed pack identities that
+  the same verified chunk may satisfy.
+
+Deduplication and source-pack merging must union the complete set rather than
+discarding a lower-priority label. Source-gap validation, required-authority
+preservation, authority-graph matching, and final MatterPlan preflight consume
+the complete set. They still require the original exact document, source type,
+title, and section-anchor constraints. Aliases do not turn a broadly similar
+passage into authority for an unrelated route.
+
+The distinction matters in the Juvenile Justice custody workflow. Section 12
+may satisfy both the general JJ Act pack and the reviewed bail/board pack, while
+section 94 is evidence for age determination. The court/JJB requirement is
+separate and must be anchored to section 9. The `jj_2015_age_claim_court`
+pack consequently accepts only `/sec-9`; section 94 belongs to
+`jj_2015_age_documents`. This prevents source-gap and workflow logic from
+accepting different sections for the same asserted court route.
+
+The acceptance test is end-to-end, not retrieval-only. For a minor reported in
+adult custody, the final bounded answer set must contain official JJ Act
+sections 94, 9, and 12; select the
+`juvenile_adult_jail_age_determination` workflow; and emit no source-gap
+handoff. A generic adult bail query must not select this juvenile workflow.
+Focused unit tests protect shared-pack preservation and juvenile source-gap
+matching, while live `/answer` replays protect the final top-k and workflow
+boundary where earlier defects occurred.
+
+## Canonical Public Provenance and Safe-Handoff Validation (2026-07-22)
+
+The API now treats provenance identity as a public contract across every answer
+path. A retrieved chunk's stored `anchor` is immutable; focused retrieval can
+provide a friendly `display_anchor`, but the `passages` and both template and
+model-backed `sources` SSE events must include the canonical anchor, stable
+document key, and database chunk ID. This makes a citation traceable to the
+precise verified corpus record that supported it.
+
+Source-gap canonicalization is intentionally strict without breaking complete
+legacy diagnostics. It accepts only a boolean `has_gap` plus either a non-empty
+gap-kind list or a complete missing-required-source record. Nested
+`required_anchor_patterns` are validated item-by-item. Malformed supplied
+payloads are visible as `invalid_source_gap_payload`; they cannot be silently
+cleaned into an apparently ordinary coverage gap.
+
+The plain-language adoption boundary recognizes a planned family adoption such
+as "want to adopt my sister's child" while rejecting policy and pet examples
+that contain the same vocabulary. The final API regression passed `2354` tests
+with one explicitly opt-in PostgreSQL provenance test skipped. This validates
+the contract boundary only; a fresh 500-row synthetic human-like evaluation and
+independent human/legal review remain required before production readiness.
+
+## LSA Owner Boundary and Projection Repair (2026-07-31)
+
+Lok Adalat traffic intake is split into two distinct answer owners. A pending
+or referred traffic challan uses `lok_adalat_traffic_settlement` and Sections
+19/20/21 of the Legal Services Authorities Act; a question about an award's
+finality, consent, fraud, coercion, or challenge uses
+`lok_adalat_award_challenge` and is owned by the Section 21 contract. Both
+routes are selected before generic legacy rendering and are independently
+validated in MatterPlan ownership tests.
+
+The LSA owner boundary now requires all of the following on every activating
+passage: verified chunk provenance, the dated `1994-10-29` projection, the
+canonical document key, `bare_act` source type, the exact LSA source-pack ID,
+the expected authority ID on the passage, and that same authority ID under
+that exact pack's authority map. An ID supplied by a neighbouring pack cannot
+discharge this owner.
+
+Authority projection retirement is first-marker preserving. A dated correction
+retires the matching undated projection, but a later replay or repair
+migration must not rewrite its original
+`authority_projection_retired_by_migration` metadata. Stale `-official`
+projections are retired by the dedicated 0029 repair. Deployments that already
+applied an older 0029 implementation must run
+`scripts/repair_lok_adalat_retirement_metadata.py --apply`; the command is
+idempotent and changes only the three quarantined, undated LSA anchors.
+
+The retrieval-to-answer contract exposes `provenance_verified` publicly so
+owner contracts can fail closed rather than trusting title and anchor strings
+alone. This is an integrity gate, not a quality claim: the next release gate
+still requires a fresh 500-prompt holdout, zero safety hard fails, and material
+improvement in required-source coverage and cited-Act accuracy.
+
+## Official Section Supplements and Release Reproducibility (2026-07-31)
+
+High-risk routes must be wired through the same four contracts: route-required
+authority, source pack, source-gap validator, and verified corpus passage. The
+PWDVA safety route now uses the independently hash-pinned
+`domestic-violence-2005-official` section supplement for Sections 2, 3, 12,
+17, 18, 19, 20, 27, and 29. The legacy document remains an identity bridge,
+but its unverified chunks cannot satisfy the runtime source-gap gate. The
+validator therefore accepts the official supplement document key explicitly;
+title similarity alone is never enough.
+
+Source-pack exclusions are applied after category-specific branches as well as
+inside branches that can add the same Act. This is important for role-sensitive
+queries such as a man reporting violence or property taken by his wife: a
+PWDVA pack must not be injected merely because the words `wife` and `jewellery`
+appear. Common user wording such as `punched me`, `assaulted me`, and
+`threatened to kill me` is covered by the same exclusion contract. Explicitly
+negated mentions such as `not asking about gratuity` are likewise excluded
+from gratuity source-pack scope while salary authorities remain available.
+
+Before a production release, run the idempotent promotion command through the
+tracked Make target:
+
+```text
+make promote-source-packs
+```
+
+The command downloads or uses each locally provisioned artifact, verifies the
+expected byte count and SHA-256, extracts the pinned sections, and promotes
+only exact section chunks in a transaction. A missing artifact, changed hash,
+changed predecessor identity, or section-text mismatch fails the release
+closed. This command is a data-plane release prerequisite, not an API startup
+side effect.

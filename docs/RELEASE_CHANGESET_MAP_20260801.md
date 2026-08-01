@@ -14,7 +14,7 @@ The reproducible inventory is generated with:
   --output reports/release-change-inventory-20260801.json
 ```
 
-Current grouping:
+Initial grouping before assembly:
 
 | Concern | Paths |
 | --- | ---: |
@@ -29,12 +29,27 @@ Current grouping:
 | Tooling | 5 |
 | **Total** | **114** |
 
-The worktree is functionally coherent but not file-separable. In particular,
+The original worktree was functionally coherent but not file-separable. In particular,
 `main.py`, `matter_router.py`, `legal_issue_plan.py`, `source_gap.py`,
 `source_packs.py`, `test_endpoints.py`, and `test_common_workflow_contracts.py`
-contain changes from several stages. They must be split by hunk and reviewed
-against the owning contract; do not stage these files wholesale merely to
-obtain a clean status.
+contained changes from several stages. Exact staged-snapshot testing showed
+that the API runtime and matter-contract changes shared `main.py` and their
+evaluation authority-alias contract, so those two planned slices were combined
+rather than forcing a misleading hunk split.
+
+## Assembly result
+
+| Commit | Scope | Acceptance evidence |
+| --- | --- | --- |
+| `c0cf002` | Readiness governance and reproducible dirty inventory | Inventory unit test and Ruff |
+| `4cc75cb` | Immutable authority registry and corpus repair | 82 focused tests, 2 live PostgreSQL rollback tests, wheel build/inspection |
+| `4a9f91d` | Production API runtime, MatterPlan, routing, answer ownership, and evaluator alias compatibility | 2,449 deterministic tests, 68 live-stack tests, 7 model tests, 2 evaluation-data tests |
+| `283b285` | Authenticated web proxy, fail-closed SSE UI, Compose/environment hardening | 26 web tests, TypeScript, production build, Compose merge, live browser contract |
+| `1ce286b` | Legal-safety evaluator and dated release evidence | 58 evaluator tests; all holdout documents retain NO-GO decisions |
+
+The remaining governance/documentation commit records the final local
+checkpoint. Remote CI, branch reconciliation, independent legal-quality
+holdouts, and production operations remain release gates.
 
 ## Proposed stacked commits
 
