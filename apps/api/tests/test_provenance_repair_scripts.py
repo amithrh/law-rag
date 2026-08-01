@@ -11,6 +11,7 @@ from scripts.quarantine_misanchored_act_chunks import TARGETS
 from scripts.repair_canonical_act_chunks import ACT_SPECS, _canonical_chunks
 
 
+@pytest.mark.needs_eval_data
 def test_canonical_act_repair_targets_are_pinned_and_complete() -> None:
     spec = ACT_SPECS["indian-succession-1925"]
     assert spec["pdf"].is_file()

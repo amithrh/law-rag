@@ -373,6 +373,7 @@ async def test_promotion_rejects_normalized_section_text_hash_drift(monkeypatch)
         await promote.promote_spec(connection, spec, dry_run=True)
 
 
+@pytest.mark.needs_eval_data
 def test_local_official_artifact_is_hash_pinned():
     spec = _spec("street-vendors-2014")
     data = promote._fetch_pinned_pdf(

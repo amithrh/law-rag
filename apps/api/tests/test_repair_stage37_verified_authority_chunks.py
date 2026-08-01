@@ -153,6 +153,7 @@ async def test_canonical_alias_reuse_backfills_null_size_even_with_matching_tran
     assert connection.executed
 
 
+@pytest.mark.needs_eval_data
 def test_high_value_manifest_titles_match_extracted_act_headings():
     for spec in repair._HIGH_VALUE_SPECS:
         pdf = Path(spec.local_artifact_path).read_bytes()

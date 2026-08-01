@@ -125,5 +125,5 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "needs_stack: requires the Docker-backed populated legal corpus",
     "needs_models: requires local model weights and a compatible runtime",
-    "needs_eval_data: requires ignored local evaluation datasets",
+    "needs_eval_data: requires ignored local evaluation datasets or legal source artifacts",
 ]
